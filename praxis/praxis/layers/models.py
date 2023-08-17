@@ -254,10 +254,11 @@ class LanguageModel(base_model.BaseModel):
         causal_attention_mask=causal_attention_mask,
         extra_input_kwargs=extra_input_kwargs,
     )
-
+  # lsp
   def compute_predictions(self, input_batch: NestedMap) -> Predictions:
     """Computes predictions for `input_batch`."""
     predict_data = self._prepare_predict_data(input_batch)
+    # __import__('ipdb').set_trace()
     predictions = self.lm(
         inputs=predict_data.inputs,
         paddings=predict_data.paddings,

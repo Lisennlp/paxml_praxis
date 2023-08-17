@@ -731,6 +731,7 @@ class TransformerLm(base_layer.BaseLayer):
       addition, per_sequence_xent is added which equal to the sum of xent loss
       for tokens in a sequence.
     """
+    
     batch, seq_length = inputs.shape[:2]
 
     paddings_float32 = paddings.astype(jnp.float32)

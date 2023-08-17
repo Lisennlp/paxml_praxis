@@ -90,7 +90,7 @@ def get_eval_train_state(
     eval_state = tasks_lib.extract_ema(state).to_eval_state()
     logging.info('[PAX STATUS]: Converted train state to eval with EMA state.')
   else:
-    eval_state = state.to_eval_state()
+    eval_state = state.to_eval_state() # lsp： only mdl_vars，no opt_states
   return eval_state
 
 
@@ -174,11 +174,6 @@ class _InflightQueue:
       while not self._inflight_queue.empty():
         self._inflight_queue.get().block_until_ready()
 
-from paxml.tasks.lm.params import global_cfg  # XD
-def strip_zone(gs_path):  # XD
-  for zone in global_cfg.tputype2zone.values():
-    gs_path = gs_path.replace(f'_{zone}', '')
-  return gs_path
 
 class BaseTrainProgram(Program):
   """A lean interface of a basic train program.
@@ -246,10 +241,8 @@ class BaseTrainProgram(Program):
     self._initial_step = init_step
 
     # Creates the train summary writer and handler.
-    # summary_base_dir = get_summary_base_dir(job_log_dir)
-    # summary_train_dir = summary_base_dir / 'train'
-    job_log_parent = epath.Path(strip_zone(str(job_log_dir.parent)))  # XD
-    summary_train_dir = job_log_parent / 'summaries' / 'train' / job_log_dir.name  # XD
+    summary_base_dir = get_summary_base_dir(job_log_dir)
+    summary_train_dir = summary_base_dir / 'train'
     self._train_summary_writer = self._exitstack.enter_context(
         summary_utils.get_summary_writer(summary_train_dir)
     )
@@ -265,8 +258,7 @@ class BaseTrainProgram(Program):
 
     # Creates the summary writer and handler for eval on train input.
     if not train_p.eval_skip_train:
-      # summary_eval_train_dir = summary_base_dir / 'eval_train'
-      summary_eval_train_dir = job_log_parent / 'summaries' / 'eval_train' / job_log_dir.name  # XD
+      summary_eval_train_dir = summary_base_dir / 'eval_train'
       eval_train_summary_writer = self._exitstack.enter_context(
           summary_utils.get_summary_writer(summary_eval_train_dir)
       )
@@ -278,8 +270,9 @@ class BaseTrainProgram(Program):
       )
 
     # Initializes other states.
+    # lsp
     self._train_unpadded_global_batch_size = (
-        train_input.get_global_batch_size(train_input)
+        train_input.get_global_batch_size()
     )
     self._profiler = profiling.Profiler(
         num_steps=train_p.profiler_num_steps,
@@ -295,18 +288,22 @@ class BaseTrainProgram(Program):
 
   # TODO(laigd): further split this into smaller modules and add program APIs
   # correspondingly.
-  @py_utils.benchmark('[PAX STATUS]: ', first_n=20//4)  # XD
+  @py_utils.benchmark('[PAX STATUS]: ', first_n=20)
   def run(self, state: TrainState, step: int) -> TrainProgramOutput:
     train_p = self._task.train
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieving inputs.', 5)
+    # dict: 'ids', 'labels', 'weights', 'paddings', 'segment_ids', 'segment_pos', ' ....
     model_inputs = self._train_input.get_next_padded()
+    # logging.info(f'model_inputs: {model_inputs}')
+    # __import__('ipdb').set_trace()
 
     # Verify user-provided spec matches the first batch's structure.
+    # train_p.enforce_input_specs: false
     if step == self._initial_step and train_p.enforce_input_specs:
       self._partitioner.check_input_spec(model_inputs)
-
+    # lsp: shared model_inputs, 要仔细看下怎么shard的
     model_inputs = self._partitioner.preprocess_inputs(
-        self._train_input,
+        self._train_input, # train_input SeqIOInput
         model_inputs,  ## First two args can be consolidated
         self.train_input_partition_spec(model_inputs),
     )
@@ -326,13 +323,14 @@ class BaseTrainProgram(Program):
     )
     with jax.profiler.StepTraceAnnotation('train', step_num=step):
       with py_utils.timeit() as train_period:
+        # lsp train_step
         new_step, new_state, train_outputs = self.train_step(
             step,
             state,
             self._train_prng_seed,
             model_inputs,
             BaseStepFnStaticArgs(
-                unpadded_global_batch_size=self._train_unpadded_global_batch_size
+                unpadded_global_batch_size=self._train_unpadded_global_batch_size # 8
             ),
         )
       del state  # Unused.
@@ -435,7 +433,7 @@ class BaseTrainProgram(Program):
       self, step: int, new_step: int, train_outputs: StepFnOutput
   ) -> Optional[float]:
     # Compute steps/sec every this many steps, revisit when necessary.
-    compute_steps_per_sec_interval_steps = self._task.train.summary_interval_steps  # XD: 10
+    compute_steps_per_sec_interval_steps = 10
 
     steps_per_sec = None
     should_compute_steps_per_sec = (
@@ -462,7 +460,7 @@ class BaseTrainProgram(Program):
     steps_per_sec = self._steps_per_sec(
         step, self._train_summary_last_time, self._train_summary_last_step
     )
-    # logging.info('steps/sec: %f', steps_per_sec)  # XD remove
+    logging.info('steps/sec: %f', steps_per_sec)
     self._train_summary_last_time = time.time()
     self._train_summary_last_step = step
 
@@ -502,7 +500,8 @@ class BaseTrainProgram(Program):
       logging.debug('  train_p.eval_skip_train is True. Skipping eval_train.')
     else:
       logging.debug('  Retrieving eval model_inputs.')
-      eval_inputs = self._train_input.peek_padded()
+      # lsp change
+      eval_inputs = self._train_input.get_next_padded()
       if eval_inputs is None:
         logging.debug('  eval_inputs is None. Skipping eval_train.')
       else:
@@ -549,7 +548,7 @@ class BaseTrainProgram(Program):
       self._eval_train_summary_handler.close()
     self._exitstack.close()
 
-
+# lsp: trainprogram, 继承BaseTrainProgram
 class SingleTaskTrainProgram(BaseTrainProgram):
   """Train program that assumes a single task on a single dataset."""
 
@@ -567,6 +566,7 @@ class SingleTaskTrainProgram(BaseTrainProgram):
     self._eval_train_step_created = False
     self._eval_train_step_fn = None
 
+  # lsp train_step
   def _get_train_step(
       self, inputs: NestedJTensor
   ) -> Tuple[Any, Optional[NestedPartitionSpec]]:
@@ -579,7 +579,7 @@ class SingleTaskTrainProgram(BaseTrainProgram):
     if not self._train_step_created:
       self._train_step_fn, self._train_step_input_partition_spec = (
           self._partitioner.partition(
-              trainer_lib.train_step_single_learner,
+              trainer_lib.train_step_single_learner, # lsp: train step fn?
               trees.get_shape_dtype(inputs),
               is_eval=False,
           )
@@ -604,6 +604,7 @@ class SingleTaskTrainProgram(BaseTrainProgram):
       self._eval_train_step_created = True
     return self._eval_train_step_fn
 
+# lsp train_step
   def train_step(
       self,
       step: int,
@@ -614,6 +615,7 @@ class SingleTaskTrainProgram(BaseTrainProgram):
   ) -> Tuple[int, TrainState, StepFnOutput]:
     """The train step function."""
     train_step, _ = self._get_train_step(inputs)
+    # trainer_lib.train_step_single_learner
     return step + 1, *train_step(state, prng_key, inputs, static_args)
 
   def eval_train_step(
@@ -747,11 +749,14 @@ class BaseEvalProgram(Program):
             self._eval_input_pipeline
         )
     )
+    # lsp: -1时表示评测整个eval集， reset_for_eval eval的时候为True
     self._eval_num_steps = (
         -1
         if self._input_p.reset_for_eval
         else self._input_p.eval_loop_num_batches
     )
+    # lsp
+    # self._eval_num_steps = self._input_p.eval_loop_num_batches
 
     # Creates the eval summary writer.
     summary_base_dir = get_summary_base_dir(job_log_dir)
@@ -841,7 +846,7 @@ class BaseEvalProgram(Program):
         eval_scoring_metrics=eval_scoring_metrics,
         num_eval_steps=num_steps,
     )
-
+  # lsp: eval step
   def _run_eval_loop(self, state: TrainState):
     losses = []
     summary_tensor_dict = {}
@@ -852,6 +857,7 @@ class BaseEvalProgram(Program):
     # self._eval_num_steps < 0 indicates running until input out of range.
     while self._eval_num_steps < 0 or step_num < self._eval_num_steps:
       try:
+        # lsp: eval dataloader
         eval_inputs = self.eval_input.get_next_padded()
       except (tf.errors.OutOfRangeError, StopIteration):
         if self._eval_num_steps > 0:
@@ -870,6 +876,7 @@ class BaseEvalProgram(Program):
       eval_inputs = self._partitioner.preprocess_inputs(
           self.eval_input, eval_inputs, supported_input_partition_spec
       )
+      # lsp: eval step, eval_outputs:  StepFnOutput对象
       eval_outputs = self.eval_step(
           state,
           self._eval_prng_seed,
@@ -962,14 +969,14 @@ class SingleTaskEvalProgram(BaseEvalProgram):
     if not self._eval_step_created:
       self._eval_step_fn, self._eval_step_input_spec = (
           self._partitioner.partition(
-              trainer_lib.eval_step_single_learner,
+              trainer_lib.eval_step_single_learner, # lsp： 最后还是回到这个函数去eval
               inputs_shape_dtype=trees.get_shape_dtype(inputs),
               is_eval=True,
           )
       )
       self._eval_step_created = True
     return self._eval_step_fn, self._eval_step_input_spec
-
+  # lsp: eval step
   def eval_step(
       self,
       state: train_states.TrainState,
@@ -978,7 +985,9 @@ class SingleTaskEvalProgram(BaseEvalProgram):
       static_args: BaseStepFnStaticArgs,
   ) -> StepFnOutput:
     """The eval step function."""
+    # lsp: 获取eval_step最后的函数 -> eval_step -> lsp:其实就是tran_step_fn，只不过传入的参数不同，函数是同一个
     eval_step, _ = self._get_eval_step(inputs)
+    # lsp: eval_step_single_learner(), eval_step_fn_out: StepFnOutput对象
     unused_train_state, eval_step_fn_out = eval_step(
         state, prng_key, inputs, static_args
     )

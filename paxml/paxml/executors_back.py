@@ -143,17 +143,12 @@ class DefaultExecutor(base_executor.BaseExecutor):
         '[PAX STATUS]: Instantiating train input pipeline (%s)', train_input_p
     )
     if not task.train.enable_input_checkpointing:
-      # 更新输入数据的开始步数
       _maybe_update_latest_model_step(train_input_p, step, task)
-    # 实例化train_input_p
     train_input = instantiate(train_input_p)
-    # __import__('ipdb').set_trace()
 
-    # 输入数据的一个对象
     train_input_for_partitioner = (
         None if task.train.enforce_input_specs else train_input
     )
-    # None
     train_input_for_checkpoint = (
         train_input if task.train.enable_input_checkpointing else None
     )
@@ -185,8 +180,8 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
     # Creates the root prng key and train input pipeline.
     root_prng_key = jax.random.PRNGKey(self._task.train.random_seed)
-    # train_input_p = partitioner.preprocess_input_config(train_input_p)
-    # train_input和train_input_for_partitione一样
+    # <PaxConfig[SeqIOInput(    设定process_index
+    train_input_p = partitioner.preprocess_input_config(train_input_p)
     train_input, train_input_for_partitioner, train_input_for_checkpoint = (
         self._maybe_create_train_input(
             self._task, checkpointer.step_to_restore, train_input_p
@@ -197,7 +192,6 @@ class DefaultExecutor(base_executor.BaseExecutor):
     # prng key.
     # TODO(laigd): let it take ShapeDtypeStruct of prng key instead.
     train_input_specs = None
-    # lsp: false
     if self._task.train.enforce_input_specs:
       train_input_specs = trainer_lib.get_train_input_specs_for_model_init(
           self._task, input_specs_provider
@@ -208,19 +202,18 @@ class DefaultExecutor(base_executor.BaseExecutor):
             '`self._task.train.enforce_input_specs` requires it.'
         )
     logging.info('[PAX STATUS]: Setting up partitioner')
+    # __import__('ipdb').set_trace()
+    
     partitioner.setup(
         jax_task,
         root_prng_key,
         train_inputs_shape_dtype=train_input_specs, # None
-        train_input_pipeline=train_input_for_partitioner,
+        train_input_pipeline=train_input_for_partitioner, # SeqIOInput(batch_size=64, num_infeed_hosts=1, infeed
         job_log_dir=job_log_dir,
     )
     logging.info('[PAX STATUS]: Getting train state metadata.')
-    # lsp: 基于task的model参数对象。可以知道参数的shape，dtyp和shard信息，这样就可以得到train_state_metadata。
-    # train_state_metadata包含属性：input_shape_dtype： 输入数据的shape和dtype；padded_global_shapes： paded参数的shape和dtype
-    # unpadded_global_shapes： unpaded参数的shape和dtype，因为dicarded_opt_states为[]，因此和padded_global_shapes一样
-    # partition_specs: 参数的shard到tpu的方式
     train_state_metadata = partitioner.get_train_state_metadata()
+    logging.info(f'train_state_metadata: {train_state_metadata}')
 
     # JaxContext needed for shared layer lookup from global scope.
     logging.info('[PAX STATUS]: Writing post init model hparams.')
@@ -232,8 +225,9 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
     # Restore TrainState from checkpoint or initialize it.
     logging.info('[PAX STATUS]: Starting checkpoint load / variable init.')
+    # __import__('ipdb').set_trace()
     with py_utils.timeit() as checkpoint_load_timer:
-      # 获取模型参数
+      # 参数初始化，shard等
       (
           partitioned_train_state,
           train_state_provenance,
@@ -250,17 +244,19 @@ class DefaultExecutor(base_executor.BaseExecutor):
         checkpoint_load_timer.elapsed,
     )
     if train_state_provenance:
+      # 写参数key。   value是步数？
       trainer_lib.write_train_provenance_file(
           train_state_provenance, job_log_dir
       )
 
-    # Splits the key.
+    # Splits the key. 对host的root_prng_key进行切分，分为三个key
     train_prng_seed, eval_prng_seed, decode_prng_seed = jax.random.split(
         root_prng_key, 3
     )
     logging.info('train prng seed: %s', train_prng_seed)
     logging.info('eval prng seed: %s', eval_prng_seed)
     logging.info('decode prng seed: %s', decode_prng_seed)
+    # lsp: 将 seed 切分 为local_device_count 份
     train_prng_seed = partitioner.preprocess_prng_key(train_prng_seed)
     eval_prng_seed = partitioner.preprocess_prng_key(eval_prng_seed)
     # If prng_key_fold_with_batch_index is True, we need to fold in the step
@@ -280,6 +276,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
   def start(self):
     logging.info('Starting executor.')
+    # is_vars_replicated: false  self._task.model.ici_mesh_shape: 1,4,2
     is_vars_replicated = self._task.model.ici_mesh_shape is None
     _train_and_evaluate_common(
         task=self._task,
@@ -334,10 +331,13 @@ def _train_and_evaluate_common(
 ):
   """Training loop code common to both pmap and spmd."""
   train_p = task.train
+  # 包含'input_shape_dtype', 'padded_global_shapes', 'partition_specs', 'unpadded_global_shapes', 'var_weight_hparams'属性的对象
   train_state_metadata = partitioner.get_train_state_metadata()
+  # none
   train_input_for_checkpoint = (
       train_input if train_p.enable_input_checkpointing else None
   )
+  # 0
   initial_global_step = int(
       py_utils.maybe_unreplicate_for_fully_replicated(
           partitioned_train_state.step
@@ -353,7 +353,7 @@ def _train_and_evaluate_common(
   logging.info('[PAX STATUS]: Starting training loop.')
   step_i = initial_global_step
 
-  # Sets up the programs.
+  # Sets up the programs. 设置一些训练参数,比如步数，目录等
   train_program.setup(
       task,
       train_input,
@@ -363,8 +363,10 @@ def _train_and_evaluate_common(
       eval_prng_seed,
       step_i,
   )
+  # []
   for program in eval_programs:
     program.setup(task, partitioner, job_log_dir, eval_prng_seed)
+  # []
   for program in decode_programs:
     program.setup(task, partitioner, job_log_dir, decode_prng_seed)
   trainer_lib.check_unique_names([p.eval_input for p in eval_programs])
@@ -375,7 +377,8 @@ def _train_and_evaluate_common(
   summary_utils.write_model_structure(
       train_summary_writer, partitioned_train_state, is_vars_replicated
   )
-  # train_state_provenance is None when model restored from checkpoint
+  # lsp: train_state_provenance is None when model restored from checkpoint
+  # TrainStateProvenance(step="(random_init)", mdl_vars={'params': {'lm': {'embedding_lookup': {'emb_var':
   if train_state_provenance:
     summary_utils.write_model_provenance(
         train_summary_writer, train_state_provenance
@@ -394,12 +397,13 @@ def _train_and_evaluate_common(
   gc.freeze()
   while True:
     logging.log_first_n(INFO, '[PAX STATUS]: Beginning step `%d`.', 5, step_i)
+    #  partitioned_train_state: 'mdl_vars', 'new_state', 'opt_states', 'replace', 'step', 'to_eval_state']
     checkpointer.save_if_needed(
         step_i,
-        partitioned_train_state,
-        train_state_metadata.unpadded_global_shapes,
-        train_state_metadata.partition_specs,
-        train_input_for_checkpoint,
+        partitioned_train_state, # trainstate
+        train_state_metadata.unpadded_global_shapes, # shape
+        train_state_metadata.partition_specs, # ps shard
+        train_input_for_checkpoint, # none
     )
     if exit_after_ondemand_checkpoint and checkpointer.reached_preemption(
         step_i
@@ -423,8 +427,7 @@ def _train_and_evaluate_common(
     train_weighted_scalars = program_output.weighted_scalars
     steps_per_sec = program_output.steps_per_sec
     eval_train_metrics = program_output.eval_train_metrics
-    if eval_train_metrics is not None:
-      logging.info(f'step: {step_i}|| eval_train_metrics: {eval_train_metrics}')
+
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
@@ -436,12 +439,9 @@ def _train_and_evaluate_common(
         and step_i % train_p.eval_interval_steps == 0
     ):
       logging.log_first_n(INFO, '[PAX STATUS]:  Starting eval_step().', 5)
-      # eval_use_ema_states: False
-      # lsp: eval_partitioned_train_state: mdl_vars
       eval_partitioned_train_state = programs.get_eval_train_state(
           task, partitioned_train_state, task.train.eval_use_ema_states
       )
-      logging.info(f'eval_programs: {eval_programs}')
       # If we have eval test then also evaluate on test.
       if eval_programs:
         logging.debug('[PAX STATUS]:  Running eval programs.')

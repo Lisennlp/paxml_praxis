@@ -104,6 +104,7 @@ class ResNet50Pjit(base_experiment.BaseExperiment):
   NUM_EPOCHS = 90
   LEARNING_RATE = (TRAIN_BATCH_SIZE / 256) * 0.1
   L2_REGULARIZER_WEIGHT = 1e-4
+  # lsp: 需要固定的参数名称
   BPROP_VARIABLE_EXCLUSION = []
   CLIP_GRADIENT_NORM_TO_VALUE = 0.0
   EMA_DECAY = 0.0

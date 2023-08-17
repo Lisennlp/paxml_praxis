@@ -28,9 +28,14 @@ from paxml import checkpoint_version
 from praxis import pytypes
 
 
-_CHECKPOINT_PREFIX = 'checkpoint'
-CHECKPOINT_PREFIX = f'{_CHECKPOINT_PREFIX}_'
-_STEP_FORMAT_FIXED_LENGTH = 8
+_CHECKPOINT_PREFIX = ''
+CHECKPOINT_PREFIX = ''
+_STEP_FORMAT_FIXED_LENGTH = None
+
+# _CHECKPOINT_PREFIX = 'checkpoint'
+# CHECKPOINT_PREFIX = f'{_CHECKPOINT_PREFIX}_'
+# _STEP_FORMAT_FIXED_LENGTH = 8
+
 STATE_ITEM_NAME = 'state'
 INPUT_ITEM_NAME = 'train_input'
 TMP_PREFIX = 'tmp_'

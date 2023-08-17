@@ -130,7 +130,7 @@ class BaseExperiment(metaclass=abc.ABCMeta):
       be created based on the task settings.
     """
     return None
-
+  # lsp: train_program
   def train_program(self) -> programs.BaseTrainProgram:
     """Returns the train program to use for training the model."""
     return programs.SingleTaskTrainProgram()
@@ -139,8 +139,8 @@ class BaseExperiment(metaclass=abc.ABCMeta):
     """Returns the list of eval programs to use for model evaluation."""
     eval_programs = [
         programs.SingleTaskEvalProgram(input_p)
-        for input_p in self.datasets()
-        if not input_p.is_training
+        for input_p in self.datasets() # lsp: 获取训练和测试集对象
+        if not input_p.is_training # 过滤掉训练集，只评测测试集
     ]
     return eval_programs
 

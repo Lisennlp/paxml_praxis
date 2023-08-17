@@ -315,6 +315,7 @@ def process_outputs(
   return metrics
 
 
+# lsp： 继承了BaseInput, 有一个属性eval_loop_num_batches默认为1
 class SeqIOInput(base_input.BaseInput):
   """An adaptor for getting SeqIO data.
 
@@ -484,9 +485,11 @@ class SeqIOInput(base_input.BaseInput):
   eval_enable_cache: bool = True
   eval_num_examples: Optional[int] = None
   warm_start: bool = True
+  eval_loop_num_batches: int = 100
 
   def __post_init__(self):
     # Modify hparams in-place before freezing hparams
+    # lsp: self.name = C4Tran or C4Eval
     if not self.name:
       mixture_name = self.mixture_name or self.mixture_or_task.name  # pytype: disable=attribute-error
       self.name = f'{mixture_name}_{self.split_name}'
@@ -500,7 +503,9 @@ class SeqIOInput(base_input.BaseInput):
       self.input_random_seed = 42
     self.configure_tf_data_options()
     super().__post_init__()
-    self._validate_hparams()
+    # -> self._mixture_or_task_inst: <seqio.dataset_providers.Task at 0x7f2bbbbde8c0>
+    # host和device的shard信息: self._shard_info
+    self._validate_hparams() # lsp
 
     with py_utils.timeit() as get_dataset_timer:
       self.dataset = self._get_dataset()
@@ -571,7 +576,7 @@ class SeqIOInput(base_input.BaseInput):
           ),
           self.split_name,
       )
-
+    # lsp ：self.mixture_name: c4_lm_v301_gpt -> self._mixture_or_task_inst: <seqio.dataset_providers.Task at 0x7f2bbbbde8c0>
     self._mixture_or_task_inst = (
         self.mixture_or_task or seqio.get_mixture_or_task(self.mixture_name)
     )
@@ -666,6 +671,7 @@ class SeqIOInput(base_input.BaseInput):
       )
     return -1
 
+  # lsp
   def _get_dataset(self) -> tf.data.Dataset:
     logging.info(
         (
@@ -676,26 +682,23 @@ class SeqIOInput(base_input.BaseInput):
         self.batch_size,
         self.input_random_seed,
     )
+    # __import__('ipdb').set_trace()
     ds = self._get_backing_ds(
         shuffle=self.should_shuffle,
         num_epochs=-1 if self.should_repeat else 1,
         shard_info=self._shard_info)
+    # pad
     ds = self._pad_to_batch_size(ds)
+    # lsp：<ParallelBatchDataset element_spec={'ids': TensorSpec(shape=(bsz, 2048), dtype=
     ds = ds.batch(
         self.batch_size,
         drop_remainder=self.drop_remainder,
         num_parallel_calls=tf.data.AUTOTUNE,
     )
-    if self.num_batches_to_skip:
+    # lsp： 跳过的数据step
+    if self.num_batches_to_skip: 
       if self.is_training:
-        # with Timer(f'In SeqIOInput._get_dataset: skip {self.num_batches_to_skip} batches took'):  # XD
-        from datetime import datetime
-        start = datetime.now()
         ds = ds.skip(self.num_batches_to_skip)
-        end = datetime.now()
-        elapsed = str(end - start)
-        logging.warning('In SeqIOInput._get_dataset: skip %d batches took %s',
-          self.num_batches_to_skip, elapsed)
       else:
         logging.warning(
             (
@@ -854,7 +857,7 @@ class SeqIOInput(base_input.BaseInput):
       row = ids[i, :length].tolist()
       ret.append(vocab.decode(row))
     return ret
-
+  # lsp
   def _get_backing_ds(self,
                       shuffle: bool,
                       num_epochs: int,
@@ -867,16 +870,17 @@ class SeqIOInput(base_input.BaseInput):
         shard_info=shard_info,
         use_cached=self.use_cached,
         seed=self.input_random_seed,
-        trim_output_features=self.trim_output_features,
+        trim_output_features=self.trim_output_features, # default: True
         try_in_mem_cache=self.try_in_mem_cache,
     )
+    # lsp：经过preprocessors里面的函数出来。 -> key_map, tokenizer, reduce_concat, split set length....
     ds = self.mixture_or_task_inst.get_dataset(**kwargs)
 
     ds = self.feature_converter(
         ds, task_feature_lengths=self.task_feature_lengths
     )
 
-    if self.use_enumeration:
+    if self.use_enumeration: # default: True
       # We want to add enumeration provenance fields *after* applying all
       # feature converters since feature converters don't pass through
       # unrecognized fields by default

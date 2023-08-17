@@ -60,6 +60,7 @@ TrainState = train_states.TrainState
 TrainStateProvenance = train_states.TrainStateProvenance
 TrainStateMetadata = trainer_lib.TrainStateMetadata
 RunningMode = trainer_lib.RunningMode
+NestedMap = py_utils.NestedMap
 
 
 def filter_nestedmap(full_specs, partial_specs):
@@ -353,7 +354,9 @@ class Partitioner(metaclass=abc.ABCMeta):
       logging.info('[PAX STATUS]: Getting input shapes from spec.')
       self._train_inputs_shape_dtype = train_inputs_shape_dtype
     else:
+      # lsp:
       logging.info('[PAX STATUS]: Getting input shapes from first batch.')
+      # 输入的数据的每个key的shape和dtype 第一个维度乘了host数量
       self._train_inputs_shape_dtype = self._get_train_inputs_shape_dtype(
           train_input_pipeline
       )
@@ -411,11 +414,10 @@ class Partitioner(metaclass=abc.ABCMeta):
     Returns:
       The preprocessed input config.
     """
-    # Updates the runtime information.
     if input_p.num_infeed_hosts == 0:
       input_p.num_infeed_hosts = jax.process_count()
     input_p.infeed_host_index = jax.process_index()
-
+    # Updates the runtime information.
     if hasattr(input_p, 'tf_data_service_address'):
       input_p.tf_data_service_address = (
           tf_data_service_lib.get_tf_data_service_address()
@@ -509,6 +511,10 @@ class Partitioner(metaclass=abc.ABCMeta):
 
   def _get_train_state_metadata_default(self) -> TrainStateMetadata:
     """Helper method to get the TrainStateMetadata."""
+    # lsp
+    if not self._train_inputs_shape_dtype:
+      raise ValueError('Train input spec is not set. It can be set in setup().')
+
     if not self._train_inputs_shape_dtype:
       raise ValueError('Train input spec is not set. It can be set in setup().')
     return trainer_lib.create_train_state_metadata(
@@ -621,6 +627,8 @@ class PmapPartitioner(Partitioner):
     if train_state is None:
       # If no checkpoint was restored, initialize with random weights.
       metadata = self.get_train_state_metadata(discard_opt_states)
+      # lsp: discard_opt_states : False
+      # lsp ：train_state: TrainState(),  train_state_provenance: TrainStateProvenance() 每个参数都包含一个步数信息
       train_state, train_state_provenance = trainer_lib.initialize_model_state(
           self._jax_task,
           init_key,
@@ -634,6 +642,7 @@ class PmapPartitioner(Partitioner):
     logging.info(
         'train state shapes: %s', jax.tree_map(lambda x: x.shape, train_state)
     )
+    # 如果参数没有切分，则将其切分到本机的每个core上, jax.device_put_replicated(state, jax.local_devices())
     replicated_train_state = trainer_lib.replicate_model_state(train_state)
     # Unreplicated model states are not needed anymore at that point.
     del train_state
@@ -645,7 +654,7 @@ class PmapPartitioner(Partitioner):
     # From now on, different replicas should use different random seeds.
     # Here, each process will have its unique prng key.
     # root_prng_key will be further split so that each core on a host will get
-    # different key.
+    # different key. 每个host一个key， 之后进行切分，每个core都采用不同的key？
     root_prng_key = jax.random.fold_in(root_prng_key, jax.process_index())
     logging.info('root prng key: %s', root_prng_key)
     return root_prng_key, replicated_train_state, train_state_provenance
@@ -662,6 +671,7 @@ class PmapPartitioner(Partitioner):
   ) -> NestedJTensor:
     """Preprocess the input batch before using it."""
     assert partition_specs is None
+    # lsp: 将输入数据的batch维度平均放到loacl_device
     return input_pipeline.reshard_for_pmap(padded_inputs)
 
   def get_train_state_metadata(
@@ -704,7 +714,7 @@ class PmapPartitioner(Partitioner):
           train_state_metadata.var_weight_hparams,
           static_args,
       )
-
+    # lsp: pmap将train_step_fn进行处理
     partitioned_step_fn = jax.pmap(
         _wrapped_step_fn,
         axis_name=base_layer.PMAP_PARALLEL_AXIS_NAME,
@@ -728,7 +738,7 @@ class PmapPartitioner(Partitioner):
 
     return _wrapped_partitioned_step, None  # Input partition spec.
 
-
+# lsp: here
 class PjitPartitioner(Partitioner):
   """Used for partitioning a step function of a SPMD model."""
 
@@ -755,11 +765,14 @@ class PjitPartitioner(Partitioner):
     self._reshard_inputs = reshard_inputs
     logging.info('Using SPMD sharding for model parallelism.')
 
-    # Creates global mesh.
+    # Creates global mesh.  lsp: LanguageModel
     model = task.model
+    # ['replica', 'data', 'mdl']
     self._mesh_names = model.mesh_axis_names
+    # lsp: device_mesh: none
     if device_mesh is None:
       logging.info('creating mesh with py_utils.create_device_mesh')
+      # 142
       device_mesh = py_utils.create_device_mesh(
           model.ici_mesh_shape,
           model.dcn_mesh_shape,
@@ -768,6 +781,7 @@ class PjitPartitioner(Partitioner):
     else:
       logging.info('Using provided mesh for PjitPartitioner')
     logging.info('device_mesh: %s', device_mesh)
+    # 其实就是我们设置的Mesh
     self._global_mesh = jax.sharding.Mesh(device_mesh, model.mesh_axis_names)
 
     # Pjit'ed function to preprocess the prng key.
@@ -776,10 +790,14 @@ class PjitPartitioner(Partitioner):
   def _get_train_inputs_shape_dtype(
       self, train_input_pipeline: base_input.BaseInput
   ) -> NestedShapeDtypeLike:
+    # 从数据对象中sample一条数据
+    # lsp change
     sample_inputs = train_input_pipeline.peek_padded()
+    # lsp: 每条数据的输入shape和dtype，这个shape乘了host数量
     global_shape_dtype = jax.tree_map(
         py_utils.get_global_input_shape_dtype, sample_inputs
     )
+    # 每个host的输入数据的shape和dtype
     perhost_inputs_shape_dtype = trees.get_shape_dtype(sample_inputs)
     _write_input_specs(perhost_inputs_shape_dtype, self._job_log_dir)
     return global_shape_dtype
@@ -801,8 +819,9 @@ class PjitPartitioner(Partitioner):
   def check_input_spec(self, batch: NestedJTensor) -> None:
     """Check that the first input batch matches the given input spec."""
     logging.info('Checking input spec [pjit partitioner]')
-
+    # lsp: ShapeDtypeStruct是一个包含shape和dtype的类
     fn = lambda x: jax.ShapeDtypeStruct(shape=x.shape[1:], dtype=x.dtype)
+    # 训练输入的shape和dtype
     spec = jax.tree_map(fn, self.train_inputs_shape_dtype)
     input_batch_spec = jax.tree_map(fn, batch)
 
@@ -823,6 +842,7 @@ class PjitPartitioner(Partitioner):
     train_state_provenance = None
     if partitioned_train_state is None:
       # If no checkpoint was restored, initialize with random weights.
+      # discard_opt_states: false, 在partition(的时候已经初始化过 self._train_state_metadata <=> metadata
       metadata = self.get_train_state_metadata(discard_opt_states)
       # TODO(laigd): there is a potential bug here: when this is called in the
       # eval/decode pipeline, do_eval is not properly set (see the pmap
@@ -833,7 +853,7 @@ class PjitPartitioner(Partitioner):
               self._jax_task,
               init_key,
               metadata.input_shape_dtype,
-              metadata.partition_specs,
+              metadata.partition_specs, # 参数放到tpu的shard分配
               global_mesh=self.global_mesh,
               # Note: We currently enforce that the checkpoint to reload via
               # init_checkpoint_rules are in the same format as the checkpoint
@@ -878,12 +898,13 @@ class PjitPartitioner(Partitioner):
       partition_specs: Optional[NestedPartitionSpec],
   ) -> NestedJTensor:
     """Preprocess the input batch before using it."""
-    if self._reshard_inputs:
+    if self._reshard_inputs: # lsp: true
       return input_pipeline.reshard_for_spmd(
           padded_inputs, self.global_mesh, partition_specs
       )
     return padded_inputs
 
+  # lsp
   def get_train_state_metadata(
       self,
       discard_opt_states: bool = False,
@@ -900,6 +921,7 @@ class PjitPartitioner(Partitioner):
         self._train_state_metadata, discard_opt_states
     )
 
+  # lsp train_step
   @py_utils.benchmark('[PAX STATUS]: ')
   def partition(
       self,
@@ -915,13 +937,16 @@ class PjitPartitioner(Partitioner):
       is_eval: A boolean indicating if it's a eval/decode task or not.
 
     Returns:
-      (partitioned_step_fn, input_partition_spec):
+      (partitioned_step_fn, input_partition_spec): 返回train_step函数，和输入的shard
 
       - partitioned_step_fn: The partitioned step function.
       - input_partition_spec: The partition spec for the inputs of the step
         function.
     """
     metadata = self.get_train_state_metadata(discard_opt_states=is_eval)
+    # lsp: input_partition_spec 输入的shard {'ids': PartitionSpec(('replica', 'data', 'mdl'), None),
+#  'labels': PartitionSpec(('replica', 'data', 'mdl'), None),
+#  'paddings': PartitionSpec(('replica', 'data', 'mdl'), None),...}
     input_partition_spec = trainer_lib.get_input_partition_specs(
         self._mesh_names, inputs_shape_dtype
     )
@@ -938,6 +963,7 @@ class PjitPartitioner(Partitioner):
           input_partition_spec,
       )
 
+  # lsp train_step/eval_step
   def _get_step_fn(
       self,
       step_fn: StepFn,
@@ -955,6 +981,7 @@ class PjitPartitioner(Partitioner):
         self._mesh_names,
     )
 
+    # lsp train_step/eval_step
     def _wrapped_step_fn(
         state: TrainState,
         prng_key: PRNGKey,
@@ -992,6 +1019,7 @@ class PjitPartitioner(Partitioner):
       # because the way padding is added is dependent on the provided train
       # state partition specs. This is not available during auto-sharding until
       # after the compilation is done.
+      # lsp: 调用trainer_lib.train_step_single_learner/trainer_lib.eval_step_single_learner/,  train_step/eval_step
       fn_out = step_fn(
           self._jax_task,
           state,
@@ -1134,6 +1162,7 @@ class PjitPartitioner(Partitioner):
     # When reshard_inputs is true, inputs are jax.Arrays created by
     # reshard_for_spmd(). The shardings may have a custom device order.
     use_pspec_on_array_inputs = not self._reshard_inputs
+    # lsp 编译step_fn
     partitioned_step_fn = self._pjit(
         step_fn,
         is_eval,
@@ -1485,5 +1514,6 @@ def create_partitioner(
           init_is_eval, reshard_inputs, jax_task, auto_sharding_info
       )
     else:
+      # lsp: here
       partitioner = PjitPartitioner(init_is_eval, reshard_inputs, jax_task)
   return partitioner

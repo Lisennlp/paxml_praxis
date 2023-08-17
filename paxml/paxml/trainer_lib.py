@@ -157,16 +157,21 @@ def create_train_state_metadata(
   Returns:
     A TrainStateMetadata instance.
   """
+  # lsp: train_shape_dtype: 数据的shape和dtype | var_weight_hparams: 参数tree，key是参数名，value是参数的WeightHparams类对象
   var_weight_hparams = jax_task.model.abstract_init_with_metadata(
       train_shape_dtype, do_eval=do_eval
   )
+  # lsp: 每个参数的shape和dtype
   padded_global_shapes = jax_task.create_train_state_padded_shapes(
       var_weight_hparams, discard_opt_states=discard_opt_states
   )
+  # lsp: 每个参数的shape和dtype
   unpadded_global_shapes = jax_task.create_train_state_unpadded_shapes(
       var_weight_hparams, discard_opt_states=discard_opt_states
   )
+  # lsp: padded_global_shapes == padded_global_shapes -> true
   if jax_task.model.hparams.mesh_shape is not None:
+    # lsp: 参数的shard方式获取
     partition_specs = jax_task.create_train_state_partition_specs(
         var_weight_hparams, discard_opt_states=discard_opt_states
     )
@@ -377,6 +382,7 @@ def initialize_model_state(
 
   # Use jax.jit to reduce model.init memory usage. Required by a few tests after
   # migrating to shape inference.
+  # lsp init model params
   @jax.jit
   def init_fn(init_key):
     context_p = base_layer.JaxContext.HParams(
@@ -389,6 +395,7 @@ def initialize_model_state(
       )
       if model.hparams.fprop_dtype == jnp.bfloat16:
         inputs = jax.tree_map(_maybe_to_bfloat16, inputs)
+      # lsp : model.init
       return model.init(init_key, inputs)
 
   initial_vars = init_fn(init_key)
@@ -800,6 +807,7 @@ def train_step_single_learner(
   Returns:
     A tuple (updated_states, StepFnOutput).
   """
+  # jax_task： TransformerLmSpmdAdafactor
   model = jax_task.model
   assert len(jax_task.learners) == 1
   learner = jax_task.learners[0]
@@ -846,6 +854,7 @@ def train_step_single_learner(
         ) -> Tuple[
             Tuple[base_model.WeightedScalars, Dict[str, Any]], NestedJTensor
         ]:
+        # lsp
           return model.apply(
               variables,
               inputs,
@@ -856,6 +865,8 @@ def train_step_single_learner(
 
       else:
         apply = functools.partial(apply_fn, model)
+      # lsp： 开始前传
+      # __import__('ipdb').set_trace()
       (weighted_scalars, per_example_output), updated_vars = apply(
           mdl_vars,
           inputs,
@@ -915,7 +926,7 @@ def train_step_single_learner(
   )
 
   if grad_fn is None:
-
+    # lsp
     def grad_fn(mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
       with_grad = tasks_lib.filter_vars_for_grad_or_opt(
           mdl_vars, excluded_for_grad
@@ -1079,6 +1090,7 @@ def train_step_single_learner(
 
 
 # TODO(laigd): rename - eval has nothing to do with number of learners.
+# lsp: eval _step
 def eval_step_single_learner(
     jax_task: tasks_lib.SingleTask,
     states: TrainState,
@@ -1356,14 +1368,18 @@ def initialize_partitioned_model_states(
     The partitioned vars themselves.
   """
   model = jax_task.model
+  # var_weight_hparams: 初始化方式，pytree结构，和train state一样，只不过value为初始化的方式params_init
   if not var_weight_hparams:
     var_weight_hparams = model.abstract_init_with_metadata(global_input_shapes)
-
+  # discard_opt_states: False  state_specs.to_eval_state(): 没有opt_states的trainstate specs
+  #params and opt_states shard
   train_state_partition_specs = (
       state_specs.to_eval_state() if discard_opt_states else state_specs
   )
+  # params and opt_states shape
   train_state_unpadded_shapes = jax.tree_map(
       lambda x: x.shape,
+      # jax_task class train?还是继承了train类？
       jax_task.create_train_state_unpadded_shapes(
           var_weight_hparams, discard_opt_states
       ),
@@ -1396,8 +1412,9 @@ def initialize_partitioned_model_states(
   )
 
   mesh_names = model.hparams.mesh_axis_names
+  # rng key: PartitionSpec(None,)
   prng_key_partition_spec = base_layer.to_partition_spec((None,), mesh_names)
-
+  # lsp: init函数，在参数初始化的时候，已经把参数放到tpu上了
   init_fn = pjit.pjit(
       init_model_from_seed,
       in_shardings=prng_key_partition_spec,

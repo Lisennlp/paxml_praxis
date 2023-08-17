@@ -32,6 +32,7 @@ from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import schedules
 from praxis.layers import activations
+from praxis.layers import normalizations  # XD
 from praxis.layers import embedding_softmax
 from praxis.layers import models
 from praxis.layers import transformer_models
@@ -64,6 +65,7 @@ def set_sharding_annotations_v1(
   replica_axis = 'replica'
   data_axis = 'data'
   mdl_axis = 'mdl'
+  # lsp: mesh
   mesh_axis_names = [replica_axis, data_axis, mdl_axis]
   task_p.train.inputs_split_mapping = NestedMap(
       map_1d=((replica_axis, data_axis),),
@@ -509,7 +511,7 @@ class TransformerLmPmapAdam(base_experiment.BaseExperiment):
 
     return task_p
 
-
+# lsp basemodel here
 class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   """Base SPMD Transformer LM configuration using Adafactor."""
   # architecture related
@@ -531,6 +533,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
   COMBINE_QKV = True
+  NORMALIZATION_CLS = normalizations.LayerNorm  # XD add RmsNorm
   ACTIVATION_CLS = activations.ReLU
   USE_GATED_ACTIVATION = False
   DECAY_END = 100000
@@ -569,13 +572,15 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         assert self.MODEL_DIMS % self.DIMS_PER_HEAD == 0
         num_heads = int(self.MODEL_DIMS / self.DIMS_PER_HEAD)
       else:
-        # assert self.MODEL_DIMS == self.NUM_HEADS * self.DIMS_PER_HEAD  
+        assert self.MODEL_DIMS == self.NUM_HEADS * self.DIMS_PER_HEAD
         num_heads = self.NUM_HEADS
     else:
       assert self.NUM_HEADS is not None
       num_heads = self.NUM_HEADS
 
     task_p = pax_fiddle.Config(tasks_lib.SingleTask, name='xformer_task')
+    # LanguageModel: default -> template_field(transformer_models.TransformerLm)
+    #lsp: pax_fiddle.Config函数包了之后，初始化LanguageModel类(name是该类__init__的参数)，只不过，task_p.model只是一个类对象，只能调用类属性，不能调用实例方法和属性。
     task_p.model = pax_fiddle.Config(models.LanguageModel, name='xformer_lm')
     model_p = task_p.model
     model_p.lm_tpl.packed_input = self.PACKED_INPUT
@@ -583,6 +588,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     model_p.lm_tpl.vocab_size = self.VOCAB_SIZE
 
     if self.SEPARATE_EMBEDDING:
+      # lsp embed
       model_p.lm_tpl.separate_embedding_tpl = pax_fiddle.Config(
           layers.Embedding
       )
@@ -590,24 +596,31 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
 
     softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(self.MODEL_DIMS))
     # pytype: disable=attribute-error  # enable-nested-classes
+    # lsp: 最后的lm_head
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init
     if self.SEPARATE_EMBEDDING:
+      # lsp: 词向量
       model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = True
+      # XD: Why not set softmax_tpl.scale_sqrt_depth?
     else:
       model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = True
     model_p.lm_tpl.softmax_tpl.soft_cap_logits = self.SOFTMAX_CAP_LOGITS
 
-    if self.TRAINABLE_POSITION_EMB:
+    if self.TRAINABLE_POSITION_EMB: # true
+      # lsp: 位置向量
       model_p.lm_tpl.position_emb_tpl = pax_fiddle.Config(
           layers.TrainablePositionalEmbedding,
           max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
       )
-
+    model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
+    
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
     stacked_transformer_tpl.model_dims = self.MODEL_DIMS
-    stacked_transformer_tpl.hidden_dims = self.HIDDEN_DIMS
+    # USE_GATED_ACTIVATION: True, HIDDEN_DIMS: 11008
+    stacked_transformer_tpl.hidden_dims = self.HIDDEN_DIMS if self.USE_GATED_ACTIVATION else self.MODEL_DIMS * 4 # XD
     stacked_transformer_tpl.num_layers = self.NUM_LAYERS
     stacked_transformer_tpl.num_heads = num_heads
+    # DIMS_PER_HEAD: None
     stacked_transformer_tpl.dim_per_head = self.DIMS_PER_HEAD
 
     stacked_transformer_tpl.dropout_prob = self.DROPOUT_PROB
@@ -617,13 +630,19 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     )
     transformer_layer_p.tr_atten_tpl.atten_logit_cap = self.ATTEN_LOGIT_CAP
     transformer_layer_p.norm_policy = self.NORM_POLICY
+    transformer_layer_p.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
+    # transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = True # not self.USE_ROTARY_POSITION_EMB  # XD
+    # transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = True  # XD: True
+    # transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
     transformer_layer_p.tr_atten_tpl.use_bias = False
     transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
+    transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD
     transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
         self.ACTIVATION_CLS
     )
     transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
         self.USE_GATED_ACTIVATION)
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
     transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
     # pytype: enable=attribute-error  # enable-nested-classes
 
@@ -635,8 +654,11 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       )
     if self.USE_ROTARY_POSITION_EMB:
       transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
-
+    # USE_REPEATED_LAYER: True, in C4SpmdGpt3AdamOrgHP 
     if self.USE_REPEATED_LAYER:
+      # 每层进行repeat -> NUM_LAYERS
+      #lsp forward-1, -> StackedTransformerRepeated -> transformers.py-1873
+      #
       model_p.lm_tpl.stacked_transformer_tpl = pax_fiddle.Config(
           layers.StackedTransformerRepeated
       )
@@ -667,6 +689,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     task_p.train.profiler_capture_step = self.PROFILER_CAPTURE_STEP
 
     if self.ICI_MESH_SHAPE is not None:
+      # lsp：设置一大堆shard策略
       set_sharding_annotations_v1(task_p, self.TRAINING_OPTIMIZED_SHARDING,
                                   self.ICI_MESH_SHAPE, self.DCN_MESH_SHAPE)
     maybe_setup_moe_params(model_p.lm_tpl.stacked_transformer_tpl)

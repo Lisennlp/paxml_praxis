@@ -177,45 +177,53 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       train_input_pipeline: Optional[base_input.BaseInput] = None,
       force: Optional[bool] = False,
   ):
+    logging.info(f'_enable_checkpoint_saving0000: {self._enable_checkpoint_saving}')
     if not self._enable_checkpoint_saving:
       return
+    logging.info(f'step_i: {step_i} ||_enable_checkpoint_saving1111: {self._enable_checkpoint_saving}')
     with py_utils.timeit() as save_period:
       self.checkpoint_manager.save(
           step_i,
           partitioned_train_state,
-          train_state_unpadded_shape_dtype_struct,
-          train_input_pipeline,
+          train_state_unpadded_shape_dtype_struct, # lsp: trainstate的shape和dtype
+          train_input_pipeline, # train_input_pipeline: None
           force=force,
       )
+    # 记录时间
     monitoring.record_event_duration_secs(
         _WRITE_CHECKPOINT_EVENT, save_period.elapsed
     )
+    logging.info(f'save_period.elapsed000: {save_period.elapsed}')
+    logging.info(f'_WRITE_CHECKPOINT_EVENT: {_WRITE_CHECKPOINT_EVENT}')
 
+
+  # pjit
   def _restore_with_args(
       self,
       step_i,
-      train_state_global_shapes,
-      train_state_unpadded_shape_dtype_struct,
+      train_state_global_shapes, # metadata.padded_global_shapes,
+      train_state_unpadded_shape_dtype_struct, #  metadata.unpadded_global_shapes,
       global_mesh,
-      train_state_pspecs,
-      train_input_pipeline,
+      train_state_pspecs, # metadata.partition_specs
+      train_input_pipeline, # 输入数据的shape和dtype
   ):
     restore_args = {}
     if self._checkpoint_type == CheckpointType.GDA:
       restore_args = {
-          'specs': train_state_pspecs,
-          'mesh': global_mesh,
-          'transforms': self._restore_transformations,
+          'specs': train_state_pspecs, # shard
+          'mesh': global_mesh, # mesh
+          'transforms': self._restore_transformations, # None
       }
     elif self._checkpoint_type == CheckpointType.PERSISTENCE:
       restore_args = {
           'state_specs': train_state_pspecs,
           'global_mesh': global_mesh,
       }
+    # lsp:参数加载的时候，需要参数的shape和dtype + shard specs信息
     return self.checkpoint_manager.restore(
         step_i,
-        train_state_global_shapes,
-        train_state_unpadded_shape_dtype_struct,
+        train_state_global_shapes, # params shape
+        train_state_unpadded_shape_dtype_struct, #  params shape
         train_input_pipeline,
         restore_kwargs=restore_args,
     )
@@ -241,26 +249,32 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
           force=True,
       )
 
+  # lsp
   def save_if_needed(
       self,
       step_i,
-      partitioned_train_state,
-      train_state_unpadded_shape_dtype_struct=None,
-      train_state_pspecs=None,
+      partitioned_train_state, # 训练的trainstate，包括mdl_vars和opt_states, step等
+      train_state_unpadded_shape_dtype_struct=None, # 参数的shape和dtype
+      train_state_pspecs=None, # 参数的shard specs
       train_input_pipeline=None,
   ):
+    # lsp: 保存不需要
     del train_state_pspecs
+    # __import__('ipdb').set_trace()
+    logging.info(f'step_i0000: {step_i}')
     if not self.checkpoint_manager.should_save(step_i):
       return
+    logging.info(f'step_i1111: {step_i}')
     self._save_with_args(
         step_i,
         partitioned_train_state=partitioned_train_state,
         train_state_unpadded_shape_dtype_struct=train_state_unpadded_shape_dtype_struct,
-        train_input_pipeline=train_input_pipeline,
+        train_input_pipeline=train_input_pipeline, # 输入数据的shape和dtype
     )
     self.checkpoint_manager.check_for_errors()
 
   # TODO(laigd): merge this with _SpmdEvalCheckpointer.get_model_states().
+  # lsp restore model, 这个函数出来之后的参数已经经过shard了
   def get_model_states(
       self,
       partitioner: partitioning.Partitioner,
@@ -268,8 +282,15 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       root_prng_key: PRNGKey,
       train_input_pipeline: Optional[base_input.BaseInput] = None,
   ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
+
+    logging.info(f'padded_global_shapes: {metadata.padded_global_shapes}')
+    logging.info(f'unpadded_global_shapes: {metadata.unpadded_global_shapes}')
+    logging.info(f'self._step_to_restore: {self._step_to_restore}')
+
+    # __import__('ipdb').set_trace()
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:
+        # 指定其他的加载模型路径
         if self._external_checkpoint_path is None:
           partitioned_train_state = None
         else:
@@ -592,10 +613,12 @@ def _create_checkpointer(
       )
     else:
       checkpointer = FlaxCheckpointer(FlaxCheckpointHandler())
+  # 默认False
   elif enable_async_checkpointing:
     if maybe_use_persistence_checkpointing:
       raise NotImplementedError('Persistence checkpointer not supported.')
     else:
+      # lsp: 创建checkpointer，不走这
       checkpointer = checkpoints.AsyncCheckpointer(
           checkpoints.PaxCheckpointHandler(
               enforce_restore_shape_check=enforce_restore_shape_check,
@@ -604,6 +627,8 @@ def _create_checkpointer(
           timeout_secs=600,
       )
   else:
+    # lsp AsyncCheckpointer: 是做等待所有参数完成的作用，真实的是PyTreeCheckpointHandler在做事
+    # checkpointer = orbax.checkpoint.AsyncCheckpointer(orbax.checkpoint.PyTreeCheckpointHandler())
     if checkpoint_type == CheckpointType.GDA:
       checkpointer = Checkpointer(
           PaxCheckpointHandler(
@@ -628,9 +653,12 @@ def _create_checkpointer(
           ' enable_input_checkpointing=False.'
       )
     train_input_checkpointer = checkpoints.BaseInputCheckpointHandler()
-
+  # enable_input_checkpointing: False
   if task_p.train.enable_input_checkpointing:
     train_input_p.input_checkpointing_enabled = True
+
+  # __import__('ipdb').set_trace()
+  logging.info(f'options: {options}')
   checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       checkpoint_dir,
       checkpointer,
@@ -641,6 +669,7 @@ def _create_checkpointer(
   )
 
   if task_p.model.ici_mesh_shape is not None:
+    # lsp here
     checkpointer = _OrbaxPjitTrainingCheckpointer(
         checkpoint_manager,
         checkpoint_type,

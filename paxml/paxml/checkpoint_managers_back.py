@@ -91,14 +91,14 @@ def _create_items_dict_with_metadata(
   # (padded) train_state
   items = {STATE_ITEM_NAME: train_state}
 
-  if version > 0:
-    metadata = checkpoint_metadata.make_metadata(
-        version,
-        train_state,
-        train_state_unpadded_shape_dtype_struct,
-        tensorstore_use_ocdbt=tensorstore_use_ocdbt,
-    )
-    items.update({METADATA_ITEM_NAME: metadata})
+  # if version > 0:
+  #   metadata = checkpoint_metadata.make_metadata(
+  #       version,
+  #       train_state,
+  #       train_state_unpadded_shape_dtype_struct,
+  #       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
+  #   )
+    # items.update({METADATA_ITEM_NAME: metadata})
 
   return items
 
@@ -221,6 +221,8 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     self._options.step_format_fixed_length = (
         checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
     )
+    self._options.step_format_fixed_length = None
+
 
   @property
   def version(self) -> float:
@@ -369,16 +371,19 @@ class OrbaxCheckpointManager:
     self._tensorstore_use_ocdbt = tensorstore_use_ocdbt
     checkpointers = {
         STATE_ITEM_NAME: checkpointer,
-        METADATA_ITEM_NAME: orbax.checkpoint.Checkpointer(
-            orbax.checkpoint.JsonCheckpointHandler()
-        ),
+        # METADATA_ITEM_NAME: orbax.checkpoint.Checkpointer(
+        #     orbax.checkpoint.JsonCheckpointHandler()
+        # ),
     }
 
     if train_input_checkpointer:
       checkpointers[INPUT_ITEM_NAME] = train_input_checkpointer
 
 # Internal Orbax infra configuration
-
+# lsp
+    # self._manager = orbax.checkpoint.CheckpointManager(directory, checkpointers)
+    # self._manager.version = self.latest_step() if self.latest_step() is not None else 0
+    # self._manager._options.save_interval_steps = options.save_interval_steps
     self._manager = _CheckpointManagerImpl(
         directory,
         checkpointers,
@@ -437,30 +442,32 @@ class OrbaxCheckpointManager:
       )
 
     # save_kwargs
-    # lsp：版本信息{'state': {'version': ...}}
     save_kwargs = _update_args_with_version(None, self.version)
 
-    # items，如果self.version > 0则加入metadata数据进行保存, 没有的话返回{'state': train_state}
+    # items
     items = _create_items_dict_with_metadata(
         train_state,
         train_state_unpadded_shape_dtype_struct,
         self.version,
         tensorstore_use_ocdbt=self._tensorstore_use_ocdbt,
     )
+
     if train_input_pipeline:
       items[INPUT_ITEM_NAME] = train_input_pipeline
-
+    logging.info(f'items: {items.keys()}')
+    logging.info(f'save_kwargs: {save_kwargs}')
+    logging.info(f'force: {force}')
     return self._manager.save(step, items, save_kwargs=save_kwargs, force=force)
-    # return self._manager.save(step, items, force=force)
+    # return self._manager.save(step, items, save_kwargs=save_kwargs)
 
   # lsp
   def restore(
       self,
       step: int,
-      train_state: Any, # 参数shape和dtype
+      train_state: Any,
       train_state_unpadded_shape_dtype_struct: OptionalNestedShapeDtypeStruct = None,
       train_input_pipeline: Optional[base_input.BaseInput] = None,
-      restore_kwargs: Optional[Any] = None, # shard
+      restore_kwargs: Optional[Any] = None,
   ) -> Any:
     """See superclass documentation."""
     uses_transformations = (
@@ -468,10 +475,15 @@ class OrbaxCheckpointManager:
         and 'transforms' in restore_kwargs
         and restore_kwargs['transforms'] is not None
     )
-    # Propagate version to CheckpointHandler. lsp: 参数 shard specs 更新版本信息
+    # Propagate version to CheckpointHandler.
+    # lsp
     restore_kwargs = _update_args_with_version(restore_kwargs, self.version)
-    # lsp: train_state: padded_shape_dtype, 和train_state_unpadded_shape_dtype_struct一样？
-    # 根据版本信息，决定是否需要加载metadata数据信息，没有的话就返回{'state': train_state}
+    logging.info(f'restore_kwargs0000: {restore_kwargs}')
+    # for k, v in restore_kwargs.items():
+    #     if isinstance(v, dict) and 'version' in v: v.pop('version')
+    #     restore_kwargs[k] = v
+
+    # train_state: 
     items = _create_items_dict_with_metadata(
         train_state,
         train_state_unpadded_shape_dtype_struct,
@@ -481,42 +493,49 @@ class OrbaxCheckpointManager:
 
     # Train input checkpoint may not exist if input checkpointing wasn't
     # previously enabled
-    # train_input_pipeline： 输入数据的的shape和dtype
     if train_input_pipeline and self._train_checkpoint_exists(step):
       items[INPUT_ITEM_NAME] = train_input_pipeline
 
-    logging.info(f'items: {items}')
+    logging.info(f'items restore: {items}')
     logging.info(f'restore_kwargs: {restore_kwargs}')
     logging.info(f'step: {step}')
-    restored = self._manager.restore(
-        step, items=items, restore_kwargs=restore_kwargs
-    )
+    # restore_kwargs[STATE_ITEM_NAME].pop('version')
+    # logging.info(f'restore_kwargs1111: {restore_kwargs}')
 
+    # __import__('ipdb').set_trace()
+    # 去掉items不行，items：params shape，restore_kwargs： params specs（shard方式） + mesh
+    # items['state'] = items['state'].replace(opt_states=None)
+    # restore_kwargs['state']['specs'] = restore_kwargs['state']['specs'].replace(opt_states=None)
+    restored = self._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
+    # 去掉items不行，items：params shape，restore_kwargs： params specs（shard方式） + mesh
+    # restored = self._manager.restore(
+    #     step, restore_kwargs=restore_kwargs
+    # )
+    # 非0step需要train_state_unpadded_shape_dtype_struct，其实就是shard方法？
     # Skip metadata checks if using transformations, since the TrainState may be
     # completely altered.
-    # 检查metadata信息是否正确
-    if self.version > 1.0 and not uses_transformations:
-      # If unpadded shapes were not provided, skip the shape check for now, as
-      # there are many callers that need to be changed.
-      if train_state_unpadded_shape_dtype_struct is None:
-        logging.error(
-            """For checkpoint version > 1.0, we require users to provide
-          `train_state_unpadded_shape_dtype_struct` during checkpoint
-          saving/restoring, to avoid potential silent bugs when loading
-          checkpoints to incompatible unpadded shapes of TrainState."""
-        )
-      else:
-        restored_metadata = checkpoint_metadata.PaxMetadata.from_dict(
-            restored[METADATA_ITEM_NAME]
-        )
-        metadata = checkpoint_metadata.PaxMetadata.from_dict(
-            items[METADATA_ITEM_NAME]
-        )
-        if not metadata.is_compatible(restored_metadata):
-          raise ValueError(
-              'PaxMetadata is not compatible with the restored PaxMetadata. '
-              f'expected PaxMetadata = {restored_metadata}. '
-              f'actual PaxMetadata = {metadata}.'
-          )
-    # lsp: 返回的已经是在tpu上的参数了
+    # if self.version > 1.0 and not uses_transformations:
+    #   # If unpadded shapes were not provided, skip the shape check for now, as
+    #   # there are many callers that need to be changed.
+    #   if train_state_unpadded_shape_dtype_struct is None:
+    #     logging.error(
+    #         """For checkpoint version > 1.0, we require users to provide
+    #       `train_state_unpadded_shape_dtype_struct` during checkpoint
+    #       saving/restoring, to avoid potential silent bugs when loading
+    #       checkpoints to incompatible unpadded shapes of TrainState."""
+    #     )
+    #   else:
+    #     restored_metadata = checkpoint_metadata.PaxMetadata.from_dict(
+    #         restored[METADATA_ITEM_NAME]
+    #     )
+    #     metadata = checkpoint_metadata.PaxMetadata.from_dict(
+    #         items[METADATA_ITEM_NAME]
+    #     )
+    #     if not metadata.is_compatible(restored_metadata):
+    #       raise ValueError(
+    #           'PaxMetadata is not compatible with the restored PaxMetadata. '
+    #           f'expected PaxMetadata = {restored_metadata}. '
+    #           f'actual PaxMetadata = {metadata}.'
+    #       )
+
     return restored[STATE_ITEM_NAME]

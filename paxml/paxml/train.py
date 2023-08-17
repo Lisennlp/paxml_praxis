@@ -91,6 +91,7 @@ def write_experiment_class_vars_file(
     job_log_dir.mkdir(parents=True, exist_ok=True)
 
     cls_vars_summary = experiment_utils.get_cls_vars_summary(exp_cls)
+    # epath对象
     exp_summary_fpath.write_text(cls_vars_summary)
 
 
@@ -141,13 +142,16 @@ def train_and_evaluate(
       on-demand checkpoint due to preemption.
   """
   jax.monitoring.record_event('/jax/pax/train_and_evaluate/beacon')
-  task_p = experiment_config.task()
+
+  task_p = experiment_config.task() # 怎么又设置了一遍参数？
   task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
   # in case the user passed in a string dtype, convert it to an actual dtype
+  # jnp.bfloat16
   task_p.model.fprop_dtype = jnp.dtype(task_p.model.fprop_dtype)
 
   logging.info('[PAX STATUS]: Getting dataset configurations.')
+  # [train_p datasets, notrain_p datasets]的pax_fiddle.Config对象
   input_p = experiment_config.datasets()
   for inp in input_p:
     if not isinstance(
@@ -168,42 +172,47 @@ def train_and_evaluate(
     )
   train_input_p = train_input_p[0]
   logging.info('[PAX STATUS]: Done getting dataset configurations.')
-
+  # 打印训练数据集参数
   logging.info('train_input_p:')
   for line in base_hyperparams.nested_struct_to_text(
       train_input_p
   ).splitlines():  # pytype: disable=attribute-error
     logging.info('  %s', line)
+  # 打印训练task相关参数
   logging.info('task_p:')
-  # for line in base_hyperparams.nested_struct_to_text(task_p).splitlines():  # pytype: disable=attribute-error  # XD
-  #   logging.info('  %s', line)
-
+  for line in base_hyperparams.nested_struct_to_text(task_p).splitlines():  # pytype: disable=attribute-error
+    logging.info('  %s', line)
   # Creates the task.
   logging.info('[PAX STATUS]: Creating task')
+  # <PaxConfig[SingleTask( -> SingleTask(model=LanguageModel(
+  # 实例化task_p，这样的话，jax_task就是一个SingleTask对象，之前task_p是一个pax_config对象
   jax_task = instantiate(task_p)
-
+  # <CheckpointType.GDA: 'gda'>
   checkpoint_type = checkpoint_types.retrieve_checkpoint_type(
       maybe_use_persistence_checkpointing, jax_task
   )
-
+  # PosixGPath('gs://llm_projects/log/C4SpmdGpt37BRoPE')
   job_log_dir = epath.Path(job_log_dir)
+  # checkpoint dir: job_log_dir / 'checkpoints'
+  # 初始化模型参数加载与保存的对象
   checkpointer = _create_checkpointer(
       task_p,
       job_log_dir,
       checkpoint_type,
       checkpoint_todelete_subdir,
       train_input_p=train_input_p,
-      enable_async_checkpointing=enable_async_checkpointing,
-      enable_checkpoint_saving=enable_checkpoint_saving,
+      enable_async_checkpointing=enable_async_checkpointing, # false
+      enable_checkpoint_saving=enable_checkpoint_saving, # false
       enforce_restore_shape_check=enforce_restore_shape_check,
       maybe_use_persistence_checkpointing=maybe_use_persistence_checkpointing,
       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
   )
+  # enable_checkpoint_saving: false
   if not enable_checkpoint_saving:
     logging.info(
         'Checkpointing is disabled and no checkpoint will be saved to disk.'
     )
-
+  # EarlyStoppingFn(target_log_pplx=2.69, name='')
   if jax_task.early_stopping_fn is not None:
     if early_stopping_fn is None:
       early_stopping_fn = jax_task.early_stopping_fn
@@ -215,15 +224,21 @@ def train_and_evaluate(
 
   logging.info('[PAX STATUS]: Initializing partitioner')
   # Creates the partitioner, which will be set up later.
+  # none
   partitioner = experiment_config.partitioner()
   if not partitioner:
     # For the input pipeline on the Pathways client, the inputs are numpy
     # arrays. We rely on the Pathways to transfer the inputs, since
     # jax.device_put() has a larger performance overhead.
+    # true
     reshard_inputs = (
         checkpointer.checkpoint_type != CheckpointType.PERSISTENCE
         or train_input_p.experimental_remote_input
     )
+    # lsp
+    reshard_inputs = False
+    
+    # lsp: partitioner： PjitPartitioner || enable_auto_sharding: false
     partitioner = partitioning.create_partitioner(
         jax_task,
         reshard_inputs=reshard_inputs,
@@ -232,6 +247,7 @@ def train_and_evaluate(
 
   # Creates the train/eval/decode programs.
   logging.info('[PAX STATUS]: Initializing train program.')
+  # train_program: Class SingleTaskTrainProgram
   train_program = experiment_config.train_program()
 
   logging.info('[PAX STATUS]: Initializing eval programs.')
@@ -243,6 +259,7 @@ def train_and_evaluate(
   ):
     eval_programs = experiment_config.eval_programs()
 
+
   logging.info('[PAX STATUS]: Initializing decode programs.')
   if (
       run_decode
@@ -251,8 +268,10 @@ def train_and_evaluate(
   ):
     decode_input_p = experiment_config.decoder_datasets()
   else:
+    # here
     decode_input_p = []
   # TODO(wangpeng): Make decode programs configurable.
+  # []
   decode_programs = [
       decode_programs_lib.SingleTaskDecodeProgram(input_p)
       for input_p in decode_input_p
@@ -261,6 +280,7 @@ def train_and_evaluate(
   # Creates the executor and run the training pipeline.
   logging.info('[PAX STATUS]: Creating executor.')
   executor = experiment_config.executor()
+  # lsp: None
   if not executor:
     executor = executors.DefaultExecutor()
   logging.info('[PAX STATUS]: Setting up executor.')

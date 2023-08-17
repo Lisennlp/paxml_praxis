@@ -49,7 +49,6 @@ from paxml import tf_data_service_lib
 from paxml import train
 from paxml import trainer_lib
 from paxml import tuning_lib
-from paxml.tasks.lm.params import global_cfg  # XD
 from praxis import pax_fiddle
 from praxis import py_utils
 
@@ -155,7 +154,7 @@ flags.DEFINE_integer(
 flags.DEFINE_bool('enable_auto_sharding', False,
                   'Enable the XLA Auto SPMD partitioner.')
 flags.DEFINE_bool(
-    'enable_checkpoint_saving', True,
+    'enable_checkpoint_saving', True, # lsp
     'Enable checkpoint saving. Useful to disable for test- or debug-like runs.')
 flags.DEFINE_bool(
     'enforce_restore_shape_check',
@@ -219,32 +218,20 @@ flags.DEFINE_integer(
 
 # Debugging flag
 
-job_log_dir = None  # XD
-
-def get_tpu_type(exp_name):  # XD
-  if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
-  elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
-  else: return exp_name, 'v3'
-
-def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
-  if tpu_type == 'v4':
-    replica, data, mdl = experiment_config.ICI_MESH_SHAPE
-    # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
-    experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
-      if mdl > 1 else [replica, data // 2, mdl]
-    experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
-  return experiment_config
 
 @py_utils.benchmark('[PAX STATUS]: ')
 def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
   """Retrieves an experiment config from the global registry."""
+  # experiment_name: --exp : tasks.lm.params.c4.C4SpmdGpt37BRoPE # experiment_class: None
   experiment_class = experiment_registry.get(experiment_name)
   if experiment_class is not None:
     return experiment_class
   # Try to import the module that registers the experiment, assuming the
   # experiment name contains the full path.
+  # module_name: tasks.lm.params.c4
   module_name = experiment_name.rsplit('.', 1)[0]
   # Google-internal experiment module import code
+  # lsp: 开始注册一堆类
   try:
     importlib.import_module(module_name)
   except ModuleNotFoundError as e:
@@ -253,22 +240,10 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
         f'import module `{module_name}`.'
     ) from e
   # Google-internal experiment module import cleanup
+  # experiment_name tasks.lm.params.c4.C4SpmdGpt37BRoPE experiment_class: 类对象
   experiment_class = experiment_registry.get(experiment_name)
   if experiment_class is not None:
     return experiment_class
-  # XD
-  experiment_name, tpu_type = get_tpu_type(experiment_name)
-  if tpu_type in global_cfg.tputype2zone:
-    def append_zone(gs_path):
-      return gs_path.replace('common_datasets',
-        f'common_datasets_{global_cfg.tputype2zone[tpu_type]}')
-    global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
-    global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
-    global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
-  if tpu_type in ['v4', 'v5']:
-    experiment_class = experiment_registry.get(experiment_name)
-    if experiment_class is not None:
-      return adjust_config_by_tpu(experiment_class, tpu_type)
   raise ValueError(
       f'Could not find experiment `{experiment_name}`.\nRegistered experiments '
       f'are: {pprint.pformat(experiment_registry.get_all())}'
@@ -302,10 +277,16 @@ def run_experiment(
   train.write_experiment_class_vars_file(
       experiment_config.__class__, job_log_dir,
       '' if FLAGS.mode == 'train' else f'{FLAGS.mode}_')
+    # lsp: job_log_dir: epath.Path 写参数到文件，支持bucket文件
   train.write_hparams_file(experiment_config, job_log_dir,
                            '' if FLAGS.mode == 'train' else f'{FLAGS.mode}_')
-
+  # C4SpmdGpt3SmallRoPE def task, 利用task函数开始设置各种参数
+  # task_p： pax_fiddle.Config(tasks_lib.SingleTask, name='xformer_task')
+  # 设置了各种参数之后，
+  #task_p =  pax_fiddle.Config(tasks_lib.SingleTask, name='xformer_task')
+  # pax_fiddle.Config对象可以调用初始化之后的类属性
   task_p = experiment_config.task()
+  # lsp： 将task_p作为pax_fiddle.Config[tasks_lib.SingleTask]对象
   task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
   if FLAGS.mode == 'train':
@@ -314,16 +295,16 @@ def run_experiment(
     train.train_and_evaluate(
         experiment_config=experiment_config,
         job_log_dir=job_log_dir,
-        maybe_use_persistence_checkpointing=FLAGS.maybe_use_persistence_checkpointing,
-        eval_on_test=FLAGS.eval_on_test,
-        checkpoint_todelete_subdir=FLAGS.checkpoint_todelete_subdir,
-        early_stopping_fn=early_stopping_fn,
-        run_decode=FLAGS.decode_during_train,
-        enable_auto_sharding=FLAGS.enable_auto_sharding,
-        enable_async_checkpointing=FLAGS.jax_fully_async_checkpoint,
-        enable_checkpoint_saving=enable_checkpoint_saving,
-        enforce_restore_shape_check=FLAGS.enforce_restore_shape_check,
-        tensorstore_use_ocdbt=FLAGS.tensorstore_use_ocdbt,
+        maybe_use_persistence_checkpointing=FLAGS.maybe_use_persistence_checkpointing, # false
+        eval_on_test=FLAGS.eval_on_test, # flase
+        checkpoint_todelete_subdir=FLAGS.checkpoint_todelete_subdir, # None
+        early_stopping_fn=early_stopping_fn, # None
+        run_decode=FLAGS.decode_during_train, # false
+        enable_auto_sharding=FLAGS.enable_auto_sharding, # false
+        enable_async_checkpointing=FLAGS.jax_fully_async_checkpoint, # false
+        enable_checkpoint_saving=enable_checkpoint_saving, # 有则true
+        enforce_restore_shape_check=FLAGS.enforce_restore_shape_check, # false
+        tensorstore_use_ocdbt=FLAGS.tensorstore_use_ocdbt, # false
         exit_after_ondemand_checkpoint=FLAGS.exit_after_ondemand_checkpoint,
     )
 
@@ -404,7 +385,7 @@ def _setup_xm_work_unit():
   )
   if jax.process_index() == 0:
     work_unit.create_artifact(
-        platform.ArtifactType.DIRECTORY, str(job_log_dir), 'job_log_dir'  # XD: _JOB_LOGDIR.value -> job_log_dir
+        platform.ArtifactType.DIRECTORY, str(_JOB_LOGDIR.value), 'job_log_dir'
     )
   return work_unit
 
@@ -443,13 +424,15 @@ def run(
         'with --mode=decode_once or --mode=decode.')
 
   search_space = tuning_lib.get_search_space(experiment_config)
+  # lsp: true
+  logging.info(f'enable_checkpoint_saving main00: {enable_checkpoint_saving}')
   if search_space.dna_spec.is_constant:
     # TODO(b/241666951): disable default_early_stopping_fn since this
-    # breaks when training internal models.
+    # breaks when training internal models. lsp: here
     run_experiment(
         experiment_config,
         work_unit,
-        job_log_dir=job_log_dir,  # XD: _JOB_LOGDIR.value -> job_log_dir
+        job_log_dir=_JOB_LOGDIR.value,
         early_stopping_fn=None,
         enable_checkpoint_saving=enable_checkpoint_saving)
   else:
@@ -460,7 +443,7 @@ def run(
         trial_fn=run_experiment,
         experiment_config=experiment_config,
         work_unit=work_unit,
-        job_log_dir=job_log_dir,  # XD: _JOB_LOGDIR.value -> job_log_dir
+        job_log_dir=_JOB_LOGDIR.value,
         study=FLAGS.study,
         pythia_port=FLAGS.pythia_port,
         is_metric_reporting_role=(FLAGS.metrics_from == FLAGS.mode),
@@ -476,6 +459,8 @@ def main(argv: Sequence[str]) -> None:
 
 @py_utils.benchmark(prefix='[PAX STATUS]: E2E time: ')
 def _main(argv: Sequence[str]) -> None:
+  # __import__('ipdb').set_trace()
+  FLAGS.enable_checkpoint_saving = True
   logging.info('[PAX STATUS]: Program start.')
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
@@ -500,23 +485,9 @@ def _main(argv: Sequence[str]) -> None:
                                                       FLAGS.host_idx)
                      )
 
-  global job_log_dir # XD
-  job_log_dir = _JOB_LOGDIR.value  # XD
   if FLAGS.exp is not None:
-    _, tpu_type = get_tpu_type(FLAGS.exp)
-    if tpu_type in global_cfg.tputype2zone:
-      def append_zone(gs_path):
-        for bucket_name in ['common_datasets', 'llm_projects']:
-          if bucket_name in gs_path:
-            return gs_path.replace(bucket_name,
-              f'{bucket_name}_{global_cfg.tputype2zone[tpu_type]}')
-        assert False
-      # global_cfg will be used in c4.py
-      global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
-      global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
-      global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
-      job_log_dir = epath.Path(append_zone(str(job_log_dir)))
-
+    # get_experiment(FLAGS.exp): experiment_class, experiment_config: 初始化类对象) ->注意后面的括号()，这里已经初始化exp传入来的类了
+    # 将类运行了一遍，这时候通过类名已经可以调用类属性和类方法了
     experiment_config = get_experiment(FLAGS.exp)()
   elif absl_flags.fdl_flags_supplied():
     cfg = absl_flags.create_buildable_from_flags(
@@ -527,8 +498,10 @@ def _main(argv: Sequence[str]) -> None:
         'No experiment provided. '
         'At least one of --exp, --fdl_config, or --fdl_config_file is required.'
     )
-
+  # 没有，应该是todo
   experiment_config.validate()
+  logging.info(f'FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}')
+  FLAGS.enable_checkpoint_saving = True
   run(experiment_config=experiment_config,
       enable_checkpoint_saving=FLAGS.enable_checkpoint_saving)
 
@@ -552,4 +525,6 @@ if __name__ == '__main__':
   jax.config.config_with_absl()
 
   flags.mark_flag_as_required('job_log_dir')
+  jax.distributed.initialize()
   app.run(main, flags_parser=absl_flags.flags_parser)
+

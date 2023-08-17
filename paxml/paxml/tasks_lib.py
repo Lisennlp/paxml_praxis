@@ -845,6 +845,7 @@ def create_state_partition_specs(
           var_weight_hparams, excluded
       )
       grad_tx = learner.get_grad_tx(var_weight_hparams_for_opt)
+      # opt: ShardedGradientTransformation
       assert isinstance(grad_tx, optimizers.ShardedGradientTransformation)
       opt_var_weight_hparams.append(
           grad_tx.init_partition_spec(var_weight_hparams_for_opt)
@@ -894,17 +895,22 @@ def _create_opt_states(
   Returns:
     A list of NestedJTensor to update `opt_states` in TrainState.
   """
+  # __import__('ipdb').set_trace()
   asserts.assert_same_structure(mdl_vars, var_weight_hparams)
   opt_states = []
   for learner in learners:
+    # excluded: {'params': {'lm': {'embedding_lookup': {'emb_var': False}, 'final_ln': {'bias': False, 'scale': False}, 'softmax': {'logits_ffn': {'linear': {'w': False....
+    # 不训练的参数，False表示训练
     excluded = get_excluded_var_mask_for_opt(
         var_weight_hparams,
         learner,
     )
+    # no change
     var_weight_hparams = filter_vars_for_grad_or_opt(
         var_weight_hparams, excluded
     )
     filtered_mdl_vars = filter_vars_for_grad_or_opt(mdl_vars, excluded)
+    # grad_tx: ShardedGradientTransformation(init=<function get_transformations_with_vectorized_repeat_prefix.<local
     grad_tx = learner.get_grad_tx(var_weight_hparams)
     opt_states.append(grad_tx.init(filtered_mdl_vars))
   return opt_states  # pytype: disable=bad-return-type
@@ -940,7 +946,7 @@ def create_state(
     opt_states = []
   else:
     opt_states = _create_opt_states(mdl_vars, var_weight_hparams, learners)
-
+  # lsp trainstate init
   return TrainState(
       # The global step for the model.
       step=jnp.array(0, dtype=jnp.uint32),
@@ -972,11 +978,11 @@ def create_state_unpadded_shapes(
 
   def _get_shape(var_param):
     shape = tuple(var_param.repeat_prefix or ()) + tuple(var_param.shape)
-    return jax.ShapeDtypeStruct(shape, var_param.dtype)
-
+    return jax.ShapeDtypeStruct(shape, var_param.dtype) # 返回ShapeDtypeStruct类，具有shape和dtype属性
   var_shapes = jax.tree_map(_get_shape, var_weight_hparams)
 
   def _create_train_state_from_shape(mdl_vars):
+  # var_weight_hparams: 初始化，var_shapes==mdl_vars： shape， dtype
     return create_state(
         mdl_vars, var_weight_hparams, discard_opt_states, learners
     )
@@ -1205,7 +1211,7 @@ class SingleTask(base_task.BaseTask):
     )
     num_train_steps: float = 1e7
     save_interval_steps: int = 5000
-    save_keep_interval_duration: str = None  # XD: '12h'
+    save_keep_interval_duration: str = '12h'
     save_max_to_keep: int = 10
     max_inflight_steps: int = 2
     summary_interval_steps: int = 100

@@ -4,18 +4,18 @@ import time
 import jax
 import numpy as np
 import jax.numpy as jnp
-# import orbax
-# from optax import MaskedNode
+import orbax
+from optax import MaskedNode
 from etils import epath
 
 from praxis import base_hyperparams
-# from praxis import pax_fiddle
+from praxis import pax_fiddle
 from praxis import py_utils
 from paxml import checkpoints  # mapped to internal
 from paxml import checkpoint_managers
 from paxml import train_states
 from paxml import trainer_lib
-# from flax.traverse_util import flatten_dict, unflatten_dict
+from flax.traverse_util import flatten_dict, unflatten_dict
 
 sys.path.append('/home/lishengping/projects/paxml/paxml')
 
@@ -38,8 +38,7 @@ NestedMap = py_utils.NestedMap
 checkpoint_type = CheckpointType.GDA
 SAVE_INTERVAL_STEPS = 1
 
-exp = 'C4SpmdLlamaMediumResTHv4'
-experiment_config = get_experiment(f'tasks.lm.params.c4.{exp}')()
+experiment_config = get_experiment('tasks.lm.params.c4.C4SpmdGpt37BRoPE')()
 task_p = experiment_config.task()
 jax_task = instantiate(task_p)
 
@@ -54,8 +53,7 @@ checkpointer = Checkpointer(
               use_ocdbt=False,
           )
       )
-job_log_dir = epath.Path(f'gs://llm_projects/log/{exp}_skip/checkpoints')
-step = 44000
+job_log_dir = epath.Path('gs://llm_projects/log/lspdebug0804/checkpoints')
 # job_log_dir = epath.Path('gs://llm_base_models/baichuan-7B-easylm')
 checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       job_log_dir,
@@ -197,24 +195,11 @@ if check_saved_model_fail_or_success:
     global_mesh = jax.sharding.Mesh(device_mesh, jax_task.model.mesh_axis_names)
     restore_kwargs = {
               'version': 1.1,
-            #   'specs': train_state_metadata.partition_specs, # shard
-            #   'mesh': global_mesh, # mesh
+              'specs': train_state_metadata.partition_specs, # shard
+              'mesh': global_mesh, # mesh
               'transforms': None, # None
           }
     restore_kwargs = {'state': restore_kwargs}
     items = {'state': train_state_metadata.padded_global_shapes}
     restored_model = checkpoint_manager._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
     print(f'Check model finished. model is  saved successfully. take time: {time.time() - start}s...')
-
-
-
-jax.tree_util.tree_map(lambda x: x.shape, restored_model['state'].mdl_vars['params']['lm'])
-jax.tree_util.tree_map(lambda x: x.shape, restored_model['state'].mdl_vars['params']['lm'])['transformer']['repeat']['sub']['x_layers_0']['self_attention']['pre_proj']
-restored_model['state'].mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']['pre_proj']['w']
-
-from tensorflow.python.lib.io import file_io
-pre_proj = restored_model['state'].mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']['pre_proj']
-np.save(file_io.FileIO(job_log_dir / 'pre_proj.npy', 'w'), pre_proj['w'])
-
-post_proj = restored_model['state'].mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']['post_proj']
-np.save(file_io.FileIO(job_log_dir / 'post_proj.npy', 'w'), post_proj['w'])

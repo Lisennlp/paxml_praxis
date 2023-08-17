@@ -29,7 +29,7 @@ from paxml import seqio_input
 from paxml import tasks_lib
 from paxml import trainer_lib
 from paxml.tasks.lm import model_params
-# from paxml.tasks.lm.params import lm_cloud  # XD
+from paxml.tasks.lm.params import lm_cloud
 from praxis import base_hyperparams
 from praxis import base_input
 from praxis import base_layer
@@ -42,135 +42,81 @@ from praxis.layers import transformers
 import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
-from paxml.tasks.lm.params import global_cfg  # XD
+import tensorflow as tf
+import numpy as np
+import jax.numpy as jnp
+from praxis import py_utils
+
+
+NestedMap = py_utils.NestedMap
 
 WeightInit = base_layer.WeightInit
 
-GPT_SPM_PATH = global_cfg.GPT_SPM_PATH #(  XD
-#     'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
-#     # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
-# )
 GPT_EOS_ID = 1
-GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
-PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257)
 
-C4_GPT_TRAIN_FEATURES_LM = {
-    'targets': t5.data.Feature(vocabulary=GPT_VOCABULARY, add_eos=False)
-}
-C4_GPT_EVAL_FEATURES_LM = {
-    'targets': t5.data.Feature(
-        vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
-    )
-}
-C4_TRAIN_DATADIR = global_cfg.C4_TRAIN_DATADIR # XD 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
-C4_EVAL_DATADIR = global_cfg.C4_EVAL_DATADIR # XD 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
+class MyDatasets(seqio.SeqIOInput):
 
-# XD
-# import tensorflow as tf
-# RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
-# feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
-# RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
+  def __init__(self, path, is_training=True):
+    # valid_path = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
+    # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
+    self.num_infeed_hosts =  jax.process_count()
+    self.seq_len = 2048
+    eopch_num = 1
+    self.batch_size = 8
+    self.dataset = self.load_tfrecord_dataset(
+                                              index_fname=path, 
+                                              batch_size=self.batch_size, 
+                                              seq_len=self.seq_len, 
+                                              repeat=eopch_num
+                                              )
+    self.is_training = is_training
+    
+  def peek_padded(self):
+    return self.get_next_padded()
 
-# @seqio.map_over_dataset
-# def convert_datatype(ex):
-#   return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
+  def get_next_padded(self):
+    return next(self.dataset)
 
-# seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
-#     seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
-#     preprocessors=[
-#         convert_datatype,
-#         functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
-#     ],
-#     output_features=RT_GPT_FEATURES_LM,
-# )
+  def get_global_batch_size(self):
+    return self.batch_size * self.num_infeed_hosts
 
-class TaskRegistry(t5.data.TaskRegistry):
-  """Task registry with extra tracking."""
+  def _parse_function(self, example_proto):
+    feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64), "labels": tf.io.VarLenFeature(tf.int64)}
+    example = tf.io.parse_single_example(example_proto, feature_desc)
+    for name in list(example.keys()):
+        t = example[name]
+        if t.dtype == tf.int64: t = tf.cast(t, dtype=tf.int32)
+        example[name] = tf.sparse.to_dense(t, default_value=0)
+    return example
 
-  TASK_NAMES = []
+  def format(self, data):
+    data = jax.tree_map(lambda x: x.numpy(), data)
+    model_needed_inputs = NestedMap()
+    model_needed_inputs.ids = data['input_ids'][:, :-1]
+    model_needed_inputs.labels = data['input_ids'][:, 1:]
+    weights = data['labels'] > 0
+    model_needed_inputs.weights = weights[:, 1:]
+    model_needed_inputs.paddings = 1 - weights[:, 1:]
+    model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
+    model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
+    return model_needed_inputs
 
-  @classmethod
-  def add_versioned_tfds_task(cls,
-                              name: str,
-                              *,
-                              versions: List[str],
-                              pinned_version: Optional[str] = None,
-                              tfds_name: str,
-                              tfds_data_dir: Optional[str] = None,
-                              **kwargs) -> List[seqio.Task]:
-    tasks = []
-    for version in versions:
-      tasks.append(
-          cls.add(
-              f'{name}_{version}',
-              seqio.Task,
-              source=seqio.TfdsDataSource(
-                  tfds_name=f'{tfds_name}:{version}',
-                  tfds_data_dir=tfds_data_dir,
-              ),
-              **kwargs,
-          ))
-    if pinned_version is not None:
-      tasks.append(
-          cls.add(
-              name,
-              seqio.Task,
-              source=seqio.TfdsDataSource(
-                  tfds_name=f'{tfds_name}:{pinned_version}',
-                  tfds_data_dir=tfds_data_dir,
-              ),
-              **kwargs,
-          ))
-    return tasks
-
-
-# C4 corpus for language model pretraining
-TaskRegistry.add_versioned_tfds_task(
-    'c4_lm_v301_gpt',
-    versions=['3.0.1'],  # XD: 3.0.4 -> 3.0.1
-    pinned_version='3.0.1',  # XD: 3.0.4 -> 3.0.1
-    tfds_name='c4/en',
-    tfds_data_dir=C4_TRAIN_DATADIR,
-    preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                'inputs': None,
-                'targets': 'text',
-            },
-        ),
-        seqio.preprocessors.tokenize,
-        functools.partial(
-            t5_preprocessors.reduce_concat_tokens,
-            batch_size=4096,
-        ),
-        t5_preprocessors.split_tokens_to_targets_length,
-    ],
-    output_features=C4_GPT_TRAIN_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=10000,
-)
-
-TaskRegistry.add_versioned_tfds_task(
-    'c4_lm_v301_gpt_eval_tokenized',
-    versions=['3.0.1'],  # XD: 3.0.5 -> 3.0.1
-    pinned_version='3.0.1',  # XD: 3.0.5 -> 3.0.1
-    tfds_name='c4/en',
-    tfds_data_dir=C4_EVAL_DATADIR,
-    preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                'inputs': None,
-                'targets': 'ids',
-            },
-        ),
-        seqio.preprocessors.tokenize,
-    ],
-    output_features=C4_GPT_EVAL_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=None,
-)
+  def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
+    tf.random.set_seed(42)
+    fnames = [index_fname] if index_fname.endswith('.tfrecords') else open(index_fname).read().splitlines()
+    ds = tf.data.Dataset.from_tensor_slices(fnames)
+    ds = ds.apply(tf.data.TFRecordDataset)
+    # shard host data
+    ds = ds.shard(jax.process_count(), jax.process_index())
+    ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.shuffle(buffer_size=10000) # 从文件中取buffer_size数据，然后打乱
+    ds = ds.padded_batch(batch_size=np.prod(batch_size), 
+                        padded_shapes={'input_ids': [seq_len], 'labels': [seq_len]},
+                        padding_values={'input_ids': 0, 'labels': 0}, 
+                        drop_remainder=True)
+    ds = ds.prefetch(10)
+    ds = ds.repeat(repeat)
+    return map(lambda x: self.format(x), iter(ds))
 
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
@@ -180,6 +126,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
   MAX_SEQ_LEN = 1024
   TRAINING_SEED = 9876
   TRAINING_NUM_BATCHES_TO_SKIP = None
+  # TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
+  # VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
 
   def _dataset_common(
       self, is_training
@@ -192,7 +140,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       else:
         percore_batch_size = self.PERCORE_BATCH_SIZE
 
-    num_local_devices = jax.local_device_count()
+    num_local_devices = jax.local_device_count() # 8
+    # lsp: global_batch_size: percore_batch_size * 8 * N
     global_batch_size = int(
         percore_batch_size * num_local_devices * jax.process_count() + 1e-6
     )
@@ -209,6 +158,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         batch_size_per_process = int(
             percore_batch_size * num_local_devices + 1e-6
         )
+        # N hosts
         num_infeed_hosts = global_batch_size // batch_size_per_process
       else:
         batch_size_per_process = int(
@@ -249,18 +199,19 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         drop_remainder=True if is_training else False,
         num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
         num_infeed_hosts=num_infeed_hosts,
-        reset_for_eval=False if is_training else True,
+        # reset_for_eval=False if is_training else True, # eval的时候为True
+        reset_for_eval=False, # eval的时候为True -> False
         annotate_padding_fields=True,
     )
     return p
-
+    
+  # lsp: 数据
   def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns a list of dataset parameters."""
     return [
         self._dataset_common(is_training=True),
         self._dataset_common(is_training=False)
     ]
-
 
 def set_adam_and_learning_rate_schedule(
     cls,
@@ -273,7 +224,8 @@ def set_adam_and_learning_rate_schedule(
       optimizers.Adam,
       beta1=cls.ADAM_BETA1 if cls.ADAM_BETA1 else 0.9,
       beta2=cls.ADAM_BETA2 if cls.ADAM_BETA2 else 0.999,
-      weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
+      # weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0, # lsp: DEPRECATION
+      l2_regularizer_weight=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
       epsilon=cls.ADAM_EPSILON if cls.ADAM_EPSILON else 1e-6,
       epsilon_root=cls.ADAM_EPSILON_ROOT if cls.ADAM_EPSILON_ROOT else 0.0,
       clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE
@@ -399,11 +351,12 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
     task_p = super().task()
     model_p = task_p.model
     model_p.lm_tpl.packed_input = self.PACKED_INPUT  # pytype: disable=attribute-error  # enable-nested-classes
-
+    # stacked_p: StackedTransformerRepeated
     stacked_p = model_p.lm_tpl.stacked_transformer_tpl  # pytype: disable=attribute-error  # enable-nested-classes
     if fdl.get_callable(stacked_p) == transformers.PipelinedTransformer:
       stacked_p = stacked_p.pipeline_stage
     if self.USE_REPEATED_LAYER:
+      # stacked_p.block: StackedTransformer
       stacked_p = stacked_p.block
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
     transformer_layer_p.tr_atten_tpl.use_bias = self.USE_BIAS
@@ -472,7 +425,7 @@ class TransformerLmSpmdPipelineAdam(
 
 
 @experiment_registry.register
-class LmCloudSpmdAdam(TransformerLmSpmdAdam): # XD, lm_cloud.SyntheticDataset):
+class LmCloudSpmdAdam(TransformerLmSpmdAdam, lm_cloud.SyntheticDataset):
   """Base config for an SPMD model."""
   NUM_LAYERS = 2
   MODEL_DIMS = 2048
@@ -528,69 +481,65 @@ def configure_gpt3_task(
     task_p: pax_fiddle.Config[tasks_lib.SingleTask],
 ) -> pax_fiddle.Config[tasks_lib.SingleTask]:
   """Returns task with gpt3 related configs."""
+  # model: LauguageModel
   model_p = task_p.model  # pytype: disable=attribute-error  # enable-nested-classes
 
   model_p.decoder_tpl.eos_id = (
       GPT_EOS_ID  # pytype: disable=attribute-error  # enable-nested-classes
   )
   model_p.decoder_tpl.seqlen = cls.MAX_SEQ_LEN  # pytype: disable=attribute-error  # enable-nested-classes
-
+  #lsp: 每个参数都是WeightHParams类，该类有个init函数，调用params_init。没有指定的默认WeightInit.Xavier(_DEFAULT_XAVIER_INIT)， _DEFAULT_XAVIER_INIT： 1.000001
   model_p.params_init = WeightInit.Gaussian(0.006)
 
   softmax_init = WeightInit.Gaussian(0.006)
+  #lsp: lm_tpl: TransformerLM
   model_p.lm_tpl.softmax_tpl.params_init = softmax_init
-  model_p.lm_tpl.softmax_tpl.feed_forward_tpl.has_bias = False
+  model_p.lm_tpl.softmax_tpl.feed_forward_tpl.has_bias = False # 
   model_p.lm_tpl.softmax_tpl.soft_cap_logits = None
-
+  # lsp: True
   if cls.SEPARATE_EMBEDDING:
+    # scale_sqrt_depth is true时，会对embedding进行scale
     model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = False
-    model_p.lm_tpl.separate_embedding_tpl.lookup_style = (
-        cls.EMBEDDING_LOOKUP_STYLE
-    )
+    # matmul
+    model_p.lm_tpl.separate_embedding_tpl.lookup_style = (cls.EMBEDDING_LOOKUP_STYLE) 
   else:
     model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = False
-    model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
+    model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE # matmul
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
 
+  # lsp: 设置transformer的属性
   stacked_p = model_p.lm_tpl.stacked_transformer_tpl
   if fdl.get_callable(stacked_p) == transformers.PipelinedTransformer:
     stacked_p = stacked_p.pipeline_stage
+  # issubclass： 判断stacked_p是否继承了
+  # fdl.get_callable(stacked_p)其实就是stacked_p未被pax_fiddle.Config(stacked_p)之前的类
+  # lsp: stacked_p 继承 StackedTransformerRepeated为True
   if issubclass(
       fdl.get_callable(stacked_p), transformers.StackedTransformerRepeated
   ):
+   # 如果stacked_p继承了StackedTransformerRepeated，那么stacked_p.block应该是StackedTransformerRepeated
+   # 然后去设置block的属性
     stacked_p = stacked_p.block
   transformer_layer_p = stacked_p.transformer_layer_params_tpl
-
+  # lsp: layer_norm
   transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  if False and cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
+  if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
     transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
     model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
-  if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
+  if True or cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
     transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+  # lsp: tr_atten_tpl有可能为None，这样设置有问题把？
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
-  # XD
-  for name in ['num_groups', 'project_logits', 'project_probs', 
-              'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
-              'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
-              'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
-              'dim_per_head_v', 'value_gate_activation_cls',
-              'float32_logits', 'float32_probs', 'float32_value', 'qk_norm',
-              'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
-              ]:
-    NAME = name.upper()
-    if hasattr(cls, NAME):
-      setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
-  if not cls.USE_GATED_ACTIVATION: transformer_layer_p.hidden_dims = cls.MODEL_DIMS * 4 # XD add
 
   for atten_p in (
       transformer_layer_p.tr_atten_tpl,
@@ -602,6 +551,7 @@ def configure_gpt3_task(
     atten_wp.proj = ['data', 'mdl', None]
 
   if task_p.early_stopping_fn is None:
+    # lsp: EarlyStoppingFn: 当ppl变大的时候则停止
     task_p.early_stopping_fn = pax_fiddle.Config(EarlyStoppingFn)
     task_p.early_stopping_fn.target_log_pplx = cls.TARGET_LOG_PPLX
 
@@ -688,7 +638,7 @@ class C4SpmdGpt3AdamOrgHP(C4SpmdAdam):
   LR_COS_MIN_RATIO = 0.1
 
   # Training target
-  TARGET_LOG_PPLX = 2.69 - 2.69  # XD
+  TARGET_LOG_PPLX = 2.69
 
   # Autodiff remat.
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
@@ -723,7 +673,7 @@ class C4SpmdGpt3AdamOrgHPBS1p5k1536Replicas(C4SpmdGpt3AdamOrgHP):
 class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   r"""small GPT-3 config with RoPE.
   """
-  MAX_SEQ_LEN = 2048 // 2  # XD
+  VOCAB_SIZE = 32000  # XD
   NUM_LAYERS = 12
   MODEL_DIMS = 768
   ACTIVATION_CLS = layers.SiLU  # layers.SiLU/GELU  # XD
@@ -733,531 +683,80 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   # Defaults to MODEL_DIMS // NUM_HEADS.
   DIMS_PER_HEAD = None
   USE_BIAS = False # XD add
+  # NORMALIZATION_CLS = normalizations.LayerNorm  # XD add RmsNorm
   NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
+
   LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
   FPROP_DTYPE = jnp.bfloat16
 
-  # ICI_MESH_SHAPE = [1, 8, 4]
-  ICI_MESH_SHAPE = [1, 4, 2]
+  ICI_MESH_SHAPE = [1, 8, 4]
 
   SEPARATE_EMBEDDING = True  # XD
-  USE_ROTARY_POSITION_EMB = True
+  USE_ROTARY_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 2048  # XD add
-
-  SUMMARY_INTERVAL_STEPS = 10  # XD
-  CHECKPOINT_EVERY_N_STEPS = 100
-  CHECKPOINT_MAX_TO_KEEP = 1
-
+  # lsp: 调用这个task
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     task_p = super().task()
-    if self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
+    # lsp: 位置向量在这里设置为None了
+    if True or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
     return task_p
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  MAX_SEQ_LEN = 2048 #// 2  # XD
-  VOCAB_SIZE = 32000
-  NUM_LAYERS = 32
+  NUM_LAYERS = 2
   MODEL_DIMS = 4096
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
-  NUM_GROUPS = -1  # XD
   # DIMS_PER_HEAD = 128
-  COMBINE_QKV = True
+  COMBINE_QKV = False # False 占用显存小于 True 1G+
+  NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 8 * 2
-  #ICI_MESH_SHAPE = [1, 8 // NUM_GROUPS, NUM_GROUPS]
-  # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2, 0.146, combine_qkv 0.1514  by xd
-  # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8, 0.044, combine_qkv 0.045  by xd
-  #ICI_MESH_SHAPE = [1, 32, 1]  # bs=4, combine_qkv 0.0935  by xd
-  ICI_MESH_SHAPE = [1, 32, 1]  # v5-64 bs=8 0.131 by xd
-  CHECKPOINT_EVERY_N_STEPS=50
+  PERCORE_BATCH_SIZE = 2
+  # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
+  # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
+  # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
+  # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
+  # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
+  ICI_MESH_SHAPE = [1, 8, 1] # v5最后一个维度不能为2？，必须为1？
+
+  VOCAB_SIZE = 64000
+  CHECKPOINT_EVERY_N_STEPS = 20
+  TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
+  VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
+    # lsp
+  def _dataset_common(
+      self, is_training
+  ) -> pax_fiddle.Config[base_input.BaseInput]:
+    path = self.TRAIN_FILE if is_training  else self.VALID_FILE
+    p = pax_fiddle.Config(
+        MyDatasets, 
+        path=path,
+        is_training=is_training,
+    )
+    return p
 
 @experiment_registry.register
-class C4SpmdGpt37BRoPEv4(C4SpmdGpt37BRoPE):
-  PERCORE_BATCH_SIZE = 8
-  # ICI_MESH_SHAPE = [1, 32, 1]  # bs=16*2*16*1, v4-64: 0.175 by lsp seqlen 1024
-  #ICI_MESH_SHAPE = [1, 16, 1]  # bs=4*1*16*1, v4-16: seqlen 1024 0.388  seqlen 2048 0.23
-  # ICI_MESH_SHAPE = [1, 8, 2]  # v4-32 bs=8 0.119  by xd
-  ICI_MESH_SHAPE = [1, 16, 1]  # v4-32 bs=8 0.138 by lsp
-  # ICI_MESH_SHAPE = [1, 16, 2]  # v4-64 bs=8 0.121 by xd
-
-@experiment_registry.register
-class C4SpmdGpt313BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  VOCAB_SIZE = 32000  # XD
-  NUM_LAYERS = 40
-  MODEL_DIMS = 5120
-  HIDDEN_DIMS = 13824  # XD: MODEL_DIMS * 4 * 2 // 3
-  NUM_HEADS = 40
-  # DIMS_PER_HEAD = 128
-  COMBINE_QKV = False
-  
-  PERCORE_BATCH_SIZE = 6
-  ICI_MESH_SHAPE = [1, 16, 4]  # bs=6*8*8, 0.032
-
-@experiment_registry.register
-class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
+class C4SpmdGpt3MediumRoPE(C4SpmdGpt3SmallRoPE):  # XD
   NUM_LAYERS = 24
   MODEL_DIMS = 1024
-  HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = MODEL_DIMS * 4  # 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
-  DIMS_PER_HEAD = 64
-  # NUM_GROUPS = 1  # XD
-  COMBINE_QKV = False
   
   # LEARNING_RATE = 6e-5
-  LR_COS_WARMUP = 256   # XD
-  LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 50000
+  PERCORE_BATCH_SIZE = 4
+  # ICI_MESH_SHAPE = [1, 8*4, 4//4]
+  ICI_MESH_SHAPE = [32, 1, 1]
 
-  PERCORE_BATCH_SIZE = 16
-  ICI_MESH_SHAPE = [1, 32, 1]  # 0.549， combine_qkv 0.493???!!!, v5 0.436???
-  # ICI_MESH_SHAPE = [32, 1, 1]
-
-@experiment_registry.register
-class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
-  NUM_LAYERS = 28
-  MODEL_DIMS = 2048
-  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
-  NUM_HEADS = 32
-  DIMS_PER_HEAD = 64
-  # NUM_GROUPS = 1  # XD
-  COMBINE_QKV = False
-  
-  # LEARNING_RATE = 6e-5
-  LR_COS_WARMUP = 256   # XD
-  LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 65536
-
-  PERCORE_BATCH_SIZE = 16  # 0.168, v4 0.189!?
-  ICI_MESH_SHAPE = [1, 64, 1]
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  DIM_PER_SHARED_HEAD = 16
-  FLOAT32_LOGITS = True
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x64(C4SpmdLlamaMediumShareHeads):
-  SHARED_QK_DIM = 1024  # 0.233, float32_logits 0.218, float32_logits v4 0.287 / 0.309 (fix probs fp32->fp16)
-  SHARED_OV_DIM = 1024
-  NUM_SHARED_HEADS = 16
-  DIM_PER_SHARED_HEAD = 64
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x16(C4SpmdLlamaMediumShareHeads):
-  DIMS_PER_HEAD = 48
-  SHARED_QK_DIM = 256  # v4 0.514
-  SHARED_OV_DIM = 256
-  NUM_SHARED_HEADS = 16
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x16NoRot(C4SpmdLlamaMediumShareHeads16x16):
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads128x2(C4SpmdLlamaMediumShareHeads):
-  DIMS_PER_HEAD = 48
-  SHARED_QK_DIM = 256  # 0.321
-  SHARED_OV_DIM = 256
-  NUM_SHARED_HEADS = 128
-  DIM_PER_SHARED_HEAD = 2
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads128x2NoRot(C4SpmdLlamaMediumShareHeads128x2):
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x64FP32value(C4SpmdLlamaMediumShareHeads16x64):
-  FLOAT32_VALUE = True  # v4 0.282
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareQK16x64(C4SpmdLlamaMediumShareHeads16x64):
-  SHARED_OV_DIM = 0  # 0.298
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareOV16x64(C4SpmdLlamaMediumShareHeads16x64):
-  SHARED_QK_DIM = 0  # 0.296
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads128(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 128  # 0.464
-  SHARED_OV_DIM = 128
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x16ScaleInit05_15(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 48
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 256  # 0.394
-  SHARED_OV_DIM = 256
-  DIM_PER_SHARED_HEAD = 16
-  SCALE_INIT = WeightInit.Uniform(0.05)
-  SCALE_BIAS = 0.1
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x13ScaleInit05_15(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 48
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 208  # 0.424
-  SHARED_OV_DIM = 208
-  DIM_PER_SHARED_HEAD = 16
-  SCALE_INIT = WeightInit.Uniform(0.05)
-  SCALE_BIAS = 0.1
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x8x2ScaleInit05_15(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 48
-  NUM_GROUPS = 2
-  SHARED_QK_DIM = 256  # 0.462
-  SHARED_OV_DIM = 256
-  DIM_PER_SHARED_HEAD = 16
-  SCALE_INIT = WeightInit.Uniform(0.05)
-  SCALE_BIAS = 0.1
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 128  # 0.461
-  SHARED_OV_DIM = 128
-  DIM_PER_SHARED_HEAD = 16
-  SCALE_INIT = WeightInit.Uniform(0.05)
-  SCALE_BIAS = 0.1
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeadsRot16x8ScaleInit05_15(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
-  ROTATE_SHARED_QK = True  # 0.45
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x8ScaleInit00_10(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
-  SCALE_BIAS = 0.05
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads128x1ScaleInit05_15(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
-  DIM_PER_SHARED_HEAD = 1  # 0.464
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeads128x1ScaleInit25_75(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
-  SCALE_INIT = WeightInit.Uniform(0.25)
-  SCALE_BIAS = 0.5
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeadsRot(C4SpmdLlamaMediumShareHeads):
-  ROTATE_SHARED_QK = True  # 0.470
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeadsRot128(C4SpmdLlamaMediumShareHeads128):
-  ROTATE_SHARED_QK = True  # 0.455
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareHeadsScaleKRot128(C4SpmdLlamaMediumShareHeadsRot128):
-  SCALE_SHARED_KEY = True  # 0.436
-
-@experiment_registry.register
-class C4SpmdLlamaMediumDimPerHead128(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
-  # DIMS_PER_HEAD = 160  # 0.419
-
-@experiment_registry.register
-class C4SpmdLlamaMediumHead16x128(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 128   # v4 0.515
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareQK(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 96  # 0.207
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareOV(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_OV_DIM = 96  # 0.204
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareQK128(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 128  #
-  ROTATE_SHARED_QK = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumShareOV128(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_OV_DIM = 128  # 0.489
-
-@experiment_registry.register
-class C4SpmdLlamaMediumv4(C4SpmdLlamaMedium):
-  PERCORE_BATCH_SIZE = 16 * 2
-  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.619
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGA(C4SpmdLlamaMedium):
-  DIM_PER_HEAD_V = 128  # 0.6
-  VALUE_GATE_ACTIVATION_CLS = layers.SiLU
-  HIDDEN_DIMS = 1408
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGAv4(C4SpmdLlamaMediumGA):
-  PERCORE_BATCH_SIZE = 16 * 2
-  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.618
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGA256x8(C4SpmdLlamaMediumGA):
-  NUM_HEADS = 8
-  DIM_PER_HEAD_V = 256  # 0.642, v5 0.544???
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGA256x8FP32logits(C4SpmdLlamaMediumGA256x8):
-  NUM_HEADS = 8
-  DIM_PER_HEAD_V = 256
-  FLOAT32_LOGITS = True
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGA256x8QKNorm(C4SpmdLlamaMediumGA256x8):
-  NUM_HEADS = 8
-  DIM_PER_HEAD_V = 256
-  QK_NORM = True
-
-@experiment_registry.register
-class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
-  PERCORE_BATCH_SIZE = 16 * 2
-  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.733
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.37, res 0.208/0.211 
-  PROJECT_LOGITS = True
-  PROJECT_PROBS = True
-
-@experiment_registry.register
-class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
-  NUM_HEADS = 16  # 0.20
-  DIMS_PER_HEAD = 128
-
-@experiment_registry.register
-class C4SpmdLlamaXLFP32logits(C4SpmdLlamaXL):
-  FLOAT32_LOGITS = True  # 0.155
-
-@experiment_registry.register
-class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
-  NUM_GROUPS = 1  #  v4 0.150
-  PROJECT_LOGITS = True
-  PROJECT_PROBS = True
-  LOGITS_ABSORB_RESIDUAL = True
-  PROBS_ABSORB_RESIDUAL = True
-
-@experiment_registry.register
-class C4SpmdLlamaXLHead16x128ResTH(C4SpmdLlamaXLResTH):
-  NUM_HEADS = 16
-  DIMS_PER_HEAD = 128
-  
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHAbsorbRes(C4SpmdLlamaMediumResTH):
-  ABSORB_RESIDUAL = True  # 0.355 v4 0.449, v5 0.298~0.376?! very unstable
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFP32logitsprobs(C4SpmdLlamaMediumResTH):
-  FLOAT32_LOGITS = True
-  FLOAT32_PROBS = True  # 0.152
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHAbsorbResFP32logitsprobs(C4SpmdLlamaMediumResTHAbsorbRes):
-  FLOAT32_LOGITS = True
-  FLOAT32_PROBS = True  # 0.343
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLeftMul(C4SpmdLlamaMediumResTH):
-  LEFT_MUL = True  # v4 0.336
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHv4(C4SpmdLlamaMediumResTH):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.336
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
-  LOGITS_SQUEEZE_RATIO = 2  
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaXLResTHLogitsFFN2GELUProbs(C4SpmdLlamaXLResTH):
-  LOGITS_SQUEEZE_RATIO = 2   # v4 0.112 v4 absorbres 0.115
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-  LOGITS_ABSORB_RESIDUAL = False
-
-@experiment_registry.register
-class C4SpmdLlamaXLTHLogitsFFN2GELUResProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProbs):
-  LOGITS_RESIDUAL = False   # v4 0.154
-
-@experiment_registry.register
-class C4SpmdLlamaXLHead16x128THLogitsFFN2GELUResProbs(C4SpmdLlamaXLTHLogitsFFN2GELUResProbs):
-  NUM_HEADS = 16  # 0.189
-  DIMS_PER_HEAD = 128
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsBS1(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
-  PERCORE_BATCH_SIZE = 1
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsReLU(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
-  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU  # 0.311
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsv4(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.318, transpose 0.323, global transpose 0.322
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogits(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.307
-  PROJECT_LOGITS = True 
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsv4(C4SpmdLlamaMediumResTHLogits):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.409
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsGaussian05(C4SpmdLlamaMediumResTHLogits):
-  SCALE_INIT = WeightInit.Gaussian(0.05)
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2ProbsFFN2(C4SpmdLlamaMediumResTH):
-  LOGITS_SQUEEZE_RATIO = 2  
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-  PROBS_SQUEEZE_RATIO = 2    # v4
-  PROBS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHLogits(C4SpmdLlamaMediumResTHLogits):
-  LOGITS_RESIDUAL = False  # 0.38
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTH(C4SpmdLlamaMediumResTH):
-  LOGITS_RESIDUAL = False
-  PROBS_RESIDUAL = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHGaussian25(C4SpmdLlamaMediumTH):
-  SCALE_INIT = WeightInit.Gaussian(0.25) # 0.383
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHLogitsFFNProbs(C4SpmdLlamaMediumTH):
-  LOGITS_SQUEEZE_RATIO = 2   # v4 0.47
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHLogitsFFNProbsFFN(C4SpmdLlamaMediumTH):
-  LOGITS_SQUEEZE_RATIO = 2  
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-  PROBS_SQUEEZE_RATIO = 2    # v4 0.437
-  PROBS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHHEAD64x16Gaussian125(C4SpmdLlamaMediumTH):
-  NUM_HEADS = 64
-  DIMS_PER_HEAD = 16
-  SCALE_INIT = WeightInit.Gaussian(0.125)  # 0.21
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN1GELU(C4SpmdLlamaMediumResTHLogits):
-  SQUEEZE_RATIO = 1  # 0.279, bias 0.271
-  SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2GELU(C4SpmdLlamaMediumResTHLogits):
-  LOGITS_SQUEEZE_RATIO = 2  # 0.293, bias 0.290
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2ReLU(C4SpmdLlamaMediumResTHLogits):
-  LOGITS_SQUEEZE_RATIO = 2  # 
-  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.ReLU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2ReLUv4(C4SpmdLlamaMediumResTHLogitsFFN2ReLU):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.386
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN2(C4SpmdLlamaMediumResTHLogits):
-  SQUEEZE_RATIO = 2  #
-
-@experiment_registry.register
-class C4SpmdLlamaMediumTHLogitsFFN2GELU(C4SpmdLlamaMediumResTHLogitsFFN2GELU):
-  LOGITS_RESIDUAL = False
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHLogitsFFN4GELU(C4SpmdLlamaMediumResTHLogitsFFN2GELU):
-  SQUEEZE_RATIO = 4  # 
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbs(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.304
-  PROJECT_PROBS = True
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbsFFN2(C4SpmdLlamaMediumResTHProbs):
-  PROBS_SQUEEZE_RATIO = 2  #
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbsFFN2GELU(C4SpmdLlamaMediumResTHProbsFFN2):
-  SQUEEZE_ACTIVATION_CLS = layers.GELU  #
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbsFFN2v4(C4SpmdLlamaMediumResTHProbs):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.395
-  SQUEEZE_RATIO = 2  #
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbsFFN2GELUv4(C4SpmdLlamaMediumResTHProbsFFN2v4):
-  SQUEEZE_ACTIVATION_CLS = layers.GELU  # 0.385
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHProbsFFN2ReLUv4(C4SpmdLlamaMediumResTHProbsFFN2v4):
-  SQUEEZE_ACTIVATION_CLS = layers.ReLU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFP32logits(C4SpmdLlamaMediumResTH):
-  FLOAT32_LOGITS = True  # 0.149
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHGaussian05(C4SpmdLlamaMediumResTH):
-  SCALE_INIT = WeightInit.Gaussian(0.05)
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFFN4(C4SpmdLlamaMediumResTH):
-  SQUEEZE_RATIO = 4  # res 0.173
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFFN4GELU(C4SpmdLlamaMediumResTH):
-  SQUEEZE_RATIO = 4  # res 0.173
-  SQUEEZE_ACTIVATION_CLS = layers.GELU
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHx2(C4SpmdLlamaMediumResTH):
-  NUM_HEADS = 16 * 2  # res 0.105, v5 0.195
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHx4(C4SpmdLlamaMediumResTH):
-  NUM_HEADS = 16 * 4  # res 0.059
-
 @experiment_registry.register
-class C4SpmdGpt3XLRoPE(C4SpmdGpt3SmallRoPE):
+class C4SpmdGpt3XLRoPE(C4SpmdGpt3SmallRoPE):  # XD
   NUM_LAYERS = 24
   MODEL_DIMS = 2048
-  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = MODEL_DIMS * 4  # 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
   # DIMS_PER_HEAD = 128
   
-  PERCORE_BATCH_SIZE = 4 * 4
+  PERCORE_BATCH_SIZE = 4
   ICI_MESH_SHAPE = [1, 8, 4]
 
 @experiment_registry.register

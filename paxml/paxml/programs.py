@@ -270,9 +270,8 @@ class BaseTrainProgram(Program):
       )
 
     # Initializes other states.
-    # lsp
     self._train_unpadded_global_batch_size = (
-        train_input.get_global_batch_size()
+        train_input.get_global_batch_size(train_input)
     )
     self._profiler = profiling.Profiler(
         num_steps=train_p.profiler_num_steps,
@@ -294,8 +293,7 @@ class BaseTrainProgram(Program):
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieving inputs.', 5)
     # dict: 'ids', 'labels', 'weights', 'paddings', 'segment_ids', 'segment_pos', ' ....
     model_inputs = self._train_input.get_next_padded()
-    # logging.info(f'model_inputs: {model_inputs}')
-    # __import__('ipdb').set_trace()
+    __import__('ipdb').set_trace()
 
     # Verify user-provided spec matches the first batch's structure.
     # train_p.enforce_input_specs: false
@@ -500,8 +498,7 @@ class BaseTrainProgram(Program):
       logging.debug('  train_p.eval_skip_train is True. Skipping eval_train.')
     else:
       logging.debug('  Retrieving eval model_inputs.')
-      # lsp change
-      eval_inputs = self._train_input.get_next_padded()
+      eval_inputs = self._train_input.peek_padded()
       if eval_inputs is None:
         logging.debug('  eval_inputs is None. Skipping eval_train.')
       else:

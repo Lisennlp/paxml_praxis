@@ -42,81 +42,176 @@ from praxis.layers import transformers
 import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
+from praxis import base_hyperparams
 import tensorflow as tf
 import numpy as np
 import jax.numpy as jnp
 from praxis import py_utils
+from praxis import base_input
 
 
 NestedMap = py_utils.NestedMap
 
 WeightInit = base_layer.WeightInit
 
+GPT_SPM_PATH = (
+    # 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
+    # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
+    'gs://llm_base_models/baichuan-7b/hf/tokenizer.model'
+)
+
 GPT_EOS_ID = 1
+GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH) # lsp：相当于hf的tokenizer
+# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257) # ?
+# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=64000) #lsp: 啥也不干, 为什么用这个？
+PASS_THROUGH_VOCABULARY = GPT_VOCABULARY # lsp
 
-class MyDatasets(seqio.SeqIOInput):
+# lsp: Feature: 对象。存储属性
+C4_GPT_TRAIN_FEATURES_LM = {
+    'targets': t5.data.Feature(vocabulary=GPT_VOCABULARY, add_eos=False)
+}
+C4_GPT_EVAL_FEATURES_LM = {
+    'targets': t5.data.Feature(
+        vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
+    )
+}
+C4_TRAIN_DATADIR = 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
+C4_EVAL_DATADIR = 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
 
-  def __init__(self, path, is_training=True):
-    # valid_path = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-    # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
-    self.num_infeed_hosts =  jax.process_count()
-    self.seq_len = 2048
-    eopch_num = 1
-    self.batch_size = 8
-    self.dataset = self.load_tfrecord_dataset(
-                                              index_fname=path, 
-                                              batch_size=self.batch_size, 
-                                              seq_len=self.seq_len, 
-                                              repeat=eopch_num
-                                              )
-    self.is_training = is_training
-    
-  def peek_padded(self):
-    return self.get_next_padded()
+# XD
+# import tensorflow as tf
+# RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
+# feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
+# RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
 
-  def get_next_padded(self):
-    return next(self.dataset)
+# @seqio.map_over_dataset
+# def convert_datatype(ex):
+#   return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
 
-  def get_global_batch_size(self):
-    return self.batch_size * self.num_infeed_hosts
+# seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
+#     seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
+#     preprocessors=[
+#         convert_datatype,
+#         functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
+#     ],
+#     output_features=RT_GPT_FEATURES_LM,
+# )
 
-  def _parse_function(self, example_proto):
-    feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64), "labels": tf.io.VarLenFeature(tf.int64)}
-    example = tf.io.parse_single_example(example_proto, feature_desc)
-    for name in list(example.keys()):
-        t = example[name]
-        if t.dtype == tf.int64: t = tf.cast(t, dtype=tf.int32)
-        example[name] = tf.sparse.to_dense(t, default_value=0)
-    return example
+# TaskRegistry: t5/data/dataset_providers.py
+class TaskRegistry(t5.data.TaskRegistry):
+  """Task registry with extra tracking."""
 
-  def format(self, data):
-    data = jax.tree_map(lambda x: x.numpy(), data)
-    model_needed_inputs = NestedMap()
-    model_needed_inputs.ids = data['input_ids'][:, :-1]
-    model_needed_inputs.labels = data['input_ids'][:, 1:]
-    weights = data['labels'] > 0
-    model_needed_inputs.weights = weights[:, 1:]
-    model_needed_inputs.paddings = 1 - weights[:, 1:]
-    model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
-    model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
-    return model_needed_inputs
+  TASK_NAMES = []
 
-  def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
-    tf.random.set_seed(42)
-    fnames = [index_fname] if index_fname.endswith('.tfrecords') else open(index_fname).read().splitlines()
-    ds = tf.data.Dataset.from_tensor_slices(fnames)
-    ds = ds.apply(tf.data.TFRecordDataset)
-    # shard host data
-    ds = ds.shard(jax.process_count(), jax.process_index())
-    ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.shuffle(buffer_size=10000) # 从文件中取buffer_size数据，然后打乱
-    ds = ds.padded_batch(batch_size=np.prod(batch_size), 
-                        padded_shapes={'input_ids': [seq_len], 'labels': [seq_len]},
-                        padding_values={'input_ids': 0, 'labels': 0}, 
-                        drop_remainder=True)
-    ds = ds.prefetch(10)
-    ds = ds.repeat(repeat)
-    return map(lambda x: self.format(x), iter(ds))
+  @classmethod
+  def add_versioned_tfds_task(cls,
+                              name: str,
+                              *,
+                              versions: List[str],
+                              pinned_version: Optional[str] = None,
+                              tfds_name: str,
+                              tfds_data_dir: Optional[str] = None,
+                              **kwargs) -> List[seqio.Task]:
+    tasks = []
+    for version in versions:
+      tasks.append(
+          cls.add(
+              f'{name}_{version}',
+              seqio.Task,
+              source=seqio.TfdsDataSource(
+                  tfds_name=f'{tfds_name}:{version}',
+                  tfds_data_dir=tfds_data_dir,
+              ),
+              **kwargs,
+          ))
+    if pinned_version is not None:
+      tasks.append(
+          cls.add(
+              name,
+              seqio.Task, # task_cls # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py
+              # 
+              source=seqio.TfdsDataSource(
+                  tfds_name=f'{tfds_name}:{pinned_version}',
+                  tfds_data_dir=tfds_data_dir,
+              ),
+              **kwargs,
+          ))
+    return tasks
+# source, **kwargs  传入-> seqio.Task
+# cls.add() : add_provider:将name映射为provider 而provider：seqio.Task(name, **kwargs1)
+# kwargs1 = seqio.Task, source, preprocessors, output_features, metric_fns=[]...
+# 所以最终返回的是Tasks对象，最后数据集通过seqio.get_mixture_or_task()：https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py#L2248C5-L2248C24
+# 获取刚刚实例化的Task对象,该对象再通过.get_dataset(**kwargs2)获取 # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py#L1486
+# kwargs2 = dict(
+#     sequence_length=task_feature_lengths,
+#     split='train',
+#     shuffle=True,
+#     num_epochs=2,
+#     shard_info=shard_info,
+#     use_cached=False,
+#     seed=1234,
+#     trim_output_features=True, # default: True
+#     try_in_mem_cache=True, # default: True
+# )
+# def add(cls, name: str, task_cls=FunctionTask, **kwargs) -> seqio.Task:
+#     provider = task_cls(name, **kwargs)
+#     super().add_provider(name, provider)
+
+
+
+# lsp: 数据的原始输入格式：{'content-length': .., 'content-type': .., 'text': .., 'timestamp': ..., 'url'...}
+# 只用到了key：text
+# C4 corpus for language model pretraining
+TaskRegistry.add_versioned_tfds_task(
+    'c4_lm_v301_gpt',
+    versions=['3.0.1'],  # XD: 3.0.4 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.4 -> 3.0.1
+    tfds_name='c4/en',
+    tfds_data_dir=C4_TRAIN_DATADIR,
+    preprocessors=[
+        functools.partial(
+            t5_preprocessors.rekey,
+            key_map={
+                'inputs': None,
+                'targets': 'text', # lsp：增加inputs和targets key. target = 数据中的text， input=None
+            },
+        ),
+        seqio.preprocessors.tokenize, # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/preprocessors.py#L57
+        functools.partial(
+            t5_preprocessors.reduce_concat_tokens,
+            batch_size=4096,  # 4096个句子拼一起
+        ),
+        t5_preprocessors.split_tokens_to_targets_length, # 每份2048
+    ],
+    output_features=C4_GPT_TRAIN_FEATURES_LM,
+    metric_fns=[],
+    shuffle_buffer_size=10000,
+)
+
+TaskRegistry.add_versioned_tfds_task(
+    'c4_lm_v301_gpt_eval_tokenized',
+    versions=['3.0.1'],  # XD: 3.0.5 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.5 -> 3.0.1
+    tfds_name='c4/en',
+    tfds_data_dir=C4_EVAL_DATADIR,
+    preprocessors=[
+        functools.partial(
+            t5_preprocessors.rekey,
+            key_map={
+                'inputs': None,
+                'targets': 'text', # ids -> text
+            },
+        ),
+        seqio.preprocessors.tokenize,
+        functools.partial(
+            t5_preprocessors.reduce_concat_tokens,
+            batch_size=1,  # 1个句子，不进行拼接
+        ),
+    ],
+    output_features=C4_GPT_EVAL_FEATURES_LM,
+    metric_fns=[],
+    shuffle_buffer_size=None,
+)
 
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
@@ -126,8 +221,6 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
   MAX_SEQ_LEN = 1024
   TRAINING_SEED = 9876
   TRAINING_NUM_BATCHES_TO_SKIP = None
-  # TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
-  # VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
 
   def _dataset_common(
       self, is_training
@@ -204,7 +297,6 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         annotate_padding_fields=True,
     )
     return p
-    
   # lsp: 数据
   def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns a list of dataset parameters."""
@@ -212,6 +304,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         self._dataset_common(is_training=True),
         self._dataset_common(is_training=False)
     ]
+
 
 def set_adam_and_learning_rate_schedule(
     cls,
@@ -704,7 +797,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  NUM_LAYERS = 2
+  NUM_LAYERS = 32
   MODEL_DIMS = 4096
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
@@ -712,7 +805,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 2
+  PERCORE_BATCH_SIZE = 1
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
@@ -722,6 +815,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 20
+  TRAINABLE_PE_MAX_SEQ_LEN = 2048
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
     # lsp
@@ -733,8 +827,14 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         MyDatasets, 
         path=path,
         is_training=is_training,
+        num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
+        batch_size=self.PERCORE_BATCH_SIZE * 8,
+        seq_len=self.TRAINABLE_PE_MAX_SEQ_LEN,
+        reset_for_eval=False, 
+        repeat=1
     )
     return p
+
 
 @experiment_registry.register
 class C4SpmdGpt3MediumRoPE(C4SpmdGpt3SmallRoPE):  # XD
@@ -1204,3 +1304,75 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
   EVAL_INTERVAL_STEPS = 10
   SUMMARY_INTERVAL_STEPS = 5
   CHECKPOINT_EVERY_N_STEPS = 200
+
+
+class MyDatasets(base_input.BaseInput):
+  # Required params.
+  path: Optional[str] = None
+  num_batches_to_skip: Optional[int] = None
+  num_infeed_hosts: int = 0
+  reset_for_eval: bool = False # eval的时候为True -> False
+  is_training: bool = True
+  batch_size: int = 8
+  seq_len: int = 2048
+  repeat: int = 1
+
+  def __post_init__(self):
+    # valid_path = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
+    # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
+    if self.num_infeed_hosts == 0:
+      self.num_infeed_hosts =  jax.process_count()
+    self.dataset = self.load_tfrecord_dataset(
+                                              index_fname=self.path, 
+                                              batch_size=self.batch_size, 
+                                              seq_len=self.seq_len, 
+                                              repeat=self.repeat
+                                              )
+    
+  def peek_padded(self):
+    return self.get_next_padded()
+
+  def get_next_padded(self):
+    return next(self.dataset)
+
+  def get_global_batch_size(self, train_input):
+    logging.info(f'train_input: {train_input} type: {type(train_input)}')
+    return self.batch_size * self.num_infeed_hosts
+
+  def _parse_function(self, example_proto):
+    feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64), "labels": tf.io.VarLenFeature(tf.int64)}
+    example = tf.io.parse_single_example(example_proto, feature_desc)
+    for name in list(example.keys()):
+        t = example[name]
+        if t.dtype == tf.int64: t = tf.cast(t, dtype=tf.int32)
+        example[name] = tf.sparse.to_dense(t, default_value=0)
+    return example
+
+  def format(self, data):
+    data = jax.tree_map(lambda x: x.numpy(), data)
+    model_needed_inputs = NestedMap()
+    model_needed_inputs.ids = data['input_ids'][:, :-1]
+    model_needed_inputs.labels = data['input_ids'][:, 1:]
+    weights = data['labels'] > 0
+    model_needed_inputs.weights = weights[:, 1:]
+    model_needed_inputs.paddings = 1 - weights[:, 1:]
+    model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
+    model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
+    return model_needed_inputs
+
+  def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
+    tf.random.set_seed(42)
+    fnames = [index_fname] if index_fname.endswith('.tfrecords') else open(index_fname).read().splitlines()
+    ds = tf.data.Dataset.from_tensor_slices(fnames)
+    ds = ds.apply(tf.data.TFRecordDataset)
+    # shard host data
+    ds = ds.shard(jax.process_count(), jax.process_index())
+    ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.shuffle(buffer_size=10000) # 从文件中取buffer_size数据，然后打乱
+    ds = ds.padded_batch(batch_size=np.prod(batch_size), 
+                        padded_shapes={'input_ids': [seq_len], 'labels': [seq_len]},
+                        padding_values={'input_ids': 0, 'labels': 0}, 
+                        drop_remainder=True)
+    ds = ds.prefetch(10)
+    ds = ds.repeat(repeat)
+    return map(lambda x: self.format(x), iter(ds))

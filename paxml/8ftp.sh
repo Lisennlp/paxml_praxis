@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 源目录
-source_dir="/Users/lishengping/codes/others/paxml_praxis/paxml"
+source_dir="/Users/lishengping/codes/others/paxml_praxis/paxml2"
 # 目标目录
 target_dir="/home/lishengping/projects/paxml"
 

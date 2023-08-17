@@ -60,7 +60,6 @@ TrainState = train_states.TrainState
 TrainStateProvenance = train_states.TrainStateProvenance
 TrainStateMetadata = trainer_lib.TrainStateMetadata
 RunningMode = trainer_lib.RunningMode
-NestedMap = py_utils.NestedMap
 
 
 def filter_nestedmap(full_specs, partial_specs):
@@ -414,10 +413,11 @@ class Partitioner(metaclass=abc.ABCMeta):
     Returns:
       The preprocessed input config.
     """
+    # Updates the runtime information.
     if input_p.num_infeed_hosts == 0:
       input_p.num_infeed_hosts = jax.process_count()
     input_p.infeed_host_index = jax.process_index()
-    # Updates the runtime information.
+
     if hasattr(input_p, 'tf_data_service_address'):
       input_p.tf_data_service_address = (
           tf_data_service_lib.get_tf_data_service_address()
@@ -511,12 +511,9 @@ class Partitioner(metaclass=abc.ABCMeta):
 
   def _get_train_state_metadata_default(self) -> TrainStateMetadata:
     """Helper method to get the TrainStateMetadata."""
-    # lsp
     if not self._train_inputs_shape_dtype:
       raise ValueError('Train input spec is not set. It can be set in setup().')
-
-    if not self._train_inputs_shape_dtype:
-      raise ValueError('Train input spec is not set. It can be set in setup().')
+    # __import__('ipdb').set_trace()
     return trainer_lib.create_train_state_metadata(
         self._jax_task,
         self._train_inputs_shape_dtype,
@@ -790,8 +787,7 @@ class PjitPartitioner(Partitioner):
   def _get_train_inputs_shape_dtype(
       self, train_input_pipeline: base_input.BaseInput
   ) -> NestedShapeDtypeLike:
-    # 从数据对象中sample一条数据
-    # lsp change
+  # 从数据对象中sample一条数据
     sample_inputs = train_input_pipeline.peek_padded()
     # lsp: 每条数据的输入shape和dtype，这个shape乘了host数量
     global_shape_dtype = jax.tree_map(

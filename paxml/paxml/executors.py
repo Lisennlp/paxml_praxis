@@ -185,7 +185,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
     # Creates the root prng key and train input pipeline.
     root_prng_key = jax.random.PRNGKey(self._task.train.random_seed)
-    # train_input_p = partitioner.preprocess_input_config(train_input_p)
+    train_input_p = partitioner.preprocess_input_config(train_input_p)
     # train_input和train_input_for_partitione一样
     train_input, train_input_for_partitioner, train_input_for_checkpoint = (
         self._maybe_create_train_input(
@@ -423,8 +423,7 @@ def _train_and_evaluate_common(
     train_weighted_scalars = program_output.weighted_scalars
     steps_per_sec = program_output.steps_per_sec
     eval_train_metrics = program_output.eval_train_metrics
-    if eval_train_metrics is not None:
-      logging.info(f'step: {step_i}|| eval_train_metrics: {eval_train_metrics}')
+
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
@@ -441,7 +440,6 @@ def _train_and_evaluate_common(
       eval_partitioned_train_state = programs.get_eval_train_state(
           task, partitioned_train_state, task.train.eval_use_ema_states
       )
-      logging.info(f'eval_programs: {eval_programs}')
       # If we have eval test then also evaluate on test.
       if eval_programs:
         logging.debug('[PAX STATUS]:  Running eval programs.')

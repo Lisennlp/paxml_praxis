@@ -439,7 +439,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     elif self.norm_policy == 'pre':
       inputs = self.layer_norm(inputs)
     # if self.norm_policy in ('primer_hybrid', 'pre'):
-    #   self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
+      self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
     #lsp:  x = self.w2(nn.silu(self.w1(x)) * self.w3(x))
     # Apply first FFN layer
     if self._is_ffn1_gated:
@@ -457,7 +457,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
       logging.info(f'self.apply_padding_first: {self.apply_padding_first}')
       activations *= (1.0 - paddings)
 
-    # self.add_summary('activation_rms', _rms(activations), verbosity=4)
+    self.add_summary('activation_rms', _rms(activations), verbosity=4)
 
     # Apply RELU dropout
     activations = self.relu_dropout(activations)
@@ -471,7 +471,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
       logging.info(f'===============self.apply_padding_first: {self.apply_padding_first}==============')
       outputs *= (1.0 - paddings)
 
-    # self.add_summary('output_rms', _rms(outputs), verbosity=4)
+    self.add_summary('output_rms', _rms(outputs), verbosity=4)
 
     # Apply Primer normalization before dropout.
     # 
@@ -481,7 +481,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     #   outputs = self.layer_norm(outputs)
 
     # if self.norm_policy in ('primer_hybrid', 'post'):
-    #   self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
+    self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
 
     # Apply residual dropout  
     outputs = self.residual_dropout(outputs)
@@ -499,8 +499,8 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
     # if self.input_dims == self.output_dims:
     #   # Cosine similarity between inputs (residual) and outputs.
-    #   self.add_summary(
-    #       'output_rel_cos', _rel_cos(residual, outputs), verbosity=4)
+      self.add_summary(
+          'output_rel_cos', _rel_cos(residual, outputs), verbosity=4)
 
     return outputs
 
@@ -1301,10 +1301,10 @@ class Transformer(base_layer.BaseLayer):
     """
 
     inputs_stats = stats.compute_stats(inputs, jnp.expand_dims(paddings, -1))
-    # self.add_summary('xformer_input_mean', inputs_stats.mean_v, verbosity=3)
-    # self.add_summary('xformer_input_std', inputs_stats.std_v, verbosity=3)
-    # self.add_summary('xformer_input_abs_max', inputs_stats.max_v, verbosity=3)
-    # self.add_summary('attention_input_rms', _rms(inputs), verbosity=4)
+    self.add_summary('xformer_input_mean', inputs_stats.mean_v, verbosity=3)
+    self.add_summary('xformer_input_std', inputs_stats.std_v, verbosity=3)
+    self.add_summary('xformer_input_abs_max', inputs_stats.max_v, verbosity=3)
+    self.add_summary('attention_input_rms', _rms(inputs), verbosity=4)
 
     # norm_policy： pre || lsp： llama是在attention和ffn之前进行norm操作
     if self.norm_policy == 'primer_hybrid':
@@ -1326,7 +1326,7 @@ class Transformer(base_layer.BaseLayer):
     
     atten_probs = NestedMap(self_atten=self_atten_probs)
 
-    # self.add_summary('attention_output_rms', _rms(atten_output), verbosity=4)
+    self.add_summary('attention_output_rms', _rms(atten_output), verbosity=4)
     # attention layernorm 策略的选择: pre
     if self.norm_policy == 'primer_hybrid':
       atten_output = self.post_layer_norm(atten_output)
@@ -1347,8 +1347,8 @@ class Transformer(base_layer.BaseLayer):
     if self.norm_policy == 'post_skip':
       atten_output = self.layer_norm(atten_output)
 
-    # self.add_summary('attention_output_rel_cos', _rel_cos(inputs, atten_output),
-    #                  verbosity=4)
+    self.add_summary('attention_output_rel_cos', _rel_cos(inputs, atten_output),
+                     verbosity=4)
 
     # Apply cross attention if applicable
     # lsp 注释掉

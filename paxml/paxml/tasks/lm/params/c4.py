@@ -819,7 +819,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   CHECKPOINT_EVERY_N_STEPS = 20
   LAYERNORM_EPSILON = 1e-06
   # TRAINABLE_PE_MAX_SEQ_LEN = 512
-  MAX_SEQ_LEN = 2048
+  MAX_SEQ_LEN = 1024
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
     # lsp

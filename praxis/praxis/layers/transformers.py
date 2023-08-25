@@ -432,16 +432,12 @@ class TransformerFeedForward(base_layer.BaseLayer):
     if self.apply_padding_first and paddings is not None:
       inputs *= (1.0 - paddings)
 
-    # self.add_summary('input_rms', _rms(inputs), verbosity=4)
     residual = inputs
-    # self.add_summary('#lsp#ffn_inputs', inputs[0])
-
     # lsp：是否需要预norm, llama是attention之前和ffn之前都进行norm操作
     if self.norm_policy == 'primer_hybrid':
       inputs = self.pre_layer_norm(inputs)
     elif self.norm_policy == 'pre':
       inputs = self.layer_norm(inputs)
-    self.add_summary('#lsp#ffn_inputs_prenorm', inputs[0])
     # if self.norm_policy in ('primer_hybrid', 'pre'):
     #   self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
     #lsp:  x = self.w2(nn.silu(self.w1(x)) * self.w3(x))
@@ -450,11 +446,8 @@ class TransformerFeedForward(base_layer.BaseLayer):
       # theta.ffn_layer1_gate corresponds to gshard_builder's wi0
       gate_value = self.ffn_layer1_gate(inputs)
       # theta.ffn_layer1 corresponds to gshard_builder's wi1
-      self.add_summary('#lsp#gate_value', gate_value[0])
       # lsp： 直接 * 和mesh一样
       activations = gate_value * self.ffn_layer1(inputs)
-      self.add_summary('#lsp#activations', activations[0])
-
     else:
       activations = self.ffn_layer1(inputs)
       activations = checkpoint_name(activations, 'ffn1')
@@ -470,9 +463,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     activations = self.relu_dropout(activations)
 
     # Apply second FFN layer
-    self.add_summary('#lsp#ffn2_inputs', activations[0])
     outputs = self.ffn_layer2(activations)
-    self.add_summary('#lsp#ffn2_outputs', outputs[0])
 
     outputs = checkpoint_name(outputs, 'ffn2')
     # Apply paddings if not None
@@ -502,7 +493,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
         outputs = self.residual_droppath(residual, outputs)
       else:
         outputs = residual + outputs * self.residual_weight
-    self.add_summary('#lsp#ffn_outputs', outputs[0])
     # lsp：是否需要处理后norm
     # if self.norm_policy == 'post_skip':
     #   outputs = self.layer_norm(outputs)
@@ -1326,8 +1316,6 @@ class Transformer(base_layer.BaseLayer):
 
     # Compute self-attention, key/value vectors are the input itself
     # lsp:  q_proj + attn + post
-    # __import__('ipdb').set_trace()
-    self.add_summary('#lsp#inputs_normalized', inputs_normalized[0])
     atten_output, self_atten_probs = self.self_attention(
         inputs_normalized,
         inputs_normalized,
@@ -1335,8 +1323,6 @@ class Transformer(base_layer.BaseLayer):
         atten_mask=attention_mask,
         query_segment_pos=segment_pos,
         key_segment_pos=segment_pos)
-    # self.add_summary('#lsp#atten_output', atten_output[0])
-    # self.add_summary('self_atten_probs', self_atten_probs, verbosity=3)
     
     atten_probs = NestedMap(self_atten=self_atten_probs)
 
@@ -1346,10 +1332,6 @@ class Transformer(base_layer.BaseLayer):
       atten_output = self.post_layer_norm(atten_output)
     elif self.norm_policy == 'post':
       atten_output = self.layer_norm(atten_output)
-
-    # self.add_summary('#lsp#atten_output_norm', atten_output[0], verbosity=3)
-    # self.add_summary('attention_output_norm_rms', _rms(atten_output),
-    #                  verbosity=4)
 
     # Residual dropout and connection
     # lsp: attention dropout
@@ -1370,46 +1352,43 @@ class Transformer(base_layer.BaseLayer):
 
     # Apply cross attention if applicable
     # lsp 注释掉
-    # if self.use_cross_attention and (
-    #     not self.allow_skip_cross_attention or cross_inputs is not None
-    # ):
-    #   assert cross_inputs is not None
-    #   assert cross_attention_mask is not None
-    #   if self.norm_policy == 'pre':
-    #     atten_output_normalized = self.cross_layer_norm(atten_output)
-    #   elif self.norm_policy == 'primer_hybrid':
-    #     atten_output_normalized = self.pre_cross_layer_norm(atten_output)
-    #   elif self.norm_policy in ('post', 'post_skip'):
-    #     atten_output_normalized = atten_output
+    if self.use_cross_attention and (
+        not self.allow_skip_cross_attention or cross_inputs is not None
+    ):
+      assert cross_inputs is not None
+      assert cross_attention_mask is not None
+      if self.norm_policy == 'pre':
+        atten_output_normalized = self.cross_layer_norm(atten_output)
+      elif self.norm_policy == 'primer_hybrid':
+        atten_output_normalized = self.pre_cross_layer_norm(atten_output)
+      elif self.norm_policy in ('post', 'post_skip'):
+        atten_output_normalized = atten_output
 
-    #   cross_atten_output, cross_atten_probs = self.cross_attention(
-    #       atten_output_normalized,
-    #       cross_inputs,
-    #       cross_inputs,
-    #       atten_mask=cross_attention_mask)
-    #   atten_probs.cross_atten = cross_atten_probs
+      cross_atten_output, cross_atten_probs = self.cross_attention(
+          atten_output_normalized,
+          cross_inputs,
+          cross_inputs,
+          atten_mask=cross_attention_mask)
+      atten_probs.cross_atten = cross_atten_probs
 
-    #   if self.norm_policy == 'post':
-    #     cross_atten_output = self.cross_layer_norm(cross_atten_output)
-    #   elif self.norm_policy == 'primer_hybrid':
-    #     cross_atten_output = self.post_cross_layer_norm(cross_atten_output)
+      if self.norm_policy == 'post':
+        cross_atten_output = self.cross_layer_norm(cross_atten_output)
+      elif self.norm_policy == 'primer_hybrid':
+        cross_atten_output = self.post_cross_layer_norm(cross_atten_output)
 
-    #   # Residual dropout and connection
-    #   cross_atten_output = self.residual_dropout(cross_atten_output)
+      # Residual dropout and connection
+      cross_atten_output = self.residual_dropout(cross_atten_output)
 
-    #   if self.residual_droppath_prob > 0.0:
-    #     atten_output = self.residual_droppath(atten_output, cross_atten_output)
-    #   else:
-    #     atten_output += cross_atten_output
+      if self.residual_droppath_prob > 0.0:
+        atten_output = self.residual_droppath(atten_output, cross_atten_output)
+      else:
+        atten_output += cross_atten_output
 
-    #   if self.norm_policy == 'post_skip':
-    #     atten_output = self.cross_layer_norm(atten_output)
+      if self.norm_policy == 'post_skip':
+        atten_output = self.cross_layer_norm(atten_output)
 
-    self.add_summary('#lsp#ffn_inputs', atten_output[0])
     # Apply FFN layer
     output = self.ff_layer(atten_output, paddings=paddings)
-    self.add_summary('#lsp#ffn_out', output[0], verbosity=3)
-
     return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
 
   def extend_step(self,

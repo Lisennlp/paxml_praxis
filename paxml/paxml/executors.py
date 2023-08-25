@@ -423,9 +423,6 @@ def _train_and_evaluate_common(
     train_weighted_scalars = program_output.weighted_scalars
     steps_per_sec = program_output.steps_per_sec
     eval_train_metrics = program_output.eval_train_metrics
-    logging.info(f'loss: {program_output.loss}')
-    exit(0)
-
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step

@@ -731,8 +731,6 @@ class TransformerLm(base_layer.BaseLayer):
       addition, per_sequence_xent is added which equal to the sum of xent loss
       for tokens in a sequence.
     """
-    # __import__('ipdb').set_trace()
-    
     batch, seq_length = inputs.shape[:2]
 
     paddings_float32 = paddings.astype(jnp.float32)
@@ -750,7 +748,6 @@ class TransformerLm(base_layer.BaseLayer):
       segment_pos = jnp.tile(
           jnp.arange(seq_length, dtype=jnp.int32)[None, :], [batch, 1]
       )
-    self.add_summary('#lsp#inputs_ids', inputs[0])
     # lsp: id -> emebd
     inputs = self._prepare_input(
         inputs, paddings, segment_pos=segment_pos, **input_kwargs
@@ -783,18 +780,9 @@ class TransformerLm(base_layer.BaseLayer):
     self.update_decode_state('time_step', start_time_step)  # pytype: disable=wrong-arg-types  # jax-ndarray
     # lsp: self.transformer == self.stacked_transformer_tpl, #lsp forward2
     # lsp check: True
-    self.add_summary('#lsp#embeding', inputs[0], verbosity=3)
-    self.add_summary('#lsp#inputs_shape', inputs.shape, verbosity=3)
-    
     output = self.transformer(
         inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos
     )
-    # lsp
-    # output = self.transformer(
-    #     inputs, None, segment_mask=segment_mask, segment_pos=segment_pos
-    # )
-
-
     # Final layer norm : lsp
     if self.final_ln_tpl is not None:
       output = self.final_ln(output)

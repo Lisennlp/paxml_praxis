@@ -422,8 +422,6 @@ class RmsNorm(BaseNormalization):
     Returns:
       Output after applying RMS normalization, with the same shape as 'inputs'.
     """
-    # self.add_summary('#lsp#rms_inputs', inputs, verbosity=3)
-    
     del paddings  # Unused.
     if self.intermediate_dtype is not None: # lsp： float32
       inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
@@ -431,11 +429,8 @@ class RmsNorm(BaseNormalization):
     normed_inputs = jnp.asarray(
         inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
     )
-    # __import__('ipdb').set_trace()
     scale = self.theta.scale if self.direct_scale else 1 + self.theta.scale
     normed_inputs *= scale
-    self.add_summary('#lsp#rms_normed_inputs', normed_inputs[0], verbosity=3)
-    # self.add_summary('#lsp#rms_scale', scale, verbosity=3)
     return normed_inputs
 
 

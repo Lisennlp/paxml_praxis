@@ -164,14 +164,14 @@ def _set_stacked_transformer_sharding(
           atten_ap.blh = [a_blnh[0], a_blnh[1], a_blnh[3]]
         else:
           atten_ap.blh = a_blh
-
+    #lsp: 设置 model的ffn层的weight_split_dims_mapping属性
     ff_p = t_p.tr_fflayer_tpl
     ff_wp = ff_p.weight_split_dims_mapping
-    ff_wp.ffn0 = w_df
+    ff_wp.ffn0 = w_df # [data_axis, mdl]
     if w_df is None:
       ff_wp.ffn1 = None
     else:
-      ff_wp.ffn1 = [w_df[1], w_df[0]]
+      ff_wp.ffn1 = [w_df[1], w_df[0]] # lsp: [mdl, data_axis]
     ff_ap = ff_p.activation_split_dims_mapping
     # lsp: ffn shard 两个
     ff_ap.ffn0 = a_blf
@@ -731,6 +731,7 @@ class TransformerLm(base_layer.BaseLayer):
       addition, per_sequence_xent is added which equal to the sum of xent loss
       for tokens in a sequence.
     """
+    # __import__('ipdb').set_trace()
     
     batch, seq_length = inputs.shape[:2]
 
@@ -749,6 +750,7 @@ class TransformerLm(base_layer.BaseLayer):
       segment_pos = jnp.tile(
           jnp.arange(seq_length, dtype=jnp.int32)[None, :], [batch, 1]
       )
+    self.add_summary('#lsp#inputs_ids', inputs[0])
     # lsp: id -> emebd
     inputs = self._prepare_input(
         inputs, paddings, segment_pos=segment_pos, **input_kwargs
@@ -780,9 +782,18 @@ class TransformerLm(base_layer.BaseLayer):
 
     self.update_decode_state('time_step', start_time_step)  # pytype: disable=wrong-arg-types  # jax-ndarray
     # lsp: self.transformer == self.stacked_transformer_tpl, #lsp forward2
+    # lsp check: True
+    self.add_summary('#lsp#embeding', inputs[0], verbosity=3)
+    self.add_summary('#lsp#inputs_shape', inputs.shape, verbosity=3)
+    
     output = self.transformer(
         inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos
     )
+    # lsp
+    # output = self.transformer(
+    #     inputs, None, segment_mask=segment_mask, segment_pos=segment_pos
+    # )
+
 
     # Final layer norm : lsp
     if self.final_ln_tpl is not None:
@@ -1190,6 +1201,7 @@ class TransformerEncoderDecoder(base_layer.BaseLayer):
     # The batch axis of the activations are always sharded over the combination
     # of (replica_axis, data_axis).
     batch_axes = (replica_axis, data_axis)
+    # lsp: training_optimized <-> TRAINING_OPTIMIZED_SHARDING=True
     bld = (
         [batch_axes, None, mdl_axis]
         if training_optimized

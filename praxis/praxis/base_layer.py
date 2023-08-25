@@ -1925,6 +1925,7 @@ class BaseLayer(nn.Module):
     next_iter = 0
     summary_name = name
     full_name = summary_name
+    # 如果存在这个值，则full_name不断+1，表示不同层
     while self.has_variable(SUMMARIES, full_name):
       next_iter += 1
       full_name = summary_name + str(next_iter)
@@ -1941,6 +1942,7 @@ class BaseLayer(nn.Module):
       assert tensor.ndim == 3
     # full_name is ensured to be unique.
     # reduction function is "overwrite" if layer is called multiple times.
+    # lsp: x表示初始值，y表示经过tensor
     self.sow(SUMMARIES, full_name, tensor, reduce_fn=lambda x, y: y)
 
   @nn.nowrap

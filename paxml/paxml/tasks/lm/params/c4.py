@@ -57,7 +57,7 @@ WeightInit = base_layer.WeightInit
 GPT_SPM_PATH = (
     # 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
     # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
-    'gs://llm_base_models/baichuan-7b/hf/tokenizer.model'
+    'gs://llm_base_models/baichuan-7b-hf/tokenizer.model'
 )
 
 GPT_EOS_ID = 1
@@ -205,7 +205,7 @@ TaskRegistry.add_versioned_tfds_task(
         seqio.preprocessors.tokenize,
         functools.partial(
             t5_preprocessors.reduce_concat_tokens,
-            batch_size=1,  # 1个句子，不进行拼接
+            batch_size=4096,  # 1个句子，不进行拼接
         ),
     ],
     output_features=C4_GPT_EVAL_FEATURES_LM,
@@ -620,14 +620,14 @@ def configure_gpt3_task(
   transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
-    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32
+    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32 # lsp：inputs采用float32
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
     model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
   if True or cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
     transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-  # lsp: tr_atten_tpl有可能为None，这样设置有问题把？
+  
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
 
@@ -720,7 +720,7 @@ class C4SpmdGpt3AdamOrgHP(C4SpmdAdam):
   ADAM_EPSILON = 1e-8
   ADAM_CLIP_THRESHOLD = -1.0  # Disable Adam clip_threshold
   CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-  LAYERNORM_EPSILON = 1e-5
+  LAYERNORM_EPSILON = 1e-6
 
   # In units of steps for BS1.5k
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
@@ -781,12 +781,14 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
   LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
+  # FPROP_DTYPE = jnp.bfloat16
   FPROP_DTYPE = jnp.bfloat16
+
 
   ICI_MESH_SHAPE = [1, 8, 4]
 
   SEPARATE_EMBEDDING = True  # XD
-  USE_ROTARY_POSITION_EMB = False
+  USE_ROTARY_POSITION_EMB = True
   TRAINABLE_PE_MAX_SEQ_LEN = 2048  # XD add
   # lsp: 调用这个task
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
@@ -811,11 +813,13 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 8, 1] # v5最后一个维度不能为2？，必须为1？
+  ICI_MESH_SHAPE = [1, 1, 8] # v5最后一个维度不能为2？，必须为1？
 
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 20
-  TRAINABLE_PE_MAX_SEQ_LEN = 2048
+  LAYERNORM_EPSILON = 1e-06
+  # TRAINABLE_PE_MAX_SEQ_LEN = 512
+  MAX_SEQ_LEN = 256
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
     # lsp
@@ -829,7 +833,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         is_training=is_training,
         num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
         batch_size=self.PERCORE_BATCH_SIZE * 8,
-        seq_len=self.TRAINABLE_PE_MAX_SEQ_LEN,
+        seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
         repeat=1
     )
@@ -932,7 +936,7 @@ class C4SpmdPipelineGpt3AdamOrgHP(C4SpmdPipelineAdam):
   ADAM_EPSILON = 1e-8
   ADAM_CLIP_THRESHOLD = -1.0  # Disable Adam clip_threshold
   CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-  LAYERNORM_EPSILON = 1e-5
+  LAYERNORM_EPSILON = 1e-6
 
   # In units of steps for BS1.5k
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
@@ -1322,10 +1326,12 @@ class MyDatasets(base_input.BaseInput):
     # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
     if self.num_infeed_hosts == 0:
       self.num_infeed_hosts =  jax.process_count()
+    # seq_len = self.seq_len
+    # x = 2048
     self.dataset = self.load_tfrecord_dataset(
                                               index_fname=self.path, 
                                               batch_size=self.batch_size, 
-                                              seq_len=self.seq_len, 
+                                              seq_len=2048, 
                                               repeat=self.repeat
                                               )
     
@@ -1351,11 +1357,15 @@ class MyDatasets(base_input.BaseInput):
   def format(self, data):
     data = jax.tree_map(lambda x: x.numpy(), data)
     model_needed_inputs = NestedMap()
-    model_needed_inputs.ids = data['input_ids'][:, :-1]
-    model_needed_inputs.labels = data['input_ids'][:, 1:]
+    model_needed_inputs.ids = data['input_ids'][:, :self.seq_len-1]
+    model_needed_inputs.labels = data['input_ids'][:, 1:self.seq_len]
     weights = data['labels'] > 0
-    model_needed_inputs.weights = weights[:, 1:]
-    model_needed_inputs.paddings = 1 - weights[:, 1:]
+    padding_weights = np.zeros_like(model_needed_inputs.ids)
+    model_needed_inputs.weights = weights[:, 1:self.seq_len]
+    # 错误，因为labels是计算loss的位置，只会在计算loss的时候进行mask，而paddings不一样，是对hidden_states进行mask
+    # model_needed_inputs.paddings = 1 - weights[:, 1:self.seq_len]
+    # logging.info(f'model_needed_inputs.paddings: {model_needed_inputs.paddings[0]} || sum: {model_needed_inputs.paddings[0].sum()} || shape: {model_needed_inputs.paddings[0].shape}')
+    model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
     model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
     model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
     return model_needed_inputs

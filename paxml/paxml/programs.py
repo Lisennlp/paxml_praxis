@@ -293,8 +293,6 @@ class BaseTrainProgram(Program):
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieving inputs.', 5)
     # dict: 'ids', 'labels', 'weights', 'paddings', 'segment_ids', 'segment_pos', ' ....
     model_inputs = self._train_input.get_next_padded()
-    __import__('ipdb').set_trace()
-
     # Verify user-provided spec matches the first batch's structure.
     # train_p.enforce_input_specs: false
     if step == self._initial_step and train_p.enforce_input_specs:
@@ -321,7 +319,7 @@ class BaseTrainProgram(Program):
     )
     with jax.profiler.StepTraceAnnotation('train', step_num=step):
       with py_utils.timeit() as train_period:
-        # lsp train_step
+        # lsp train_step ==============
         new_step, new_state, train_outputs = self.train_step(
             step,
             state,
@@ -361,6 +359,9 @@ class BaseTrainProgram(Program):
         and new_step % train_p.eval_interval_steps == 0
     ):
       eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
+    import pickle
+    pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
+    logging.info(f'summary_tesor: {train_outputs.summary_tensors.keys()}')
 
     return TrainProgramOutput(
         new_state,

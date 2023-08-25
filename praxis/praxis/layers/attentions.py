@@ -1364,6 +1364,8 @@ class DotProductAttention(base_layer.BaseLayer):
 
   def _scale_query(self, query: JTensor) -> JTensor:
     """Scales the query vector if enabled."""
+    logging.info(f'self.internal_enable_query_scale: {self.internal_enable_query_scale}')
+    # internal_enable_query_scale true?
     if not self.internal_enable_query_scale:
       return query
     if self.internal_enable_per_dim_scale:
@@ -1480,6 +1482,7 @@ class DotProductAttention(base_layer.BaseLayer):
         ((logits**2.0).mean().astype(jnp.float32) ** 0.5),
         verbosity=4,
     )
+
     logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
     # Attention softmax is always carried out in fp32.
     logits = logits.astype(jnp.float32)
@@ -1628,6 +1631,7 @@ class DotProductAttention(base_layer.BaseLayer):
       encoded: JTensor of shape [B, T, D].
       atten_probs: JTensor of shape [B, N, T, S].
     """
+    self.add_summary(f'#lsp#query_vec', query_vec[0])
     if self.combine_qkv:
       # Only supports self attention.
       assert query_vec is key_vec
@@ -1642,6 +1646,11 @@ class DotProductAttention(base_layer.BaseLayer):
       query_proj = self.query(query_vec) 
       key_proj = self.key(key_vec)
       value_proj = self.value(value_vec)
+    self.add_summary(f'#lsp#query_proj', query_proj[0])
+    self.add_summary(f'#lsp#key_proj', key_proj[0])
+    self.add_summary(f'#lsp#value_proj', value_proj[0])
+
+    # self.add_summary(f'#lsp#value_proj', value_proj[0])
 
     self._fprop_update_decode_state('key_state', key_proj)
     self._fprop_update_decode_state('value_state', value_proj)
@@ -1666,6 +1675,8 @@ class DotProductAttention(base_layer.BaseLayer):
       # query_proj, key_proj = query_proj.astype(jnp.float32), key_proj.astype(jnp.float32)  # XD
       self._fprop_update_decode_state('key_post_rotary_pos_emb', key_proj)
 
+    self.add_summary(f'#lsp#query_proj_rotary', query_proj[0])
+    self.add_summary(f'#lsp#key_proj_rotary', key_proj[0])
     # Apply relative bias.
     # Paper: https://aclanthology.org/N18-2074.pdf.
     if self.relative_bias_tpl:
@@ -1676,10 +1687,14 @@ class DotProductAttention(base_layer.BaseLayer):
     encoded, atten_probs = self._dot_atten(
         query_proj, key_proj, value_proj, atten_mask, relative_bias
     )
+    self.add_summary(f'#lsp#atten_probs', atten_probs[0])
+    self.add_summary(f'#lsp#encoded', encoded[0])
 
     # Apply NGrammer to the output of the attention layer.
     # Paper: https://openreview.net/forum?id=GxjCYmQAody.
     if self.ngrammer_tpl is not None:
+      logging.info(f'\n\n\n\n================ngrammer_tpl========================\n\n\n\n')
+      exit(0)
       self._fprop_update_decode_state('encoded_pre_ngrammer', encoded)
       attention_scores = None
       if self.ngrammer_tpl.ngram_using_attention_scores:
@@ -1695,6 +1710,7 @@ class DotProductAttention(base_layer.BaseLayer):
     # Post projection
     # lsp: attention出来之后过线性层
     encoded = self.post(encoded)
+    self.add_summary(f'#lsp#post_encoded', encoded[0])
     encoded = self._shard_bld(encoded) # bsz * len * model -shard-> (replica, data), None, mdl
     encoded = checkpoint_name(encoded, 'out_proj')
 

@@ -235,6 +235,7 @@ def train_and_evaluate(
         checkpointer.checkpoint_type != CheckpointType.PERSISTENCE
         or train_input_p.experimental_remote_input
     )
+    reshard_inputs = False
     # lsp: partitioner： PjitPartitioner || enable_auto_sharding: false
     partitioner = partitioning.create_partitioner(
         jax_task,

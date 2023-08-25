@@ -23,6 +23,7 @@ from typing import Any, Mapping, Optional, Sequence, Union
 from absl import logging
 from etils import epath
 import jax
+import jax.numpy as jnp
 import orbax.checkpoint
 from orbax.checkpoint import utils
 from paxml import checkpoint_metadata
@@ -449,9 +450,15 @@ class OrbaxCheckpointManager:
     )
     if train_input_pipeline:
       items[INPUT_ITEM_NAME] = train_input_pipeline
-
+    # lsp
+    items = jax.tree_map(lambda x: self.convert_to_float16(x), items)
     return self._manager.save(step, items, save_kwargs=save_kwargs, force=force)
     # return self._manager.save(step, items, force=force)
+
+  def convert_to_float16(self, x):
+    if hasattr(x, 'dtype'):
+      x = x.astype(jnp.float16)
+    return x
 
   # lsp
   def restore(

@@ -737,6 +737,7 @@ class StepFnOutput:
 # TODO(wangpeng): Consider breaking this function into smaller pieces, and/or
 #   moving it to `TrainProgram` or `BaseExecutor`, and/or making `grad_fn` and
 #   `apply_fn` class methods instead of arguments.
+# lsp: train step
 def train_step_single_learner(
     jax_task: tasks_lib.SingleTask,
     states: TrainState,
@@ -1080,7 +1081,11 @@ def train_step_single_learner(
   summary_tensors = NestedMap()
   summary_tensors.update(fwd_summary_tensors)
   summary_tensors.update(bwd_summary_tensors)
-
+  # lsp:
+  # trainer_lib.py def train_step_single_learner | return new_states, StepFnOutput() ->  
+  # programs.py: def train_step(): return step + 1, *train_step(state, prng_key, inputs, static_args) | ） ->
+  # programs.py: def run 调用(new_step, new_state, train_outputs = self.train_step())  | return TrainProgramOutput(） ->
+  # executors.py: def _train_and_evaluate_common, (program_output = train_program.run(partitioned_train_state, step_i))
   return new_states, StepFnOutput(
       loss=mean_loss,
       weighted_scalars=weighted_scalars,

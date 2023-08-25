@@ -286,6 +286,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     logging.info(f'padded_global_shapes: {metadata.padded_global_shapes}')
     logging.info(f'unpadded_global_shapes: {metadata.unpadded_global_shapes}')
     logging.info(f'self._step_to_restore: {self._step_to_restore}')
+    __import__('ipdb').set_trace()
 
     # __import__('ipdb').set_trace()
     with py_utils.timeit() as restore_period:

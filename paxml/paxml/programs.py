@@ -359,9 +359,9 @@ class BaseTrainProgram(Program):
         and new_step % train_p.eval_interval_steps == 0
     ):
       eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
-    import pickle
-    pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
-    logging.info(f'summary_tesor: {train_outputs.summary_tensors.keys()}')
+    # import pickle
+    # pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
+    # logging.info(f'summary_tesor: {train_outputs.summary_tensors.keys()}')
 
     return TrainProgramOutput(
         new_state,

@@ -227,7 +227,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       num_batches_to_skip=0
   ) -> pax_fiddle.Config[base_input.BaseInput]:
     if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
+      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}')
       num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
+    else:
+      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
     if is_training:
       percore_batch_size = self.PERCORE_BATCH_SIZE
     else:
@@ -835,15 +838,14 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     # Learning rate schedule
   LEARNING_RATE = 8e-6
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
-  LR_COS_MIN_RATIO = 0.1  # 最大学习率 * LR_LRED_MIN_RATIO
+  LR_COS_MIN_RATIO = 0.1  # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
   LR_COS_MAX = 8e-6 # 最大学习率
-  LR_COS_WARMUP = 5000 # warmup step
-  LR_COS_DECAY_START = 50001 # decay start step
-  LR_COS_DECAY_END = 200000 # decay end step
-  # LR_COS_WARMUP = 4000
-  # LR_COS_DECAY_START = 4001
-  # LR_COS_DECAY_END = 300000
-  TRAINING_NUM_BATCHES_TO_SKIP = None
+  LR_COS_WARMUP = int(58497 * 0.02) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+  LR_COS_DECAY_START = LR_COS_WARMUP # decay start step: 学习率开始衰减的步数
+  LR_COS_DECAY_END = 19499 # decay end step # 学习率最后保持恒定的步数
+  TRAINING_NUM_BATCHES_TO_SKIP = 6000
+
+  WEIGHT_DECAY=0.1
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -1399,7 +1401,7 @@ class MyDatasets(base_input.BaseInput):
     model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
     model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
     model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
-    # logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
+    logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
     return model_needed_inputs
 
   def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):

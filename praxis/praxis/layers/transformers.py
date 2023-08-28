@@ -454,7 +454,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
     # Apply paddings if not None
     if not self.apply_padding_first and paddings is not None:
-      logging.info(f'self.apply_padding_first: {self.apply_padding_first}')
+      # lsp: apply_padding_first:false
       activations *= (1.0 - paddings)
 
     self.add_summary('activation_rms', _rms(activations), verbosity=4)
@@ -466,11 +466,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
     outputs = self.ffn_layer2(activations)
 
     outputs = checkpoint_name(outputs, 'ffn2')
-    # Apply paddings if not None
+    # Apply paddings if not None # lsp: apply_padding_first: False || paddings: not None
     if not self.apply_padding_first and paddings is not None:
-      logging.info(f'===============self.apply_padding_first: {self.apply_padding_first}==============')
+      # lsp
       outputs *= (1.0 - paddings)
-
     self.add_summary('output_rms', _rms(outputs), verbosity=4)
 
     # Apply Primer normalization before dropout.

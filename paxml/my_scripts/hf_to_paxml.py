@@ -97,7 +97,7 @@ for i, ckpt_path in enumerate(ckpt_paths):
         ckpt[k] = v
 
 
-save_dir = 'gs://jax_llm_logs/alsp_debug/0822/hf_to_paxml/checkpoints'
+save_dir = 'gs://jax_llm_logs/alsp_debug/0822/hf_to_paxml_Oproj_NoTranspose/checkpoints'
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,
       save_interval_steps=SAVE_INTERVAL_STEPS,
@@ -162,6 +162,7 @@ gold_w = ckpt
 split_qkv = {}
 for k, v in gold_w.items():
     v = v.to(torch.float16)
+    # o_proj不进行transpose，是个坑
     if len(v.shape) == 2 and 'embed_tokens' not in k and 'o_proj' not in k:
         v = v.transpose(1, 0)
     else:
@@ -198,8 +199,6 @@ with jax.default_device(jax.devices("cpu")[0]):
                 except:
                     layer_index = 0
                 values.append([layer_index, glod_values])
-#             if flag:
-#                 print(f'map_key: {v}    ||   gold_key: {gold_key}')
         values = sorted(values, key=lambda x: x[0])
         if len(values) > 1:
             stack_values = np.stack(list(zip(*values))[1])
@@ -207,7 +206,6 @@ with jax.default_device(jax.devices("cpu")[0]):
             stack_values = values[0][1]
         trans_result[k] = stack_values
     opt_state_mv = jax.tree_map(lambda x: jnp.zeros_like(x), trans_result)
-
 
 step =40
 print(f'Please simple check model shape and dtype...')

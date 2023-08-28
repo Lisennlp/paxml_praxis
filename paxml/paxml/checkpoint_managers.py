@@ -35,6 +35,8 @@ from praxis import pytypes
 import tensorflow.compat.v2 as tf
 
 from paxml import preemption  # mapped to internal
+from praxis import py_utils
+from praxis import base_layer
 
 
 Nested = pytypes.Nested
@@ -451,7 +453,9 @@ class OrbaxCheckpointManager:
     if train_input_pipeline:
       items[INPUT_ITEM_NAME] = train_input_pipeline
     # lsp
-    items = jax.tree_map(lambda x: self.convert_to_float16(x), items)
+    # py_utils.sync_global_devices('Model start finish.......')
+    # with base_layer.JaxContext.new_context():
+    # items = jax.tree_map(lambda x: self.convert_to_float16(x), items)
     return self._manager.save(step, items, save_kwargs=save_kwargs, force=force)
     # return self._manager.save(step, items, force=force)
 
@@ -459,6 +463,7 @@ class OrbaxCheckpointManager:
     if hasattr(x, 'dtype'):
       x = x.astype(jnp.float16)
     return x
+
 
   # lsp
   def restore(
@@ -502,7 +507,7 @@ class OrbaxCheckpointManager:
     # Skip metadata checks if using transformations, since the TrainState may be
     # completely altered.
     # 检查metadata信息是否正确
-    if self.version > 1.0 and not uses_transformations:
+    if self.version > 1.0 and not uses_transformations and 0:
       # If unpadded shapes were not provided, skip the shape check for now, as
       # there are many callers that need to be changed.
       if train_state_unpadded_shape_dtype_struct is None:

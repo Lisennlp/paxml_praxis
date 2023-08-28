@@ -260,7 +260,6 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
   ):
     # lsp: 保存不需要
     del train_state_pspecs
-    # __import__('ipdb').set_trace()
     logging.info(f'step_i0000: {step_i}')
     if not self.checkpoint_manager.should_save(step_i):
       return
@@ -286,9 +285,6 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     logging.info(f'padded_global_shapes: {metadata.padded_global_shapes}')
     logging.info(f'unpadded_global_shapes: {metadata.unpadded_global_shapes}')
     logging.info(f'self._step_to_restore: {self._step_to_restore}')
-    __import__('ipdb').set_trace()
-
-    # __import__('ipdb').set_trace()
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:
         # 指定其他的加载模型路径
@@ -658,7 +654,6 @@ def _create_checkpointer(
   if task_p.train.enable_input_checkpointing:
     train_input_p.input_checkpointing_enabled = True
 
-  # __import__('ipdb').set_trace()
   logging.info(f'options: {options}')
   checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       checkpoint_dir,

@@ -459,7 +459,6 @@ def main(argv: Sequence[str]) -> None:
 
 @py_utils.benchmark(prefix='[PAX STATUS]: E2E time: ')
 def _main(argv: Sequence[str]) -> None:
-  # __import__('ipdb').set_trace()
   FLAGS.enable_checkpoint_saving = True
   logging.info('[PAX STATUS]: Program start.')
   if len(argv) > 1:

@@ -313,6 +313,7 @@ def set_adam_and_learning_rate_schedule(
   """Sets the Adam optimizer and the learning rate schedule."""
   lp = task_p.train.learner
   lp.loss_name = 'total_loss'
+  
   lp.optimizer = pax_fiddle.Config(
       optimizers.Adam,
       beta1=cls.ADAM_BETA1 if cls.ADAM_BETA1 else 0.9,
@@ -321,13 +322,20 @@ def set_adam_and_learning_rate_schedule(
       l2_regularizer_weight=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
       epsilon=cls.ADAM_EPSILON if cls.ADAM_EPSILON else 1e-6,
       epsilon_root=cls.ADAM_EPSILON_ROOT if cls.ADAM_EPSILON_ROOT else 0.0,
-      clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE
+      clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE # lsp: 1.0
       if cls.CLIP_GRADIENT_NORM_TO_VALUE
       else 5.0,
       clip_threshold=cls.ADAM_CLIP_THRESHOLD
       if cls.ADAM_CLIP_THRESHOLD
       else 1.0,
   )
+  # # lsp 
+  # num_sub_batches = 3
+  # lp.optimizer = pax_fiddle.Config(
+  #     optimizers.ShardedStaticAccumulator,
+  #     optimizer_tpl=lp.optimizer,
+  #     num_sub_batches=num_sub_batches,
+  # )
 
   if hasattr(cls, 'PERCORE_BATCH_SIZE'):
     global_batch_size = int(cls.PERCORE_BATCH_SIZE * jax.device_count() + 1e-6)
@@ -453,7 +461,7 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
       stacked_p = stacked_p.block
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
     transformer_layer_p.tr_atten_tpl.use_bias = self.USE_BIAS
-
+    #lsp
     task_p = set_adam_and_learning_rate_schedule(cls=self, task_p=task_p)
 
     return task_p
@@ -807,22 +815,36 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 1
+  PERCORE_BATCH_SIZE = 4
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 1, 8] # v5最后一个维度不能为2？，必须为1？
+  ICI_MESH_SHAPE = [1, 32, 1]
 
   VOCAB_SIZE = 64000
-  CHECKPOINT_EVERY_N_STEPS = 20
+  CHECKPOINT_EVERY_N_STEPS = 500
+
   LAYERNORM_EPSILON = 1e-06
-  # TRAINABLE_PE_MAX_SEQ_LEN = 512
-  MAX_SEQ_LEN = 1024
+  MAX_SEQ_LEN = 2048
+
+    # Learning rate schedule
+  LEARNING_RATE = 8e-6
+  LR_SCHEDULE = 'linear_rampup_cosine_decay'
+  LR_COS_MIN_RATIO = 0.1  # 最大学习率 * LR_LRED_MIN_RATIO
+  LR_COS_MAX = 8e-6 # 最大学习率
+  LR_COS_WARMUP = 5000 # warmup step
+  LR_COS_DECAY_START = 50001 # decay start step
+  LR_COS_DECAY_END = 200000 # decay end step
+  # LR_COS_WARMUP = 4000
+  # LR_COS_DECAY_START = 4001
+  # LR_COS_DECAY_END = 300000
+  TRAINING_NUM_BATCHES_TO_SKIP = 3000
+
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-    # lsp
+  # lsp
   def _dataset_common(
       self, is_training
   ) -> pax_fiddle.Config[base_input.BaseInput]:
@@ -835,7 +857,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         batch_size=self.PERCORE_BATCH_SIZE * 8,
         seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
-        repeat=1
+        repeat=2
     )
     return p
 
@@ -1385,4 +1407,6 @@ class MyDatasets(base_input.BaseInput):
                         drop_remainder=True)
     ds = ds.prefetch(10)
     ds = ds.repeat(repeat)
+    logging.info(f'self.num_batches_to_skip: {self.num_batches_to_skip}')
+    ds = ds.skip(self.num_batches_to_skip)
     return map(lambda x: self.format(x), iter(ds))

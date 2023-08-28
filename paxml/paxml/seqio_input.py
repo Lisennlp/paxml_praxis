@@ -682,7 +682,6 @@ class SeqIOInput(base_input.BaseInput):
         self.batch_size,
         self.input_random_seed,
     )
-    # __import__('ipdb').set_trace()
     ds = self._get_backing_ds(
         shuffle=self.should_shuffle,
         num_epochs=-1 if self.should_repeat else 1,

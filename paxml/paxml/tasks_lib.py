@@ -895,7 +895,6 @@ def _create_opt_states(
   Returns:
     A list of NestedJTensor to update `opt_states` in TrainState.
   """
-  # __import__('ipdb').set_trace()
   asserts.assert_same_structure(mdl_vars, var_weight_hparams)
   opt_states = []
   for learner in learners:

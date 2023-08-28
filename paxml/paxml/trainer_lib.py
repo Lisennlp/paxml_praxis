@@ -867,7 +867,6 @@ def train_step_single_learner(
       else:
         apply = functools.partial(apply_fn, model)
       # lsp： 开始前传
-      # __import__('ipdb').set_trace()
       (weighted_scalars, per_example_output), updated_vars = apply(
           mdl_vars,
           inputs,

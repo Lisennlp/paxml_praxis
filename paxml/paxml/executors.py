@@ -147,8 +147,6 @@ class DefaultExecutor(base_executor.BaseExecutor):
       _maybe_update_latest_model_step(train_input_p, step, task)
     # 实例化train_input_p
     train_input = instantiate(train_input_p)
-    # __import__('ipdb').set_trace()
-
     # 输入数据的一个对象
     train_input_for_partitioner = (
         None if task.train.enforce_input_specs else train_input

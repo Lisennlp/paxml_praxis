@@ -513,7 +513,6 @@ class Partitioner(metaclass=abc.ABCMeta):
     """Helper method to get the TrainStateMetadata."""
     if not self._train_inputs_shape_dtype:
       raise ValueError('Train input spec is not set. It can be set in setup().')
-    # __import__('ipdb').set_trace()
     return trainer_lib.create_train_state_metadata(
         self._jax_task,
         self._train_inputs_shape_dtype,

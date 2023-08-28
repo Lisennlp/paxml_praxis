@@ -424,6 +424,8 @@ def _train_and_evaluate_common(
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
+    logging.info(f'loss: {program_output.loss}')
+    exit()
 
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.

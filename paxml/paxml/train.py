@@ -18,6 +18,8 @@
 import contextlib
 import typing
 from typing import Type
+import os
+import subprocess
 
 from absl import logging
 from etils import epath
@@ -95,6 +97,25 @@ def write_experiment_class_vars_file(
     exp_summary_fpath.write_text(cls_vars_summary)
 
 
+def extract_train_skip_step(job_log_dir):
+    from paxml import checkpoint_paths
+    if checkpoint_paths.CHECKPOINT_PREFIX:
+        prefix = f'{checkpoint_paths.CHECKPOINT_PREFIX}_'
+    else:
+        prefix = ''
+    model_dir = os.path.join(job_log_dir, 'checkpoints')
+    command = f'gsutil ls {model_dir}'
+    response = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
+    step_map_path = {}
+    for path in response.stdout.decode('utf-8').split('\n'):
+        step = re.findall(f'{prefix}(\d+)/', path)
+        if step:
+            step_map_path[int(step[0])] = os.path.split(path)[0]
+    step_map_path = sorted(step_map_path.items())
+    logging.info(f'Load model step map path: {step_map_path}')
+    return step_map_path[-1][0]
+
+
 @py_utils.benchmark('[PAX STATUS]: ')
 def train_and_evaluate(
     experiment_config: base_experiment.BaseExperiment,
@@ -152,8 +173,11 @@ def train_and_evaluate(
 
   logging.info('[PAX STATUS]: Getting dataset configurations.')
   
+
   # [train_p datasets, notrain_p datasets]的pax_fiddle.Config对象
-  input_p = experiment_config.datasets()
+  num_batches_to_skip = extract_train_skip_step(job_log_dir=job_log_dir)
+  logging.info(f'num_batches_to_skip: {num_batches_to_skip}')
+  input_p = experiment_config.datasets(num_batches_to_skip=num_batches_to_skip)
   for inp in input_p:
     if not isinstance(
         inp,

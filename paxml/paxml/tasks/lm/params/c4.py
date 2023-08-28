@@ -223,8 +223,11 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
   TRAINING_NUM_BATCHES_TO_SKIP = None
 
   def _dataset_common(
-      self, is_training
+      self, is_training,
+      num_batches_to_skip=0
   ) -> pax_fiddle.Config[base_input.BaseInput]:
+    if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
+      num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
     if is_training:
       percore_batch_size = self.PERCORE_BATCH_SIZE
     else:
@@ -290,7 +293,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         input_random_seed=(seed if is_training else 4321),
         batch_size=batch_size_per_process,
         drop_remainder=True if is_training else False,
-        num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
+        num_batches_to_skip=num_batches_to_skip, # lsp: add skip batch step 
         num_infeed_hosts=num_infeed_hosts,
         # reset_for_eval=False if is_training else True, # eval的时候为True
         reset_for_eval=False, # eval的时候为True -> False
@@ -298,10 +301,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     )
     return p
   # lsp: 数据
-  def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  def datasets(self, num_batches_to_skip=0) -> List[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns a list of dataset parameters."""
     return [
-        self._dataset_common(is_training=True),
+        self._dataset_common(is_training=True, num_batches_to_skip=num_batches_to_skip),
         self._dataset_common(is_training=False)
     ]
 
@@ -815,13 +818,13 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 4
+  PERCORE_BATCH_SIZE = 1
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 32, 1]
+  ICI_MESH_SHAPE = [1, 8, 1]
 
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 500
@@ -840,20 +843,23 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # LR_COS_WARMUP = 4000
   # LR_COS_DECAY_START = 4001
   # LR_COS_DECAY_END = 300000
-  TRAINING_NUM_BATCHES_TO_SKIP = 3000
+  TRAINING_NUM_BATCHES_TO_SKIP = None
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
   # lsp
   def _dataset_common(
-      self, is_training
+      self, is_training,
+      num_batches_to_skip=0
   ) -> pax_fiddle.Config[base_input.BaseInput]:
     path = self.TRAIN_FILE if is_training  else self.VALID_FILE
+    if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
+      num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
     p = pax_fiddle.Config(
         MyDatasets, 
         path=path,
         is_training=is_training,
-        num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
+        num_batches_to_skip=num_batches_to_skip,
         batch_size=self.PERCORE_BATCH_SIZE * 8,
         seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
@@ -1390,6 +1396,7 @@ class MyDatasets(base_input.BaseInput):
     model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
     model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
     model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
+    # logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
     return model_needed_inputs
 
   def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):

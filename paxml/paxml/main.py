@@ -56,17 +56,6 @@ from praxis import py_utils
 # internal debugging module import
 # internal experiment module import
 
-try:
-    import wandb
-except:
-    command = 'pip install wandb'
-    subprocess.run(command, stdout=subprocess.PIPE, shell=True)
-    import wandb
-
-wandb.login(key='7988c805dfe3fed4d6e4017f616555a5160fd2c2')
-wandb_name = 'baichuan_7b_ft'
-wandb.init(project='paxml_debug', name=wandb_name, config={}, resume=True)
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(

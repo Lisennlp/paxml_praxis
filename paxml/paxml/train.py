@@ -19,6 +19,7 @@ import contextlib
 import typing
 from typing import Type
 import os
+import re
 import subprocess
 
 from absl import logging
@@ -99,15 +100,18 @@ def write_experiment_class_vars_file(
 
 def extract_train_skip_step(job_log_dir):
     from paxml import checkpoint_paths
-    if checkpoint_paths.CHECKPOINT_PREFIX:
-        prefix = f'{checkpoint_paths.CHECKPOINT_PREFIX}_'
+    if checkpoint_paths._CHECKPOINT_PREFIX:
+        prefix = f'{checkpoint_paths._CHECKPOINT_PREFIX}_'
     else:
         prefix = ''
     model_dir = os.path.join(job_log_dir, 'checkpoints')
+    logging.info(f'model_dir: {model_dir}')
     command = f'gsutil ls {model_dir}'
     response = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     step_map_path = {}
     for path in response.stdout.decode('utf-8').split('\n'):
+        if not path.strip(): continue
+        logging.info(f'path: {path}')
         step = re.findall(f'{prefix}(\d+)/', path)
         if step:
             step_map_path[int(step[0])] = os.path.split(path)[0]

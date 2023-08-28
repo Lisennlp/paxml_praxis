@@ -843,7 +843,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   LR_COS_WARMUP = int(58497 * 0.02) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
   LR_COS_DECAY_START = LR_COS_WARMUP # decay start step: 学习率开始衰减的步数
   LR_COS_DECAY_END = 19499 # decay end step # 学习率最后保持恒定的步数
-  TRAINING_NUM_BATCHES_TO_SKIP = 6000
+  TRAINING_NUM_BATCHES_TO_SKIP = None
 
   WEIGHT_DECAY=0.1
 

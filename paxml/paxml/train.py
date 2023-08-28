@@ -117,6 +117,8 @@ def extract_train_skip_step(job_log_dir):
             step_map_path[int(step[0])] = os.path.split(path)[0]
     step_map_path = sorted(step_map_path.items())
     logging.info(f'Load model step map path: {step_map_path}')
+    if not step_map_path:
+      return 0
     return step_map_path[-1][0]
 
 

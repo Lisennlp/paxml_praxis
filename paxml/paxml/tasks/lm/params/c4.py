@@ -1408,7 +1408,7 @@ class MyDatasets(base_input.BaseInput):
     model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
     model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
     model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
-    logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
+    # logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
     return model_needed_inputs
 
   def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):

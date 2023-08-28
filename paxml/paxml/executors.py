@@ -435,6 +435,7 @@ def _train_and_evaluate_common(
     steps_per_sec = round(len(step_time_deque) / sum(step_time_deque), 6)
     wandb_stats = {'train_loss': program_output.loss, 'steps_per_sec': steps_per_sec}
     wandb.log(wandb_stats)
+    logging.info(f'wandb_stats: {wandb_stats}')
     # logging.info(f'wandb_stats: {wandb_stats}')
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.

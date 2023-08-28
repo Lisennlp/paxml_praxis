@@ -180,7 +180,6 @@ def train_and_evaluate(
 
   # [train_p datasets, notrain_p datasets]的pax_fiddle.Config对象
   num_batches_to_skip = extract_train_skip_step(job_log_dir=job_log_dir)
-  logging.info(f'num_batches_to_skip: {num_batches_to_skip}')
   input_p = experiment_config.datasets(num_batches_to_skip=num_batches_to_skip)
   for inp in input_p:
     if not isinstance(

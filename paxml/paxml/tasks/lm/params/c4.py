@@ -854,7 +854,10 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   ) -> pax_fiddle.Config[base_input.BaseInput]:
     path = self.TRAIN_FILE if is_training  else self.VALID_FILE
     if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
+      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}')
       num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
+    else:
+      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
     p = pax_fiddle.Config(
         MyDatasets, 
         path=path,
@@ -863,7 +866,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         batch_size=self.PERCORE_BATCH_SIZE * 8,
         seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
-        repeat=2
+        repeat=3
     )
     return p
 

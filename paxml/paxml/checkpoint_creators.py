@@ -260,10 +260,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
   ):
     # lsp: 保存不需要
     del train_state_pspecs
-    logging.info(f'step_i0000: {step_i}')
     if not self.checkpoint_manager.should_save(step_i):
       return
-    logging.info(f'step_i1111: {step_i}')
     self._save_with_args(
         step_i,
         partitioned_train_state=partitioned_train_state,

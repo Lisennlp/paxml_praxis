@@ -425,8 +425,7 @@ def _train_and_evaluate_common(
     # counter is incremented in between.
     step_i = program_output.new_train_step
     logging.info(f'loss: {program_output.loss}')
-    exit()
-
+    # exit()
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.
     if (

@@ -48,6 +48,7 @@ from praxis import trees
 import tensorflow.compat.v2 as tf
 
 from paxml import profiling  # mapped to internal
+from jax.experimental.multihost_utils import host_local_array_to_global_array, global_array_to_host_local_array
 
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor

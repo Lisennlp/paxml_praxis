@@ -18,6 +18,7 @@
 import contextlib
 import functools
 import gc
+import time
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 from absl import logging
@@ -42,6 +43,8 @@ from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
+import wandb
+
 
 instantiate = base_hyperparams.instantiate
 RunningMode = trainer_lib.RunningMode
@@ -390,8 +393,10 @@ def _train_and_evaluate_common(
   # loop.
   gc.collect()
   gc.freeze()
+  step_time_deque = deque(maxlen=5)
   while True:
     logging.log_first_n(INFO, '[PAX STATUS]: Beginning step `%d`.', 5, step_i)
+    step_start = time.time()
     checkpointer.save_if_needed(
         step_i,
         partitioned_train_state,
@@ -424,8 +429,12 @@ def _train_and_evaluate_common(
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
-    logging.info(f'loss: {program_output.loss}')
-    # exit()
+
+    step_time_deque.append(time.time() - step_start)
+    steps_per_sec = round(len(step_time_deque) / sum(step_time_deque), 6)
+    wandb_stats = {'train_loss': program_output.loss, 'steps_per_sec': steps_per_sec}
+    wandb.log(wandb_stats)
+    # logging.info(f'wandb_stats: {wandb_stats}')
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.
     if (

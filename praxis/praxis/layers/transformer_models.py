@@ -555,8 +555,8 @@ class TransformerLm(base_layer.BaseLayer):
 
     # lsp
     embed_dropout_tpl = self.embed_dropout_tpl.clone()
-    embed_dropout_p.keep_prob = 1.0 - self.embed_dropout_prob
-    self.create_child('embed_dropout', embed_dropout_p)
+    embed_dropout_tpl.keep_prob = 1.0 - self.embed_dropout_prob
+    self.create_child('embed_dropout', embed_dropout_tpl)
 
   def init_states(self, *args: Any, **kwargs: Any) -> None:
     """Initialize the cache for the autoregressive decoding.

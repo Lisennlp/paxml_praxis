@@ -19,6 +19,7 @@ import contextlib
 import functools
 import gc
 import time
+from collections import deque
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 from absl import logging

@@ -33,6 +33,8 @@ from praxis.layers import embedding_softmax
 from praxis.layers import multi_query_attention
 from praxis.layers import normalizations
 from praxis.layers import transformers
+from praxis.layers import stochastics
+
 
 NestedMap = py_utils.NestedMap
 JTensor = pytypes.JTensor
@@ -277,6 +279,8 @@ class TransformerLm(base_layer.BaseLayer):
   skip_compute_loss: bool = False
   skip_aux_loss: bool = False
   record_activations_in_xent_output: bool = False
+  embed_dropout_tpl: LayerTpl = template_field(stochastics.Dropout)
+  embed_dropout_prob: float = 0.0
 
   @classmethod
   def set_sharding_params_v1(
@@ -549,6 +553,11 @@ class TransformerLm(base_layer.BaseLayer):
     softmax_params.num_classes = self.vocab_size
     self.create_child('softmax', softmax_params)
 
+    # lsp
+    embed_dropout_tpl = self.embed_dropout_tpl.clone()
+    embed_dropout_p.keep_prob = 1.0 - self.embed_dropout_prob
+    self.create_child('embed_dropout', embed_dropout_p)
+
   def init_states(self, *args: Any, **kwargs: Any) -> None:
     """Initialize the cache for the autoregressive decoding.
 
@@ -752,6 +761,8 @@ class TransformerLm(base_layer.BaseLayer):
     inputs = self._prepare_input(
         inputs, paddings, segment_pos=segment_pos, **input_kwargs
     )
+    # lsp: add embed dropout
+    inputs = self.embed_dropout(inputs)
 
     if self.ngrammer_tpl is not None:
       ngrammer_prefix = jnp.zeros([batch, 1], dtype=jnp.int32)

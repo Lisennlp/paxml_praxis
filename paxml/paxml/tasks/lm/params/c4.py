@@ -614,7 +614,9 @@ def configure_gpt3_task(
     model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE # matmul
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
-
+  # lsp: 增加embed drop ratio
+  model_p.lm_tpl.embed_dropout_prob = cls.EMBED_DROPOUT_PROB
+  
   # lsp: 设置transformer的属性
   stacked_p = model_p.lm_tpl.stacked_transformer_tpl
   if fdl.get_callable(stacked_p) == transformers.PipelinedTransformer:
@@ -644,6 +646,9 @@ def configure_gpt3_task(
   
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
+
+  # lsp:
+  transformer_layer_p.tr_atten_tpl.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -844,8 +849,10 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   LR_COS_DECAY_START = LR_COS_WARMUP + 1 # decay start step: 学习率开始衰减的步数
   LR_COS_DECAY_END = 19499 # decay end step # 学习率最后保持恒定的步数
   TRAINING_NUM_BATCHES_TO_SKIP = None
+  WEIGHT_DECAY=0.001
 
-  WEIGHT_DECAY=0.1
+  EMBED_DROPOUT_PROB = 0.1
+  ATTEN_DROPOUT_PROB = 0.05
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"

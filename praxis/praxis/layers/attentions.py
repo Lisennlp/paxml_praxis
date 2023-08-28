@@ -1496,10 +1496,12 @@ class DotProductAttention(base_layer.BaseLayer):
       probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(
           key.dtype
       )
-    # Apply attention dropout.
-    probs = self.atten_dropout(probs)
+    # Apply attention dropout. lsp: 
+    # probs = self.atten_dropout(probs)
     # Compute the attention context. # lsp: 其实就是einsum
     encoded = self.pv_einsum('BNTS,BSNH->BTNH', probs, value)# w
+    # lsp
+    encoded = self.atten_dropout(encoded)
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.

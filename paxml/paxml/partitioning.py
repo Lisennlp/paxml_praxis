@@ -975,7 +975,7 @@ class PjitPartitioner(Partitioner):
         task.train.inputs_split_mapping,
         self._mesh_names,
     )
-
+    # state, prng_key, inputs, static_args
     # lsp train_step/eval_step
     def _wrapped_step_fn(
         state: TrainState,

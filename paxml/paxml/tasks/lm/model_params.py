@@ -562,7 +562,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   # Sub-class has to specify a mesh.
   ICI_MESH_SHAPE = None
   # Default to a single slice
-  DCN_MESH_SHAPE = [1, 1, 1]
+  DCN_MESH_SHAPE = [1, 1, 1] # lsp：node 数量？
   TRAINING_OPTIMIZED_SHARDING = True
 
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:

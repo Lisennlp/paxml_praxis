@@ -738,6 +738,9 @@ class StepFnOutput:
 #   moving it to `TrainProgram` or `BaseExecutor`, and/or making `grad_fn` and
 #   `apply_fn` class methods instead of arguments.
 # lsp: train step
+# partition.py step_fn
+  # self._jax_task, state, prng_key, inputs,  model.fprop_dtype, metadata.var_weight_hparams, static_args,
+  # grad_fn: None, apply_fn:None
 def train_step_single_learner(
     jax_task: tasks_lib.SingleTask,
     states: TrainState,
@@ -919,15 +922,17 @@ def train_step_single_learner(
   excluded_for_grad = tasks_lib.get_excluded_var_mask_for_grad(
       var_weight_hparams, learner
   )
+  logging.info(f'[lsp]excluded_for_grad: {excluded_for_grad}')
   # Excluded for optimizer states.
   excluded_for_opt = tasks_lib.get_excluded_var_mask_for_opt(
       var_weight_hparams,
       learner,
   )
-
+  # lsp: None
   if grad_fn is None:
     # lsp
     def grad_fn(mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
+      # lsp: 如果True则赋值为py_utils.BpropMaskedNode()对象，否则不变
       with_grad = tasks_lib.filter_vars_for_grad_or_opt(
           mdl_vars, excluded_for_grad
       )
@@ -948,12 +953,18 @@ def train_step_single_learner(
             mdl_vars_nograd,
         )
         return _loss_fn(merged_vars, inputs, prng_key)
-
+      # lsp随机梯度下降
+      logging.info(f'[lsp]stochastic_gradient: {learner.stochastic_gradient}')
+      # None
       if learner.stochastic_gradient is None:
         g = jax.value_and_grad(_loss, has_aux=True, allow_int=True)
       else:
         g = functools.partial(learner.stochastic_gradient.grad_fn, _loss)
+      logging.info(f'[lsp]with_grad: {with_grad}')
+      logging.info(f'[lsp]no_grad: {no_grad}') # no_grad按理为空
       values, grads = g(with_grad, (no_grad, inputs), prng_key)
+      logging.info(f'[lsp]excluded_for_opt: {excluded_for_opt}')
+      logging.info(f'[lsp]excluded_for_grad: {excluded_for_grad}')
       grads = jax.tree_map(
           lambda eo, eg, m, g: jnp.zeros_like(m) if eg and not eo else g,
           excluded_for_opt,
@@ -961,11 +972,13 @@ def train_step_single_learner(
           mdl_vars,
           grads,
       )
+      logging.info(f'[lsp]grads: {grads}')
       return values, grads
 
   else:
     grad_fn = functools.partial(grad_fn, _loss_fn, learner)
 
+  # lsp: grads
   ((weighted_loss, aux_info), grads) = grad_fn(updated_mdl_vars, inputs, subkey)
 
   (
@@ -1041,6 +1054,7 @@ def train_step_single_learner(
         states.mdl_vars,
         mdl_vars,
     )
+    # lsp: 更新trainstate
     new_states = states.new_state(
         mdl_vars=mdl_vars, opt_states=[new_opt_states]
     )

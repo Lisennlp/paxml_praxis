@@ -828,13 +828,14 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 4
+  PERCORE_BATCH_SIZE = 1
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 32, 1]
+  ICI_MESH_SHAPE = [1, 8, 1]
+  # DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node
 
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 300
@@ -843,13 +844,13 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   MAX_SEQ_LEN = 2048
 
     # Learning rate schedule
-  LEARNING_RATE = 8e-6
+  LEARNING_RATE = 8e-4
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
   LR_COS_MIN_RATIO = 0.1  # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-  LR_COS_MAX = 8e-6 # 最大学习率
-  LR_COS_WARMUP = int(58497 * 0.02 * 0.5) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+  LR_COS_MAX = LEARNING_RATE # 最大学习率
+  LR_COS_WARMUP = int(58497 * 0.02 * 0.25) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
   LR_COS_DECAY_START = LR_COS_WARMUP + 1 # decay start step: 学习率开始衰减的步数
-  LR_COS_DECAY_END = 19499 * 0.5 # decay end step # 学习率最后保持恒定的步数
+  LR_COS_DECAY_END = int(19499 * 0.25) # decay end step # 学习率最后保持恒定的步数
   TRAINING_NUM_BATCHES_TO_SKIP = None
   WEIGHT_DECAY=0.001
 
@@ -1368,15 +1369,13 @@ class MyDatasets(base_input.BaseInput):
     # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
     if self.num_infeed_hosts == 0:
       self.num_infeed_hosts =  jax.process_count()
-    # seq_len = self.seq_len
-    # x = 2048
     self.dataset = self.load_tfrecord_dataset(
                                               index_fname=self.path, 
                                               batch_size=self.batch_size, 
-                                              seq_len=2048, 
+                                              seq_len=self.seq_len, 
                                               repeat=self.repeat
                                               )
-    devices = np.array(jax.devices()).reshape([1, 32, 1])
+    devices = np.array(jax.devices()).reshape(C4SpmdGpt37BRoPE.ICI_MESH_SHAPE)
     self.mesh = jax.sharding.Mesh(devices, ('replica', 'data', 'mdl'))
     
     
@@ -1385,7 +1384,7 @@ class MyDatasets(base_input.BaseInput):
 
   def get_next_padded(self):
     x = next(self.dataset)
-    x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
+    # x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
     return x
 
   def get_global_batch_size(self, train_input):
@@ -1424,7 +1423,10 @@ class MyDatasets(base_input.BaseInput):
     ds = tf.data.Dataset.from_tensor_slices(fnames)
     ds = ds.apply(tf.data.TFRecordDataset)
     # shard host data
-    ds = ds.shard(jax.process_count(), jax.process_index())
+    host_count = jax.process_count()
+    process_index = jax.process_index()
+    logging.info(f'host_count: {host_count} || process_index: {process_index}')
+    ds = ds.shard(host_count, process_index)
     ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.shuffle(buffer_size=10000) # 从文件中取buffer_size数据，然后打乱
     ds = ds.padded_batch(batch_size=np.prod(batch_size), 

@@ -430,12 +430,14 @@ def _train_and_evaluate_common(
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
-    take = round(time.time() - step_start, 6)
-    step_time_deque.append(take)
-    steps_per_sec = round(len(step_time_deque) / sum(step_time_deque), 6)
-    wandb_stats = {'step': step_i, 'train_loss': program_output.loss.item(), 'steps_per_sec': steps_per_sec, 'take': take}
-    wandb.log(wandb_stats)
-    logging.info(f'wandb_stats: {wandb_stats}')
+   
+    if jax.process_index() == 0:
+      take = round(time.time() - step_start, 6)
+      step_time_deque.append(take)
+      steps_per_sec = round(len(step_time_deque) / sum(step_time_deque), 6)
+      wandb_stats = {'step': step_i, 'train_loss': program_output.loss.item(), 'steps_per_sec': steps_per_sec, 'take': take}
+      wandb.log(wandb_stats)
+      
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.
     if (

@@ -889,10 +889,10 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         is_training=is_training,
         num_batches_to_skip=num_batches_to_skip,
         batch_size=self.PERCORE_BATCH_SIZE * 8,
-        seq_len=cls.MAX_SEQ_LEN,
+        seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
         repeat=repeat,
-        eval_loop_num_batches=cls.EVAL_LOOP_NUM_BATCHES
+        eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES
     )
     return p
 

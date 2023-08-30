@@ -466,9 +466,12 @@ def _train_and_evaluate_common(
             5,
             elapsed_secs,
         )
-        # if jax.process_index() == 0:
-        logging.info(f'step_i: {step_i} \n\neval_metrics: {eval_metrics}')
-
+        if jax.process_index() == 0:
+          for eval_metric in neval_metrics.metrics_list:
+            eval_result = {'step': step_i, 'eval_loss': eval_metric['avg_xent'], 'eval_acc': eval_metric['fraction_of_correct_next_step_preds']}
+            wandb.log(eval_result)
+            logging.info(f'eval_result: {eval_result}')
+          logging.info('\n')
     decode_metrics: Optional[tuning_lib.DecodeMetrics] = None
     if (
         decode_programs

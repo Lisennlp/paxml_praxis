@@ -861,7 +861,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   EMBED_DROPOUT_PROB = 0.1
   ATTEN_DROPOUT_PROB = 0.05
 
-  EVAL_LOOP_NUM_BATCHES = 200
+  EVAL_LOOP_NUM_BATCHES = 10 # 每次评测多少batch
+  EVAL_INTERVAL_STEPS = 10 # 每隔多少step评测一次
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -876,6 +877,10 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
       num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
     else:
       logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
+    if is_training:
+      repeat = 3
+    else:
+      repeat = 3 * 10
     p = pax_fiddle.Config(
         MyDatasets, 
         path=path,
@@ -884,7 +889,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         batch_size=self.PERCORE_BATCH_SIZE * 8,
         seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
-        repeat=3
+        repeat=repeat
     )
     return p
 

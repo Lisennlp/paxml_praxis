@@ -466,6 +466,8 @@ def _train_and_evaluate_common(
             5,
             elapsed_secs,
         )
+        logging.info(f'eval_metrics: {eval_metrics}')
+
 
     decode_metrics: Optional[tuning_lib.DecodeMetrics] = None
     if (

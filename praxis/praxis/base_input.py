@@ -336,10 +336,13 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     Returns:
       Resharded inputs.
     """
+    # __import__('ipdb').set_trace()
+    # lsp: global_shapes： jax.ShapeDtypeStruct(x_shape, x.dtype)对象，x_shape变为了global pod的
     global_shapes = jax.tree_util.tree_map(
         py_utils.get_global_input_shape_dtype, arrays
     )
     device_order = self.custom_device_order
+    # lsp: None
     if device_order is None:
       return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)
     assert len(device_order) == jax.device_count()

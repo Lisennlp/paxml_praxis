@@ -383,6 +383,7 @@ def make_array(
   local_devices = global_mesh.local_devices
 
   def _put_to_devices(x):
+    # lsp: 把数据放到当前host的每个core上
     return put_to_devices(x, local_devices)
 
   device_buffers = jax.tree_map(_put_to_devices, host_arrays)

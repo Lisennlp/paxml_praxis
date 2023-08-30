@@ -828,17 +828,20 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 8
+  PERCORE_BATCH_SIZE = 1
+  # ICI_MESH_SHAPE = [1, 4, 2]  # bs=1*8, 0.315 paxml 0.273 mesh
+  # ICI_MESH_SHAPE = [1, 8, 1]  # bs=1*8, 0.311 paxml 0.272 mesh
+
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 8, 4]
+  ICI_MESH_SHAPE = [1, 8, 1]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   VOCAB_SIZE = 64000
-  CHECKPOINT_EVERY_N_STEPS = 300
+  CHECKPOINT_EVERY_N_STEPS = 500
 
   LAYERNORM_EPSILON = 1e-06
   MAX_SEQ_LEN = 2048
@@ -1383,8 +1386,8 @@ class MyDatasets(base_input.BaseInput):
 
   def get_next_padded(self):
     x = next(self.dataset)
-    if self.num_infeed_hosts > 1:
-      x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
+    # if self.num_infeed_hosts > 1:
+    #   x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
     return x
 
   def get_global_batch_size(self, train_input):

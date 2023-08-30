@@ -667,7 +667,6 @@ class PmapPartitioner(Partitioner):
   ) -> NestedJTensor:
     """Preprocess the input batch before using it."""
     assert partition_specs is None
-    # lsp: 将输入数据的batch维度平均放到loacl_device
     return input_pipeline.reshard_for_pmap(padded_inputs)
 
   def get_train_state_metadata(
@@ -894,6 +893,7 @@ class PjitPartitioner(Partitioner):
   ) -> NestedJTensor:
     """Preprocess the input batch before using it."""
     if self._reshard_inputs: # lsp: true
+    # lsp: 将输入数据的batch维度平均放到loacl_device
       return input_pipeline.reshard_for_spmd(
           padded_inputs, self.global_mesh, partition_specs
       )
@@ -945,6 +945,9 @@ class PjitPartitioner(Partitioner):
     input_partition_spec = trainer_lib.get_input_partition_specs(
         self._mesh_names, inputs_shape_dtype
     )
+    # input_partition_spec = trainer_lib.get_input_partition_specs(
+    #     ['replica', 'data'], inputs_shape_dtype
+    # )
     logging.info('step_fn inputs_partition_spec=%s', input_partition_spec)
     # Step function to be pjit-ed.
     wrapped_step_fn = self._get_step_fn(

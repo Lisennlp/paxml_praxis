@@ -459,7 +459,6 @@ def main(argv: Sequence[str]) -> None:
 
 @py_utils.benchmark(prefix='[PAX STATUS]: E2E time: ')
 def _main(argv: Sequence[str]) -> None:
-  FLAGS.enable_checkpoint_saving = True
   logging.info('[PAX STATUS]: Program start.')
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
@@ -500,7 +499,6 @@ def _main(argv: Sequence[str]) -> None:
   # 没有，应该是todo
   experiment_config.validate()
   logging.info(f'FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}')
-  FLAGS.enable_checkpoint_saving = True
   run(experiment_config=experiment_config,
       enable_checkpoint_saving=FLAGS.enable_checkpoint_saving)
 

@@ -748,7 +748,7 @@ class BaseEvalProgram(Program):
             self._eval_input_pipeline
         )
     )
-    # lsp: -1时表示评测整个eval集， reset_for_eval eval的时候为True
+    # lsp: -1时表示评测整个eval集， reset_for_eval为True的时候为True
     self._eval_num_steps = (
         -1
         if self._input_p.reset_for_eval

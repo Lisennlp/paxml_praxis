@@ -863,6 +863,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   EVAL_LOOP_NUM_BATCHES = 10 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 10 # 每隔多少step评测一次
+  WANDB_PROJECT = 'paxml_baichuan7b_test_0830'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -882,14 +883,16 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     else:
       repeat = 3 * 10
     p = pax_fiddle.Config(
-        MyDatasets, 
+        MyDatasets,
+        name='baichuan-train-data' if is_training else 'baichuan-eval-data',
         path=path,
         is_training=is_training,
         num_batches_to_skip=num_batches_to_skip,
         batch_size=self.PERCORE_BATCH_SIZE * 8,
-        seq_len=self.MAX_SEQ_LEN,
+        seq_len=cls.MAX_SEQ_LEN,
         reset_for_eval=False, 
-        repeat=repeat
+        repeat=repeat,
+        eval_loop_num_batches=cls.EVAL_LOOP_NUM_BATCHES
     )
     return p
 

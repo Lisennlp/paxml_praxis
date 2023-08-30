@@ -292,7 +292,7 @@ def run_experiment(
   if FLAGS.mode == 'train':
     work_unit.set_task_status(f'Train experiment {FLAGS.exp} at'
                               f' {job_log_dir}')
-    logging.info(f'===========eval_on_test: {eval_on_test}============')
+    logging.info(f'===========eval_on_test: {FLAGS.eval_on_test}============')
     train.train_and_evaluate(
         experiment_config=experiment_config,
         job_log_dir=job_log_dir,

@@ -184,7 +184,7 @@ def train_and_evaluate(
   task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
   wandb_name = task_p.name
-  wandb.init(project='paxml_debug', name=wandb_name, config=experiment_config, resume=True)
+  wandb.init(project=experiment_config.WANDB_PROJECT, name=wandb_name, config=experiment_config, resume=True)
 
   # in case the user passed in a string dtype, convert it to an actual dtype
   # jnp.bfloat16

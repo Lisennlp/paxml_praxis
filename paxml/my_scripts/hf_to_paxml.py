@@ -95,9 +95,9 @@ for i, ckpt_path in enumerate(ckpt_paths):
         if k.startswith('model.'):
             k = k[6:]
         ckpt[k] = v
+assert len(ckpt) > 0
 
-
-save_dir = 'gs://jax_llm_logs/alsp_debug/0822/hf_to_paxml_Oproj_NoTranspose/checkpoints'
+save_dir = 'gs://jax_llm_logs/alsp_debug/0832/hf_to_paxml_Oproj_NoTranspose/checkpoints'
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,
       save_interval_steps=SAVE_INTERVAL_STEPS,
@@ -127,7 +127,7 @@ x_times = 32
 n_heads = params['n_heads']
 head_dim = dim // n_heads
 n_layers = 32
-step = 40
+step = 0
 
 paxml_to_hf_key_and_shape = {
  'params.lm.embedding_lookup.emb_var': {'shape': (vocab_size, dim), 'map_to_hf': 'embed_tokens'},
@@ -144,24 +144,24 @@ paxml_to_hf_key_and_shape = {
  'params.lm.softmax.logits_ffn.linear.w': {'shape': (dim, vocab_size), 'map_to_hf': 'lm_head'}
 }
 
-hf_to_paxml_format = {v['map_to_hf']: k for k, v in paxml_to_hf_key_and_shape.items()}
-padded_global_shapes = {}
-for k, v in paxml_to_hf_key_and_shape.items():
-    k = tuple(k.split('.'))
-    if 'repeat' in k:
-        padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=(x_times, ) + v['shape'], dtype=jnp.float16)
-    else:
-        padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v['shape'], dtype=jnp.float16)
+# hf_to_paxml_format = {v['map_to_hf']: k for k, v in paxml_to_hf_key_and_shape.items()}
+# padded_global_shapes = {}
+# for k, v in paxml_to_hf_key_and_shape.items():
+#     k = tuple(k.split('.'))
+#     if 'repeat' in k:
+#         padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=(x_times, ) + v['shape'], dtype=jnp.float16)
+#     else:
+#         padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v['shape'], dtype=jnp.float16)
         
-padded_global_shapes = TrainState(step=jnp.array(step), mdl_vars=unflatten_dict(padded_global_shapes), opt_states=None)
-print(f'Padded_global_shapes bulid finished!!!')
+# padded_global_shapes = TrainState(step=jnp.array(step), mdl_vars=unflatten_dict(padded_global_shapes), opt_states=None)
+# print(f'Padded_global_shapes bulid finished!!!')
 
 gold_w = ckpt
 
 
 split_qkv = {}
 for k, v in gold_w.items():
-    v = v.to(torch.float16)
+    v = v.to(torch.float32)
     # o_proj不进行transpose，是个坑
     if len(v.shape) == 2 and 'embed_tokens' not in k and 'o_proj' not in k:
         v = v.transpose(1, 0)
@@ -207,7 +207,6 @@ with jax.default_device(jax.devices("cpu")[0]):
         trans_result[k] = stack_values
     opt_state_mv = jax.tree_map(lambda x: jnp.zeros_like(x), trans_result)
 
-step =40
 print(f'Please simple check model shape and dtype...')
 for k, v in trans_result.items():
     print(k, v.shape, v.dtype)

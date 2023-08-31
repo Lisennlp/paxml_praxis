@@ -328,7 +328,8 @@ def set_adam_and_learning_rate_schedule(
       beta1=cls.ADAM_BETA1 if cls.ADAM_BETA1 else 0.9,
       beta2=cls.ADAM_BETA2 if cls.ADAM_BETA2 else 0.999,
       # weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0, # lsp: DEPRECATION
-      l2_regularizer_weight=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
+      # l2_regularizer_weight=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
+      decoupled_weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
       epsilon=cls.ADAM_EPSILON if cls.ADAM_EPSILON else 1e-6,
       epsilon_root=cls.ADAM_EPSILON_ROOT if cls.ADAM_EPSILON_ROOT else 0.0,
       clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE # lsp: 1.0
@@ -337,6 +338,7 @@ def set_adam_and_learning_rate_schedule(
       clip_threshold=cls.ADAM_CLIP_THRESHOLD
       if cls.ADAM_CLIP_THRESHOLD
       else 1.0,
+      sharded_adam=True,
   )
   # # lsp 
   # num_sub_batches = 3
@@ -829,7 +831,6 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
-  PERCORE_BATCH_SIZE = 4
   # ICI_MESH_SHAPE = [1, 4, 2]  # bs=1*8, 0.315 paxml 0.273 mesh
   # ICI_MESH_SHAPE = [1, 8, 1]  # bs=1*8, 0.311 paxml 0.272 mesh
 
@@ -838,15 +839,15 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 8, 4]
+  ICI_MESH_SHAPE = [1, 8, 1]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
+  MAX_SEQ_LEN = 2048
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 500
+  PERCORE_BATCH_SIZE = 1
 
   LAYERNORM_EPSILON = 1e-06
-  MAX_SEQ_LEN = 2048
-
     # Learning rate schedule
   LEARNING_RATE = 8e-6
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
@@ -855,15 +856,20 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   LR_COS_WARMUP = int(58497 * 0.02 * 1) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
   LR_COS_DECAY_START = LR_COS_WARMUP + 1 # decay start step: 学习率开始衰减的步数
   LR_COS_DECAY_END = int(19499 * 1) # decay end step # 学习率最后保持恒定的步数
-  TRAINING_NUM_BATCHES_TO_SKIP = None
   WEIGHT_DECAY=0.001
+  ADAM_BETA2=0.999
+  ADAM_BETA1=0.9
+  ADAM_EPSILON=1e-8
+  CLIP_GRADIENT_NORM_TO_VALUE=1.0
+
+  TRAINING_NUM_BATCHES_TO_SKIP = None
 
   EMBED_DROPOUT_PROB = 0.1
   ATTEN_DROPOUT_PROB = 0.05
 
   EVAL_LOOP_NUM_BATCHES = 10 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 10 # 每隔多少step评测一次
-  WANDB_PROJECT = 'paxml_baichuan7b_test_0830'
+  WANDB_PROJECT = 'paxml_baichuan7b_test_0830_noshardadam'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -881,7 +887,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     if is_training:
       repeat = 3
     else:
-      repeat = 3 * 10
+      repeat = 3 * 30
     p = pax_fiddle.Config(
         MyDatasets,
         name='baichuan-train-data' if is_training else 'baichuan-eval-data',
@@ -1389,8 +1395,6 @@ class MyDatasets(base_input.BaseInput):
                                               seq_len=self.seq_len, 
                                               repeat=self.repeat
                                               )
-    devices = np.array(jax.devices()).reshape(C4SpmdGpt37BRoPE.ICI_MESH_SHAPE)
-    self.mesh = jax.sharding.Mesh(devices, ('replica', 'data', 'mdl'))
     
   def peek_padded(self):
     return self.get_next_padded()
@@ -1420,7 +1424,7 @@ class MyDatasets(base_input.BaseInput):
     model_needed_inputs.ids = data['input_ids'][:, :self.seq_len-1]
     model_needed_inputs.labels = data['input_ids'][:, 1:self.seq_len]
     weights = data['labels'] > 0
-    padding_weights = np.zeros_like(model_needed_inputs.ids)
+    # padding_weights = np.zeros_like(model_needed_inputs.ids)
     model_needed_inputs.weights = weights[:, 1:self.seq_len]
     # 错误，因为labels是计算loss的位置，只会在计算loss的时候进行mask，而paddings不一样，是对hidden_states进行mask
     # model_needed_inputs.paddings = 1 - weights[:, 1:self.seq_len]
@@ -1437,10 +1441,9 @@ class MyDatasets(base_input.BaseInput):
     ds = tf.data.Dataset.from_tensor_slices(fnames)
     ds = ds.apply(tf.data.TFRecordDataset)
     # shard host data
-    host_count = jax.process_count()
     process_index = jax.process_index()
-    logging.info(f'host_count: {host_count} || process_index: {process_index}')
-    ds = ds.shard(host_count, process_index)
+    logging.info(f'num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}')
+    ds = ds.shard(self.num_infeed_hosts, process_index)
     ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.shuffle(buffer_size=10000) # 从文件中取buffer_size数据，然后打乱
     ds = ds.padded_batch(batch_size=np.prod(batch_size), 

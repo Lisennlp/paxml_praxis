@@ -839,13 +839,13 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  ICI_MESH_SHAPE = [1, 8, 1]
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 16, 4]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
   VOCAB_SIZE = 64000
   CHECKPOINT_EVERY_N_STEPS = 500
-  PERCORE_BATCH_SIZE = 1
 
   LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule
@@ -884,10 +884,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
       num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
     else:
       logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
-    if is_training:
-      repeat = 3
-    else:
-      repeat = 3 * 30
+    
+    repeat = 3 if is_training else 3 * 30
     p = pax_fiddle.Config(
         MyDatasets,
         name='baichuan-train-data' if is_training else 'baichuan-eval-data',

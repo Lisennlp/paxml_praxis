@@ -1500,8 +1500,7 @@ class DotProductAttention(base_layer.BaseLayer):
     # probs = self.atten_dropout(probs)
     # Compute the attention context. # lsp: 其实就是einsum
     encoded = self.pv_einsum('BNTS,BSNH->BTNH', probs, value)# w
-    # lsp
-    encoded = self.atten_dropout(encoded)
+    
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.
@@ -1702,7 +1701,8 @@ class DotProductAttention(base_layer.BaseLayer):
     encoded = self.post(encoded)
     encoded = self._shard_bld(encoded) # bsz * len * model -shard-> (replica, data), None, mdl
     encoded = checkpoint_name(encoded, 'out_proj')
-
+    # lsp
+    encoded = self.atten_dropout(encoded)
     return encoded, atten_probs
 
   def init_states(self, target_batch_size: int, target_max_length: int) -> None:

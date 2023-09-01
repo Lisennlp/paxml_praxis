@@ -653,7 +653,9 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
 
   # lsp:
-  transformer_layer_p.tr_atten_tpl.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB
+  # transformer_layer_p.tr_atten_tpl.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB # 会被transformer_layer_p的atten_dropout_prob覆盖
+  # transformer_layer_p.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB # 会被stacked_p的atten_dropout_prob覆盖
+  stacked_p.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -839,8 +841,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 16, 4]
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 4, 2]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048

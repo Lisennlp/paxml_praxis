@@ -248,6 +248,3 @@ padded_global_shapes = jax.tree_map(lambda x: jax.ShapeDtypeStruct(shape=x.shape
                                     if hasattr(x, 'shape') else x , new_trainstate)
 checkpoint_manager.save(step, new_trainstate, padded_global_shapes, train_input_pipeline=None, force=False)
 print(f'Saved model finished. take time: {time.time() - start}s...')
-
-
-

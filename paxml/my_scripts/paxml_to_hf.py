@@ -175,12 +175,13 @@ def write_json(text, path):
     
     
 def permute(w):
-    # torch ， view和reshape的区别：view要求连续内存，reshape随意
-    if isinstance(w, torch.Tensor):
-        res = w.view(n_heads, dim // n_heads // 2, 2, dim).transpose(1, 2).reshape(dim, dim)
-    else:
-        res = w.reshape(n_heads, dim // n_heads // 2, 2, dim).transpose(0, 2, 1, 3).reshape(dim, dim)
-    return res
+    return w
+    # # torch ， view和reshape的区别：view要求连续内存，reshape随意
+    # if isinstance(w, torch.Tensor):
+    #     res = w.view(n_heads, dim // n_heads // 2, 2, dim).transpose(1, 2).reshape(dim, dim)
+    # else:
+    #     res = w.reshape(n_heads, dim // n_heads // 2, 2, dim).transpose(0, 2, 1, 3).reshape(dim, dim)
+    # return res
 
 flated_paxml_w = flatten_dict(restored_model['state'].mdl_vars)
 loaded = {'.'.join(k): v for k, v in flated_paxml_w.items()}
@@ -195,7 +196,7 @@ for layer_i in range(n_layers):
     v = loaded[mesh_to_paxml_format['wv']][layer_i].reshape(dim, -1).transpose(1, 0)
     repeat_state_dict = {
         f"model.layers.{layer_i}.self_attn.W_pack.weight": np.concatenate([q, k, v], axis=0),
-        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[mesh_to_paxml_format['wo']][layer_i].reshape(dim, -1).transpose(1, 0),
+        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[mesh_to_paxml_format['wo']][layer_i].reshape(dim, -1),
 
         f"model.layers.{layer_i}.mlp.gate_proj.weight": loaded[mesh_to_paxml_format['w1']][layer_i].transpose(1, 0),
         f"model.layers.{layer_i}.mlp.down_proj.weight": loaded[mesh_to_paxml_format['w2']][layer_i].transpose(1, 0),
@@ -231,5 +232,3 @@ subprocess.run(command, stdout=subprocess.PIPE, shell=True)
 write_json(index_dict, os.path.join(save_dir, "pytorch_model.bin.index.json"))
 
 print(f'Convert finished, take time: {time.time() - start}s...')
-
-

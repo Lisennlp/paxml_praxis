@@ -984,7 +984,8 @@ class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
           var_weight_hparams)
     else:
       var_lp_mask = None
-
+    # lsp: 
+    var_lp_mask = None
     optax_list = [
         apply_lp_regularizer(
             var_lp_mask=var_lp_mask,

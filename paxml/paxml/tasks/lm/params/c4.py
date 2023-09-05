@@ -641,9 +641,13 @@ def configure_gpt3_task(
   transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
-    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32 # lsp：inputs采用float32
-    transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
-    model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
+    # transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32 # lsp：inputs采用float32
+    # transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
+    # model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
+    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.bfloat16 # lsp：inputs采用float32
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.bfloat16
+    model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.bfloat16
+
   if True or cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
     transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
@@ -842,7 +846,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
   PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 4, 2]
+  ICI_MESH_SHAPE = [1, 1, 8]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
@@ -864,14 +868,16 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   ADAM_EPSILON=1e-8
   CLIP_GRADIENT_NORM_TO_VALUE=1.0
 
-  TRAINING_NUM_BATCHES_TO_SKIP = None
+  TRAINING_NUM_BATCHES_TO_SKIP = 0
 
-  EMBED_DROPOUT_PROB = 0.1
-  ATTEN_DROPOUT_PROB = 0.05
+  # EMBED_DROPOUT_PROB = 0.1
+  # ATTEN_DROPOUT_PROB = 0.05
+  EMBED_DROPOUT_PROB = 0.0
+  ATTEN_DROPOUT_PROB = 0.0
 
-  EVAL_LOOP_NUM_BATCHES = 10 # 每次评测多少batch
-  EVAL_INTERVAL_STEPS = 10 # 每隔多少step评测一次
-  WANDB_PROJECT = 'paxml_baichuan7b_test_0830_noshardadam'
+  EVAL_LOOP_NUM_BATCHES = 100 # 每次评测多少batch
+  EVAL_INTERVAL_STEPS = 100 # 每隔多少step评测一次
+  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0905_paxml'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -1436,7 +1442,8 @@ class MyDatasets(base_input.BaseInput):
     return model_needed_inputs
 
   def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
-    tf.random.set_seed(42)
+    # tf.random.set_seed(42)
+    tf.random.set_seed(1234)
     fnames = [index_fname] if index_fname.endswith('.tfrecords') else open(index_fname).read().splitlines()
     ds = tf.data.Dataset.from_tensor_slices(fnames)
     ds = ds.apply(tf.data.TFRecordDataset)
@@ -1453,5 +1460,6 @@ class MyDatasets(base_input.BaseInput):
     ds = ds.prefetch(10)
     ds = ds.repeat(repeat)
     logging.info(f'self.num_batches_to_skip: {self.num_batches_to_skip}')
-    ds = ds.skip(self.num_batches_to_skip)
+    if self.num_batches_to_skip:
+      ds = ds.skip(self.num_batches_to_skip)
     return map(lambda x: self.format(x), iter(ds))

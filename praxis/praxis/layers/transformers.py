@@ -439,7 +439,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
     elif self.norm_policy == 'pre':
       inputs = self.layer_norm(inputs)
     # if self.norm_policy in ('primer_hybrid', 'pre'):
-      self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
+      # self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
+
+    self.add_summary('[lsp]ffn_input_norm', inputs[1], verbosity=self.user_summary_level)
     #lsp:  x = self.w2(nn.silu(self.w1(x)) * self.w3(x))
     # Apply first FFN layer
     if self._is_ffn1_gated:
@@ -447,7 +449,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
       gate_value = self.ffn_layer1_gate(inputs)
       # theta.ffn_layer1 corresponds to gshard_builder's wi1
       # lsp： 直接 * 和mesh一样
+      self.add_summary('[lsp]ffn1_gate_value', gate_value[1], verbosity=self.user_summary_level)
       activations = gate_value * self.ffn_layer1(inputs)
+      self.add_summary('[lsp]ffn1_activations', activations[1], verbosity=self.user_summary_level)
     else:
       activations = self.ffn_layer1(inputs)
       activations = checkpoint_name(activations, 'ffn1')
@@ -464,7 +468,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
     # Apply second FFN layer
     outputs = self.ffn_layer2(activations)
-
+    self.add_summary('[lsp]ffn2_outputs', outputs[1], verbosity=self.user_summary_level)
     outputs = checkpoint_name(outputs, 'ffn2')
     # Apply paddings if not None # lsp: apply_padding_first: False || paddings: not None
     if not self.apply_padding_first and paddings is not None:
@@ -473,18 +477,17 @@ class TransformerFeedForward(base_layer.BaseLayer):
     self.add_summary('output_rms', _rms(outputs), verbosity=4)
 
     # Apply Primer normalization before dropout.
-    # 
-    # if self.norm_policy == 'primer_hybrid':
-    #   outputs = self.post_layer_norm(outputs)
-    # elif self.norm_policy == 'post':
-    #   outputs = self.layer_norm(outputs)
+    if self.norm_policy == 'primer_hybrid':
+      outputs = self.post_layer_norm(outputs)
+    elif self.norm_policy == 'post':
+      outputs = self.layer_norm(outputs)
 
     # if self.norm_policy in ('primer_hybrid', 'post'):
-    self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
-
+    # self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
+    self.add_summary('[lsp]ffn2_outputs_norm', outputs[1], verbosity=self.user_summary_level)
     # Apply residual dropout  
     outputs = self.residual_dropout(outputs)
-
+    self.add_summary('[lsp]ffn2_output_drop', outputs[1], verbosity=self.user_summary_level)
     # Apply skip connection lsp: True
     if self.add_skip_connection:
       logging.info(f'self.add_skip_connection: {self.add_skip_connection}')
@@ -500,6 +503,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     #   # Cosine similarity between inputs (residual) and outputs.
       self.add_summary(
           'output_rel_cos', _rel_cos(residual, outputs), verbosity=4)
+    self.add_summary('[lsp]ffn_outputs', outputs[1], verbosity=self.user_summary_level)
 
     return outputs
 
@@ -1072,11 +1076,14 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
     if self.norm_policy in ('primer_hybrid', 'post'):
       self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
-
+    self.add_summary('[lsp]inputs_norm', outputs[1], verbosity=self.user_summary_level)
     # Residual dropout.
     outputs = self.residual_dropout(outputs)
+    self.add_summary('[lsp]inputs_norm_drop', outputs[1], verbosity=self.user_summary_level)
+
     if self.add_skip_connection:
       if self.residual_droppath_prob:
+        logging.info(f'self.residual_droppath_prob: {self.residual_droppath_prob}')
         outputs = self.residual_droppath(residual, outputs)
       else:
         outputs = residual + outputs * self.residual_weight
@@ -1264,7 +1271,7 @@ class Transformer(base_layer.BaseLayer):
     """Get the decoding sequence length."""
     return self.self_attention.decoding_state_sequence_length()
 
-  # lsp forward-final
+  # lsp Transformer forward-final
   def __call__(
       self,
       inputs: JTensor,
@@ -1313,6 +1320,8 @@ class Transformer(base_layer.BaseLayer):
     else:
       inputs_normalized = inputs
 
+    self.add_summary('[lsp]inputs_normalized', inputs_normalized[1], verbosity=self.user_summary_level)
+
     # Compute self-attention, key/value vectors are the input itself
     # lsp:  q_proj + attn + post
     atten_output, self_atten_probs = self.self_attention(
@@ -1322,6 +1331,7 @@ class Transformer(base_layer.BaseLayer):
         atten_mask=attention_mask,
         query_segment_pos=segment_pos,
         key_segment_pos=segment_pos)
+    self.add_summary('[lsp]atten_output', atten_output[1], verbosity=self.user_summary_level)
     
     atten_probs = NestedMap(self_atten=self_atten_probs)
 
@@ -1332,9 +1342,12 @@ class Transformer(base_layer.BaseLayer):
     elif self.norm_policy == 'post':
       atten_output = self.layer_norm(atten_output)
 
+    self.add_summary('[lsp]atten_output', atten_output[1], verbosity=self.user_summary_level)
+
     # Residual dropout and connection
     # lsp: attention dropout
     atten_output = self.residual_dropout(atten_output)
+    self.add_summary('[lsp]atten_output_drop', atten_output[1], verbosity=self.user_summary_level)
 
     # Apply skip connection
     if self.residual_droppath_prob > 0.0: # 0
@@ -1385,9 +1398,10 @@ class Transformer(base_layer.BaseLayer):
 
       if self.norm_policy == 'post_skip':
         atten_output = self.cross_layer_norm(atten_output)
-
+    self.add_summary('[lsp]ffn_input', atten_output[1], verbosity=self.user_summary_level)
     # Apply FFN layer
     output = self.ff_layer(atten_output, paddings=paddings)
+    self.add_summary('[lsp]ffn_out', output[1], verbosity=self.user_summary_level)
     return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
 
   def extend_step(self,

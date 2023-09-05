@@ -409,6 +409,19 @@ class RmsNorm(BaseNormalization):
             tensor_split_dims_mapping=wp_scale,
         ),
     )
+  def _norm(self, x: jnp.ndarray) -> jnp.ndarray:
+    x_square = jnp.square(x)
+    self.add_summary('[lsp]x_square', x_square[1], verbosity=self.user_summary_level)
+    x_mean = x_square.mean(-1, keepdims=True)
+    self.add_summary('[lsp]x_mean', x_mean[1], verbosity=self.user_summary_level)
+    x_eps = x_mean + self.epsilon
+    self.add_summary('[lsp]x_eps', x_eps[1], verbosity=self.user_summary_level)
+    x_rsqrt = jax.lax.rsqrt(x_eps)
+    self.add_summary('[lsp]x_rsqrt', x_rsqrt[1], verbosity=self.user_summary_level)
+    x_cheng = x * x_rsqrt
+    self.add_summary('[lsp]x_cheng', x_cheng[1], verbosity=self.user_summary_level)
+    return x_cheng
+    # return x * jax.lax.rsqrt(jnp.square(x).mean(-1, keepdims=True) + self.epsilon)
 
   def __call__(self,
                inputs: JTensor,
@@ -422,16 +435,24 @@ class RmsNorm(BaseNormalization):
     Returns:
       Output after applying RMS normalization, with the same shape as 'inputs'.
     """
-    del paddings  # Unused.
-    if self.intermediate_dtype is not None: # lsp： float32
-      inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
-    var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
-    normed_inputs = jnp.asarray(
-        inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
-    )
-    scale = self.theta.scale if self.direct_scale else 1 + self.theta.scale
-    normed_inputs *= scale
-    return normed_inputs
+    # del paddings  # Unused.
+    # if self.intermediate_dtype is not None: # lsp： float32
+    #   inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
+    # var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
+    # normed_inputs = jnp.asarray(
+    #     inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
+    # )
+    # scale = self.theta.scale if self.direct_scale elsxe 1 + self.theta.scale
+    # normed_inputs *= scale
+    # return normed_inputs
+    # return inputs
+    # self.add_summary('[lsp]theta_scale', self.theta.scale)
+    # self.add_summary('[lsp]_norm_inputs', inputs[1])
+    output = self._norm(inputs.astype(self.fprop_dtype)).astype(self.fprop_dtype)
+    # print(f'fprop_dtype: {self.fprop_dtype}========== self.eps: {self.epsilon}')
+    # self.add_summary('[lsp]norm_input', output[1])
+    weight = jnp.asarray(self.theta.scale, self.fprop_dtype)
+    return output * weight
 
 
 class RmsNormNoScale(BaseNormalization):

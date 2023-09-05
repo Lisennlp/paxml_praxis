@@ -1461,8 +1461,16 @@ class DotProductAttention(base_layer.BaseLayer):
     asserts.in_set(atten_mask.shape[2], [t, 1])
     asserts.in_set(atten_mask.shape[0], [b, 1])
 
+    self.add_summary('[lsp]before_scale_query', query[1], verbosity=self.user_summary_level)
+    self.add_summary('[lsp]before_key', key[1], verbosity=self.user_summary_level)
+    self.add_summary('[lsp]before_value', value[1], verbosity=self.user_summary_level)
+
     query = self._scale_query(query) # scale query,  internal_enable_query_scale为True生效
+    self.add_summary('[lsp]scale_query', query[1], verbosity=self.user_summary_level)
+    # logging.info(f'querydtype: {query.dtype}')
+    # logging.info(f'keydtype: {key.dtype}')
     logits = self._atten_logits(query, key) # q * k
+    self.add_summary('[lsp]qk_logits', logits[1], verbosity=self.user_summary_level)
     if relative_bias is not None:
       # The relative_bias has shape [1, n, t, s] or [b, n, t, s].
       base_layer.assert_has_shape(relative_bias, [-1, n, t, s])
@@ -1482,12 +1490,14 @@ class DotProductAttention(base_layer.BaseLayer):
         ((logits**2.0).mean().astype(jnp.float32) ** 0.5),
         verbosity=4,
     )
+    # lsp
+    # logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
 
-    logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
     # Attention softmax is always carried out in fp32.
     logits = logits.astype(jnp.float32)
     # Apply attention masking
     padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask) # attention mask
+    self.add_summary('[lsp]padded_logits', padded_logits[1], verbosity=self.user_summary_level)
     if self.attention_mask_summary:
       self.add_summary('attention_mask', atten_mask)
     if self.attention_extra_logit is None:
@@ -1496,10 +1506,12 @@ class DotProductAttention(base_layer.BaseLayer):
       probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(
           key.dtype
       )
+    self.add_summary('[lsp]probs', probs[1], verbosity=self.user_summary_level)
     # Apply attention dropout. lsp: 
     # probs = self.atten_dropout(probs)
     # Compute the attention context. # lsp: 其实就是einsum
     encoded = self.pv_einsum('BNTS,BSNH->BTNH', probs, value)# w
+    self.add_summary('[lsp]encoded', encoded[1], verbosity=self.user_summary_level)
     
 
     if self.zero_fully_masked:
@@ -1604,7 +1616,8 @@ class DotProductAttention(base_layer.BaseLayer):
 
     encoded = self._shard_bnh(encoded)
     return encoded, probs
-
+    
+  # lsp
   def __call__(
       self,
       query_vec: JTensor,
@@ -1647,6 +1660,10 @@ class DotProductAttention(base_layer.BaseLayer):
       key_proj = self.key(key_vec)
       value_proj = self.value(value_vec)
 
+    self.add_summary('[lsp]query_proj', query_proj[1], verbosity=self.user_summary_level)
+    self.add_summary('[lsp]key_proj', key_proj[1], verbosity=self.user_summary_level)
+    self.add_summary('[lsp]value_proj', value_proj[1], verbosity=self.user_summary_level)
+
     self._fprop_update_decode_state('key_state', key_proj)
     self._fprop_update_decode_state('value_state', value_proj)
 
@@ -1670,17 +1687,18 @@ class DotProductAttention(base_layer.BaseLayer):
       # query_proj, key_proj = query_proj.astype(jnp.float32), key_proj.astype(jnp.float32)  # XD
       self._fprop_update_decode_state('key_post_rotary_pos_emb', key_proj)
 
-    # Apply relative bias.
+    self.add_summary('[lsp]query_proj_rotary', query_proj[1], verbosity=self.user_summary_level)
+    self.add_summary('[lsp]key_proj', key_proj[1], verbosity=self.user_summary_level)
+    # # Apply relative bias.
     # Paper: https://aclanthology.org/N18-2074.pdf.
     if self.relative_bias_tpl:
       relative_bias = self.relative_bias(query_segment_pos, key_segment_pos)
     else:
       relative_bias = None
-    # attn
+    # lsp attn
     encoded, atten_probs = self._dot_atten(
         query_proj, key_proj, value_proj, atten_mask, relative_bias
     )
-
     # Apply NGrammer to the output of the attention layer.
     # Paper: https://openreview.net/forum?id=GxjCYmQAody.
     if self.ngrammer_tpl is not None:
@@ -1699,6 +1717,8 @@ class DotProductAttention(base_layer.BaseLayer):
     # Post projection
     # lsp: attention出来之后过线性层
     encoded = self.post(encoded)
+    self.add_summary('[lsp]encoded_post', encoded[1], verbosity=self.user_summary_level)
+
     encoded = self._shard_bld(encoded) # bsz * len * model -shard-> (replica, data), None, mdl
     encoded = checkpoint_name(encoded, 'out_proj')
     # lsp

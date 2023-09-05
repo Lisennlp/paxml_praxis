@@ -20,6 +20,7 @@ import enum
 import functools
 import pprint
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+import flax
 
 from absl import logging
 from etils import epath
@@ -732,6 +733,8 @@ class StepFnOutput:
   # A dict of clu.metrics. Used by decode step function currently.
   clu_metrics: Optional[Dict[str, Any]] = None
 
+  # inter_values =
+
 
 # TODO(yonghui): refactor to pass in learner separately.
 # TODO(wangpeng): Consider breaking this function into smaller pieces, and/or
@@ -879,6 +882,7 @@ def train_step_single_learner(
 
       # Fetch all the summary tensors.
       summary_tensors = updated_vars.get(SUMMARIES, {})
+      logging.info(f'summary_tensors: {summary_tensors}')
       # TODO(yonghui): Fetch aux losses and add them to summaries.
       summary_tensors = summary_utils.flatten_flax_summaries(summary_tensors)
 
@@ -928,18 +932,17 @@ def train_step_single_learner(
       var_weight_hparams,
       learner,
   )
-  # lsp: None
-  if grad_fn is None:
     # lsp
-    def grad_fn(mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
-      # lsp: 如果True则赋值为py_utils.BpropMaskedNode()对象，否则不变
+  class GradFn(flax.linen.Module):
+  # def grad_fn(mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
+    # lsp: 如果True则赋值为py_utils.BpropMaskedNode()对象，否则不变
+    def __call__(self, mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
       with_grad = tasks_lib.filter_vars_for_grad_or_opt(
           mdl_vars, excluded_for_grad
       )
       no_grad = jax.tree_map(
           lambda x, e: x if e else {}, mdl_vars, excluded_for_grad
       )
-
       def _loss(
           mdl_vars_grad: NestedJTensor,
           mdl_vars_nograd_and_inputs: Tuple[NestedJTensor, NestedMap],
@@ -972,15 +975,17 @@ def train_step_single_learner(
           mdl_vars,
           grads,
       )
-      logging.info(f'[lsp]grads: {grads}')
+      # self.sow('intermediates', 'x', grads,  init_fn=lambda :0, reduce_fn=lambda a, b: b)
+      # logging.info(f'[lsp]grads: {grads}')
       return values, grads
-
+  # lsp: None
+  if grad_fn is None:
+    ((weighted_loss, aux_info), grads), inter_values = GradFn().apply({}, updated_mdl_vars, inputs, subkey, mutable=['intermediates'])
   else:
     grad_fn = functools.partial(grad_fn, _loss_fn, learner)
+    ((weighted_loss, aux_info), grads) = grad_fn(updated_mdl_vars, inputs, subkey)
 
-  # lsp: grads
-  ((weighted_loss, aux_info), grads) = grad_fn(updated_mdl_vars, inputs, subkey)
-
+  # logging.info(f'inter_values: {inter_values}')
   (
       mean_loss,
       weighted_scalars,
@@ -988,6 +993,7 @@ def train_step_single_learner(
       fwd_summary_tensors,
       per_example_out,
   ) = aux_info.aux_info
+  # exit(0)
 
   # weighted_loss is only needed for computing gradients, but otherwise, not
   # needed.
@@ -1094,6 +1100,8 @@ def train_step_single_learner(
   summary_tensors = NestedMap()
   summary_tensors.update(fwd_summary_tensors)
   summary_tensors.update(bwd_summary_tensors)
+  # summary_tensors['grads'] = inter_values
+  # summary_tensors['transformed_grads'] = transformed_grads
   # lsp:
   # trainer_lib.py def train_step_single_learner | return new_states, StepFnOutput() ->  
   # programs.py: def train_step(): return step + 1, *train_step(state, prng_key, inputs, static_args) | ） ->

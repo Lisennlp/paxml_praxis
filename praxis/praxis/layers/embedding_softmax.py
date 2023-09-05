@@ -326,6 +326,15 @@ class FullSoftmax(base_layer.BaseLayer):
     )
     total_weight = jnp.sum(class_weights, dtype=jnp.float32)
 
+    # lsp
+    total_xent_batch = jnp.sum(
+        jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
+        dtype=jnp.float32, axis=-2,
+    )
+    total_weight_batch = jnp.maximum(jnp.sum(class_weights, dtype=jnp.float32, axis=-2), 1e-10)
+    avg_xent = jnp.mean(total_xent_batch / total_weight_batch)
+    # lsp end
+
     if self.z_loss_weight > 0.0:
       z_loss = (
           jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32)
@@ -342,13 +351,15 @@ class FullSoftmax(base_layer.BaseLayer):
         per_example_xent=per_example_xent.astype(jnp.float32),
         total_xent=total_xent,
         total_weight=total_weight,
-        avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
+        # avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32), 
+        avg_xent=avg_xent # mesh
+        # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
     )
     if self.z_loss_weight > 0.0:
       output_nmap['z_loss'] = z_loss
     return output_nmap
 
-
+# lsp
 class SharedEmbeddingSoftmax(FullSoftmax):
   """A softmax layer that also supports embedding lookups.
 

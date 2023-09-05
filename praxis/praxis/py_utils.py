@@ -741,7 +741,9 @@ def apply_mask_to_logits(logits: JTensor, mask: JTensor) -> JTensor:
     Masked logits.
   """
 
-  min_value = get_large_negative_number(logits.dtype)
+  # min_value = get_large_negative_number(logits.dtype)
+  # lsp
+  min_value = jnp.finfo(jnp.bfloat16).min
   return jnp.where((mask >= min_value * 0.5), logits, min_value)
 
 

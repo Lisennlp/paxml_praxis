@@ -468,7 +468,7 @@ def _train_and_evaluate_common(
         )
         if jax.process_index() == 0:
           for eval_metric in eval_metrics.metrics_list:
-            eval_result = {'step': step_i, 'eval_loss': eval_metric['avg_xent'], 'eval_acc': eval_metric['fraction_of_correct_next_step_preds']}
+            eval_result = {'eval_step': step_i, 'eval_loss': eval_metric['avg_xent'], 'eval_acc': eval_metric['fraction_of_correct_next_step_preds']}
             wandb.log(eval_result)
             logging.info(f'eval_result: {eval_result}')
           logging.info('\n')

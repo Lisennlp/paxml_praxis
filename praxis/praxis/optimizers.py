@@ -956,7 +956,10 @@ class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
 
   def get_learning_rate(self, step_count: JTensor) -> JTensor:
     """Get the learning rate of this optimizer at a particular step."""
-    return self._lr_schedule_inst.value_at(step_count) * self.learning_rate
+    # return self._lr_schedule_inst.value_at(step_count) * self.learning_rate
+    # lsp:
+    return self._lr_schedule_inst.value_at(step_count)
+
 
   def get_grad_transformation(
       self,

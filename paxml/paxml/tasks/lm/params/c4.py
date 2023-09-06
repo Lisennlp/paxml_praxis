@@ -829,7 +829,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  NUM_LAYERS = 2
+  NUM_LAYERS = 32
   MODEL_DIMS = 4096
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
@@ -845,8 +845,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 8, 1]
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 8, 4]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
@@ -872,12 +872,12 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   # EMBED_DROPOUT_PROB = 0.1
   # ATTEN_DROPOUT_PROB = 0.05
-  EMBED_DROPOUT_PROB = 0.0
-  ATTEN_DROPOUT_PROB = 0.0
+  EMBED_DROPOUT_PROB = 0.1
+  ATTEN_DROPOUT_PROB = 0.05
 
-  EVAL_LOOP_NUM_BATCHES = 100 # 每次评测多少batch
-  EVAL_INTERVAL_STEPS = 100 # 每隔多少step评测一次
-  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0906_paxml'
+  EVAL_LOOP_NUM_BATCHES = 50 # 每次评测多少batch
+  EVAL_INTERVAL_STEPS = 250 # 每隔多少step评测一次
+  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0906_fix_lr_bug'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -900,7 +900,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
         path=path,
         is_training=is_training,
         num_batches_to_skip=num_batches_to_skip,
-        batch_size=self.PERCORE_BATCH_SIZE * 8,
+        batch_size=int(self.PERCORE_BATCH_SIZE * 8),
         seq_len=self.MAX_SEQ_LEN,
         reset_for_eval=False, 
         repeat=repeat,
@@ -1406,10 +1406,19 @@ class MyDatasets(base_input.BaseInput):
     return self.get_next_padded()
 
   def get_next_padded(self):
-    x = next(self.dataset)
+    unpadded = next(self.dataset)
+    # logging.info(f'unpadded input_ids: {unpadded["input_ids"][:, 20: 30]}')
+    pad_size = int(self.batch_padding_size)
+    # logging.info(f'pad_size: {pad_size}======== type: {type(pad_size)}')
+    if pad_size == 0:
+      return unpadded
+    return jax.tree_util.tree_map(
+        lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
+        unpadded,
+    )
     # if self.num_infeed_hosts > 1:
     #   x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
-    return x
+    # return x
 
   def get_global_batch_size(self, train_input):
     logging.info(f'train_input: {train_input} type: {type(train_input)}')

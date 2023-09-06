@@ -875,7 +875,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   EVAL_LOOP_NUM_BATCHES = 50 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 250 # 每隔多少step评测一次
-  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0906_fix_lr_bug'
+  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0906_fix_lr_bug_drop0'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"

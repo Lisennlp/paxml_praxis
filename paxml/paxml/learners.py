@@ -334,7 +334,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
     
     grads, valid_step = self.scale_gradients(grads)
     # lsp
-    scale_grads = jax.tree_map(lambda x: x.copy(), grads)
+    # scale_grads = jax.tree_map(lambda x: x.copy(), grads)
     transformed_grad, new_states = self.get_grad_tx(var_weight_hparams).update(
         grads, states, old_vars
     )
@@ -364,7 +364,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
           applied_grad_norm,
           SummaryType.AGGREGATE_SCALAR,
       )
-    return transformed_grad, new_states, scale_grads
+    return transformed_grad, new_states
 
   def apply_gradient(
       self,

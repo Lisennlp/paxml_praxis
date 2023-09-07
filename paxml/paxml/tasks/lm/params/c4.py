@@ -845,8 +845,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  PERCORE_BATCH_SIZE = 4
-  ICI_MESH_SHAPE = [1, 8, 4]
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 16, 4]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
@@ -858,7 +858,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   LEARNING_RATE = 8e-6
   LR_SCHEDULE = 'linear_rampup_cosine_decay'
   LR_COS_MIN_RATIO = 0.1  # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-  LR_COS_MAX = LEARNING_RATE # 最大学习率
+  LR_COS_MAX = 1.0 # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
   LR_COS_WARMUP = int(58497 * 0.02 * 1) # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
   LR_COS_DECAY_START = LR_COS_WARMUP + 1 # decay start step: 学习率开始衰减的步数
   LR_COS_DECAY_END = int(19499 * 1) # decay end step # 学习率最后保持恒定的步数
@@ -870,8 +870,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   TRAINING_NUM_BATCHES_TO_SKIP = 0
 
-  EMBED_DROPOUT_PROB = 0.0
-  ATTEN_DROPOUT_PROB = 0.0
+  EMBED_DROPOUT_PROB = 0.1
+  ATTEN_DROPOUT_PROB = 0.05
 
   EVAL_LOOP_NUM_BATCHES = 50 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 250 # 每隔多少step评测一次

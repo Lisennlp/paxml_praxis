@@ -178,7 +178,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
         self.repeat_prefix_sep,
         force_prefix_structure=self.force_repeat_prefix_structure,
     )
-
+  # lsp
   def scale_gradients(
       self,
       raw_grads: NestedMap,
@@ -209,14 +209,14 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
     else:
       optimizer_name = optimizer_name + '/'
     if clip_gradient_norm_to_value is None:
-      clip_gradient_norm_to_value = self.optimizer.clip_gradient_norm_to_value
-    if clip_gradient_single_norm_to_value is None:
+      clip_gradient_norm_to_value = self.optimizer.clip_gradient_norm_to_value # 1.0
+    if clip_gradient_single_norm_to_value is None: # 0
       clip_gradient_single_norm_to_value = (
           self.optimizer.clip_gradient_single_norm_to_value
       )
     # Compute gradient norm.
 
-    if self.grad_norm_individual_vars:
+    if self.grad_norm_individual_vars: # lsp: False
       grad_norms = jax.tree_map(lambda x: jnp.sqrt(jnp.sum(x * x)), raw_grads)
       var_keys = py_utils.extract_prefixed_keys_from_nested_map(grad_norms)
 
@@ -230,11 +230,12 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
       jax.tree_map(add_grad_norm_summary, var_keys, grad_norms)
 
     if (
-        self.grad_norm_summary
-        or self.check_valid_step
+        self.grad_norm_summary #  True
+        or self.check_valid_step # True
         or clip_gradient_norm_to_value
         or clip_gradient_single_norm_to_value
     ):
+    # lsp: 计算梯度norm
       raw_grad_norm = _compute_grad_norm(raw_grads)
       if self.grad_norm_summary:
         base_layer.add_global_summary(
@@ -245,26 +246,27 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
     else:
       raw_grad_norm = None
 
-    def keep_step(grad_norm):
-      keep_threshold = p.skip_step_gradient_norm_value
+    def keep_step(grad_norm): # grad_norm是一个值
+      keep_threshold = p.skip_step_gradient_norm_value # 0
       if keep_threshold:
         return jnp.logical_and(
             jnp.all(jnp.isfinite(grad_norm)),
             jnp.all(jnp.less(grad_norm, keep_threshold)),
         )
       else:
-        return jnp.all(jnp.isfinite(grad_norm))
+        return jnp.all(jnp.isfinite(grad_norm)) # 检查梯度值是否有意义（非inf和NaN），jnp.all全为True为真
 
     def clip_grads(grads, grad_norm):
-      if clip_gradient_norm_to_value:
+      if clip_gradient_norm_to_value: # 1.0
         grad_norm: JTensor
         assert clip_gradient_single_norm_to_value == 0.0
+        # 将梯度除以所有参数的总梯度
         grad_scale = jnp.minimum(
             jnp.array(1, grad_norm.dtype),
             jnp.array(clip_gradient_norm_to_value, grad_norm.dtype) / grad_norm,
         )
         grads = jax.tree_map(lambda g: g * grad_scale, grads)
-      elif clip_gradient_single_norm_to_value:
+      elif clip_gradient_single_norm_to_value: # lsp: 0
         assert clip_gradient_norm_to_value == 0.0
         grad_single_norm = jax.tree_map(
             lambda x: jnp.sqrt(jnp.sum(x * x)), grads
@@ -283,7 +285,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
         grad_scale = jnp.array(1.0)
       return grads, grad_scale
 
-    if self.check_valid_step:
+    if self.check_valid_step: # true
       # Mark the step as invalid if any gradient anomaly is detected (e.g. Nan
       # or Inf, or excessively big gradient norm).
       valid_step = keep_step(raw_grad_norm)
@@ -310,6 +312,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
       )
     return grads, valid_step  # pytype: disable=bad-return-type  # jax-ndarray
 
+  # lsp
   def update_states(
       self,
       grads: NestedMap,
@@ -328,8 +331,10 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
     Returns:
       transformed_grad, new_states pair.
     """
-
+    
     grads, valid_step = self.scale_gradients(grads)
+    # lsp
+    scale_grads = jax.tree_map(lambda x: x.copy(), grads)
     transformed_grad, new_states = self.get_grad_tx(var_weight_hparams).update(
         grads, states, old_vars
     )
@@ -359,7 +364,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
           applied_grad_norm,
           SummaryType.AGGREGATE_SCALAR,
       )
-    return transformed_grad, new_states
+    return transformed_grad, new_states, scale_grads
 
   def apply_gradient(
       self,

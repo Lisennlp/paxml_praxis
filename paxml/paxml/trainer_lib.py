@@ -264,6 +264,8 @@ def adjust_input_params_for_small_batch(
     The possibly-modified BaseInput Fiddle config.
   """
   # Remote input adjusts the params for small batch itself.
+  # lsp: false
+  logging.info(f'input_p.experimental_remote_input: {input_p.experimental_remote_input}===')
   if input_p.experimental_remote_input:
     return input_p
 
@@ -1022,9 +1024,12 @@ def train_step_single_learner(
     vars_with_opt = tasks_lib.filter_vars_for_grad_or_opt(
         mdl_vars, excluded_for_opt
     )
+    # lsp: var_weight_hparams字典字符串
     wps_with_opt = tasks_lib.filter_vars_for_grad_or_opt(
         var_weight_hparams, excluded_for_opt
     )
+    # wps_with_opt: {'params': {'lm': {'embedding_lookup': {'emb_var': WeightHParams(shape=[64000, 4096], init=WeightInit(method='gaussian', scale=0.006), dtype=<class 'jax.numpy.float32'>, collections=[], mesh_shape=[1, 8, 1], tensor_split_dims_mapping=['data', 'mdl'], repeat_prefix=None, repeat_prefix_split_dims_mapping=None, repeat_optimizer_dims_mapping=None, fan_in_axes=None, fan_out_axes=None)}, 'fi
+    # vars_with_opt: {'params': {'lm': {'embedding_lookup': {'emb_var': Traced<ShapedArray(float32[64000,4096])>with<DynamicJaxprTrace(level=1/0)>}, 'fina
     transformed_grads, new_opt_states = learner.update_states(
         grads, states.opt_states[0], vars_with_opt, wps_with_opt
     )
@@ -1100,7 +1105,8 @@ def train_step_single_learner(
   summary_tensors = NestedMap()
   summary_tensors.update(fwd_summary_tensors)
   summary_tensors.update(bwd_summary_tensors)
-  # summary_tensors['grads'] = inter_values
+  # summary_tensors['grads'] = grads
+  # summary_tensors['scale_grads'] = scale_grads
   # summary_tensors['transformed_grads'] = transformed_grads
   # lsp:
   # trainer_lib.py def train_step_single_learner | return new_states, StepFnOutput() ->  

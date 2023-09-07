@@ -52,6 +52,13 @@ SAVE_INTERVAL_STEPS = 1
 
 
 LLAMA_STANDARD_CONFIGS = {
+    '1b': {
+        'dim': 4096,
+        'intermediate_size': 11008,
+        'n_layers': 2,
+        'n_heads': 32,
+        'norm_eps': 1e-6,
+    },
     '7b': {
         'dim': 4096,
         'intermediate_size': 11008,
@@ -86,7 +93,7 @@ n_layers = params["n_layers"]
 n_heads = params["n_heads"]
 dim = params["dim"]
 
-read_dir = '/home/lishengping/baichuan-7b-hf'
+read_dir = '/home/lishengping/baichuan-1b-hf'
 ckpt_paths = sorted(Path(read_dir).glob("*.bin"))
 ckpt = {}
 for i, ckpt_path in enumerate(ckpt_paths):
@@ -97,7 +104,7 @@ for i, ckpt_path in enumerate(ckpt_paths):
         ckpt[k] = v
 assert len(ckpt) > 0
 
-save_dir = 'gs://jax_llm_logs/alsp_debug/0832/hf_to_paxml_Oproj_NoTranspose/checkpoints'
+save_dir = 'gs://llm_base_models/baichuan_l2_debug/checkpoints'
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,
       save_interval_steps=SAVE_INTERVAL_STEPS,
@@ -120,13 +127,13 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
   )
 
 
-model_size = '7b'
+model_size = '1b'
 vocab_size = 64000
 intermediate_size = params['intermediate_size']
 x_times = 32
 n_heads = params['n_heads']
 head_dim = dim // n_heads
-n_layers = 32
+n_layers = 2
 step = 0
 
 paxml_to_hf_key_and_shape = {
@@ -161,7 +168,10 @@ gold_w = ckpt
 
 split_qkv = {}
 for k, v in gold_w.items():
-    v = v.to(torch.float32)
+    if v.dtype == torch.float32:
+        pass
+    else:
+        v = v.to(torch.float32)
     # o_proj不进行transpose，是个坑
     if len(v.shape) == 2 and 'embed_tokens' not in k and 'o_proj' not in k:
         v = v.transpose(1, 0)
@@ -246,5 +256,6 @@ new_trainstate = TrainState(
 )
 padded_global_shapes = jax.tree_map(lambda x: jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype) 
                                     if hasattr(x, 'shape') else x , new_trainstate)
+print(f'padded_global_shapes: {padded_global_shapes}')
 checkpoint_manager.save(step, new_trainstate, padded_global_shapes, train_input_pipeline=None, force=False)
 print(f'Saved model finished. take time: {time.time() - start}s...')

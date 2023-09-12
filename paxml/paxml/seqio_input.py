@@ -1725,6 +1725,7 @@ class MyLanguageModelFeatures(LanguageModelFeatures):
     ret.paddings = tf.zeros_like(ret.ids) # 全0
     ret.segment_ids = tf.ones_like(ret.ids) # 全1
     pos = tf.range(self.MAX_SEQ_LEN)
+    # 这个位置是用来做rotary的
     ret.segment_pos = ret.segment_ids * pos
     if self._reverse_bos_padding:
       ret.ids = ret.labels
@@ -1749,7 +1750,6 @@ class MyLanguageModelFeatures(LanguageModelFeatures):
     ds = ds.map(self._to_pax)
     return ds
   
-
 
 class PackedLanguageModelFeatures(LanguageModelFeatures):
   """A feature converter for a sequence model where examples are already packed.

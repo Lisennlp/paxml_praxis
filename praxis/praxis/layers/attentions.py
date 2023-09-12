@@ -1426,6 +1426,7 @@ class DotProductAttention(base_layer.BaseLayer):
       value: JTensor,
       atten_mask: JTensor,
       relative_bias: Optional[JTensor] = None,
+      alibi_mask: Optional[JTensor] = None,
   ) -> Tuple[JTensor, JTensor]:
     """Main attention function.
 
@@ -1497,6 +1498,12 @@ class DotProductAttention(base_layer.BaseLayer):
     logits = logits.astype(jnp.float32)
     # Apply attention masking
     padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask) # attention mask
+    logging.info(f'padded_logits: {padded_logits.shape}')
+    logging.info(f'alibi_mask: {alibi_mask.shape}')
+    if alibi_mask is not None:
+      padded_logits += alibi_mask
+
+    # lsp: alibi -> 在attn logits基础上加一个位置分数
     self.add_summary('[lsp]padded_logits', padded_logits[1], verbosity=self.user_summary_level)
     if self.attention_mask_summary:
       self.add_summary('attention_mask', atten_mask)
@@ -1626,6 +1633,7 @@ class DotProductAttention(base_layer.BaseLayer):
       atten_mask: JTensor,
       query_segment_pos: Optional[JTensor] = None,
       key_segment_pos: Optional[JTensor] = None,
+      alibi_mask: Optional[JTensor] = None,
   ) -> Tuple[JTensor, JTensor]:
     """Computes the value vector given the current query output.
 
@@ -1686,6 +1694,7 @@ class DotProductAttention(base_layer.BaseLayer):
       key_proj = self.rotary_position_emb(key_proj, key_segment_pos)
       # query_proj, key_proj = query_proj.astype(jnp.float32), key_proj.astype(jnp.float32)  # XD
       self._fprop_update_decode_state('key_post_rotary_pos_emb', key_proj)
+      assert alibi_mask is None
 
     self.add_summary('[lsp]query_proj_rotary', query_proj[1], verbosity=self.user_summary_level)
     self.add_summary('[lsp]key_proj', key_proj[1], verbosity=self.user_summary_level)
@@ -1697,7 +1706,7 @@ class DotProductAttention(base_layer.BaseLayer):
       relative_bias = None
     # lsp attn
     encoded, atten_probs = self._dot_atten(
-        query_proj, key_proj, value_proj, atten_mask, relative_bias
+        query_proj, key_proj, value_proj, atten_mask, relative_bias, alibi_mask=alibi_mask
     )
     # Apply NGrammer to the output of the attention layer.
     # Paper: https://openreview.net/forum?id=GxjCYmQAody.

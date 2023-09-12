@@ -654,6 +654,10 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       )
     if self.USE_ROTARY_POSITION_EMB:
       transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
+
+    if self.USE_ALIBI_POSITION_EMB:
+      model_p.lm_tpl.use_alibi_position_emb = True
+    
     # USE_REPEATED_LAYER: True, in C4SpmdGpt3AdamOrgHP 
     if self.USE_REPEATED_LAYER:
       # 每层进行repeat -> NUM_LAYERS

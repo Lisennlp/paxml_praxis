@@ -980,6 +980,55 @@ def apply_rotary_emb(  # XD: from EasyLM
 
     return xq_out.astype(dtype)#, xk_out.astype(dtype)
 
+
+class AlibiPositionalEmbedding(base_layer.BaseLayer):
+  num_heads: int = None
+  dtype: jnp.dtype = jnp.bfloat16
+  # def setup(self) -> None:
+  #   self.alibi_mask = precompute_freqs_cis(self.embedding_dims, 2048)  # XD
+  #   super().setup()
+
+  def _get_interleave(self, n):
+      def _get_interleave_power_of_2(n):
+          start = (2 ** (-2 ** -(math.log2(n) - 3)))
+          ratio = start
+          return [start * ratio ** i for i in range(n)]
+
+      if math.log2(n).is_integer():
+          return _get_interleave_power_of_2(n)
+      else:
+          closest_power_of_2 = 2 ** math.floor(math.log2(n))
+          return _get_interleave_power_of_2(closest_power_of_2) + self._get_interleave(2 * closest_power_of_2)[0::2][:n - closest_power_of_2]
+
+  def _fill_with_neg_inf(self, t):
+        return jax.lax.select(t.astype(self.dtype) > 0, 
+                        jnp.full(t.shape, 0.0, dtype=self.dtype), 
+                        jnp.full(t.shape, jnp.finfo(self.dtype).min))
+
+
+  def _gen_alibi_mask(self, n_head, max_pos):
+      slopes = jnp.array(self._get_interleave(n_head)).astype(self.dtype)
+      # n_head: head数量,  n_head * 1 * 1
+      slopes = slopes[..., jnp.newaxis, jnp.newaxis]
+      # 1 * 1 * position_len
+#         position = jnp.arange(max_pos, dtype=self.dtype)[jnp.newaxis, jnp.newaxis, ...]
+      position_point = jnp.arange(max_pos) - max_pos + 1
+      position_point = jnp.broadcast_to(position_point[jnp.newaxis, jnp.newaxis, ...], (n_head, 1, max_pos))
+      diag = jnp.diag(position_point[0])
+      position_point = position_point - diag[jnp.newaxis, jnp.newaxis, ...].transpose(0, -1, -2)
+
+      alibi = jnp.broadcast_to(slopes * position_point, (n_head, 1, max_pos))
+      alibi_mask = jnp.triu(
+          self._fill_with_neg_inf(jnp.zeros([max_pos, max_pos])), 1
+      )
+      alibi_mask = jnp.expand_dims(alibi_mask, axis=(0, )) + alibi
+      return alibi_mask
+
+  def __call__(self, seq_len):
+    alibi_mask = self._gen_alibi_mask(self.num_heads, seq_len)
+    return alibi_mask
+
+
 class RotaryPositionalEmbedding(PositionalEmbedding):
   """Applies rotary position embedding for a given 1-d sequence.
 

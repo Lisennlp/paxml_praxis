@@ -1280,7 +1280,8 @@ class Transformer(base_layer.BaseLayer):
       cross_inputs: Optional[JTensor] = None,
       cross_attention_mask: Optional[JTensor] = None,
       segment_pos: Optional[JTensor] = None,
-      segment_ids: Optional[JTensor] = None) -> Tuple[JTensor, JTensor]:
+      segment_ids: Optional[JTensor] = None,
+      alibi_mask: Optional[JTensor] = None) -> Tuple[JTensor, JTensor]:
     """Transformer decoder layer.
 
     Args:
@@ -1330,7 +1331,8 @@ class Transformer(base_layer.BaseLayer):
         inputs_normalized,
         atten_mask=attention_mask,
         query_segment_pos=segment_pos,
-        key_segment_pos=segment_pos)
+        key_segment_pos=segment_pos,
+        alibi_mask=alibi_mask)
     self.add_summary('[lsp]atten_output', atten_output[1], verbosity=self.user_summary_level)
     
     atten_probs = NestedMap(self_atten=self_atten_probs)
@@ -1696,7 +1698,8 @@ class StackedTransformer(base_layer.BaseLayer):
                cross_inputs: Optional[JTensor] = None,
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
-               segment_pos: Optional[JTensor] = None) -> JTensor:
+               segment_pos: Optional[JTensor] = None,
+               alibi_mask:  Optional[JTensor] = None) -> JTensor:
     """Stacked Transformer layer.
 
     Args:
@@ -1746,6 +1749,7 @@ class StackedTransformer(base_layer.BaseLayer):
         cross_inputs,
         cross_attention_mask,
         segment_pos,
+        alibi_mask=None,
     ):
       x_out, _ = transformer(
           x_in,
@@ -1754,6 +1758,7 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_inputs,
           cross_attention_mask,
           segment_pos=segment_pos,
+          alibi_mask=alibi_mask
       )
       return x_out
 
@@ -1774,6 +1779,7 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_inputs,
           cross_attention_mask,
           segment_pos,
+          alibi_mask=alibi_mask
       )
       x_out = checkpoint_name(x_out, 'transformer_layer_out')
     return x_out
@@ -1959,7 +1965,8 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
                cross_inputs: Optional[JTensor] = None,
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
-               segment_pos: Optional[JTensor] = None) -> JTensor:
+               segment_pos: Optional[JTensor] = None,
+               alibi_mask: Optional[JTensor] = None) -> JTensor:
     """Stacked Transformer layer.
 
     Args:
@@ -1980,7 +1987,7 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
 
     # TODO(zhangqiaorjc): Use positional args until nn.scan supports kwargs.
     out = self.repeat_layer(inputs, paddings, segment_mask, cross_inputs,
-                            cross_paddings, cross_segment_mask, segment_pos)
+                            cross_paddings, cross_segment_mask, segment_pos, alibi_mask=alibi_mask)
 
     return out
 

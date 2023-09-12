@@ -281,6 +281,10 @@ class TransformerLm(base_layer.BaseLayer):
   record_activations_in_xent_output: bool = False
   embed_dropout_tpl: LayerTpl = template_field(stochastics.Dropout)
   embed_dropout_prob: float = 0.0
+  use_alibi_position_emb: bool = False
+  alibi_position_emb_tpl: Optional[LayerTpl] = template_field(
+      embedding_softmax.AlibiPositionalEmbedding
+  )
 
   @classmethod
   def set_sharding_params_v1(
@@ -489,6 +493,14 @@ class TransformerLm(base_layer.BaseLayer):
       )
     return lm_p
 
+  def _create_alibi_position_emb(
+      self, layer_tpl: LayerTpl, num_heads: int
+  ) -> None:
+    pos_emb_p = layer_tpl.clone()
+    pos_emb_p.num_heads = num_heads
+    pos_emb_p.dtype = self.fprop_dtype
+    self.create_child('alibi_position_emb', pos_emb_p)
+
   def setup(self) -> None:
     """Constructor."""
     # lsp: 设置model属性
@@ -557,6 +569,9 @@ class TransformerLm(base_layer.BaseLayer):
     embed_dropout_tpl = self.embed_dropout_tpl.clone()
     embed_dropout_tpl.keep_prob = 1.0 - self.embed_dropout_prob
     self.create_child('embed_dropout', embed_dropout_tpl)
+
+    if self.use_alibi_position_emb:
+      self._create_alibi_position_emb(self.alibi_position_emb_tpl, xformer_params.num_heads)
 
   def init_states(self, *args: Any, **kwargs: Any) -> None:
     """Initialize the cache for the autoregressive decoding.
@@ -691,6 +706,7 @@ class TransformerLm(base_layer.BaseLayer):
       )
 
     if self.position_emb_tpl is not None:
+      __import__('ipdb').set_trace()
       position_emb = self.position_emb(
           seq_length=seq_length, position=segment_pos
       )
@@ -793,10 +809,17 @@ class TransformerLm(base_layer.BaseLayer):
         )
 
     self.update_decode_state('time_step', start_time_step)  # pytype: disable=wrong-arg-types  # jax-ndarray
+
+    if self.use_alibi_position_emb:
+      alibi_mask = self.alibi_position_emb(seq_length)
+      self.add_summary('[lsp]alibi_mask', alibi_mask, verbosity=3)
+    else:
+      alibi_mask = None
+
     # lsp: self.transformer == self.stacked_transformer_tpl, #lsp forward2
     # lsp check: True
     output = self.transformer(
-        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos
+        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, alibi_mask=alibi_mask
     )
     self.add_summary('[lsp]last_output', output[1], verbosity=self.user_summary_level)
     # Final layer norm : lsp

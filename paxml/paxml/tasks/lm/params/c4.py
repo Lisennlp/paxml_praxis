@@ -74,7 +74,7 @@ def convert_datatype(ex):
   return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
 
 seqio.TaskRegistry.add(f'tf_ids.train', 
-    seqio.TFExampleDataSource(split_to_filepattern={'train': TRAIN_DATAPATH}, feature_description=feature_desc),
+    seqio.TFExampleDataSource(split_to_filepattern={'train': [TRAIN_DATAPATH, ]}, feature_description=feature_desc),
     preprocessors=[
         convert_datatype,
         functools.partial(t5_preprocessors.rekey, 
@@ -88,7 +88,7 @@ seqio.TaskRegistry.add(f'tf_ids.train',
 )
 
 seqio.TaskRegistry.add(f'tf_ids.test', 
-    seqio.TFExampleDataSource(split_to_filepattern={'test': TEST_DATAPATH}, feature_description=feature_desc),
+    seqio.TFExampleDataSource(split_to_filepattern={'test': [TEST_DATAPATH, ]}, feature_description=feature_desc),
     preprocessors=[
         convert_datatype,
         functools.partial(t5_preprocessors.rekey, 
@@ -167,7 +167,6 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       mixture_name = 'tf_ids.train' if is_training else 'tf_ids.test'
       name = 'sft_train' if is_training else 'sft_test'
       split_name='train' if is_training else 'test'
-      # task_feature_lengths = {'targets': self.MAX_SEQ_LEN, 'masks': self.MAX_SEQ_LEN}
       task_feature_lengths = {'targets': self.MAX_SEQ_LEN, 'masks': self.MAX_SEQ_LEN}
 
     else:
@@ -722,7 +721,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     task_p = super().task()
     # lsp: 位置向量在这里设置为None了
-    if True or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
+    if self.USE_ALIBI_POSITION_EMB or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
     return task_p
 
 @experiment_registry.register
@@ -770,6 +769,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   EMBED_DROPOUT_PROB = 0.1
   ATTEN_DROPOUT_PROB = 0.05
+  TRAINABLE_POSITION_EMB = False
 
   EVAL_LOOP_NUM_BATCHES = 50 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 250 # 每隔多少step评测一次
@@ -778,6 +778,9 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
   TRAINING_SEED = 1234
+  USE_ROTARY_POSITION_EMB = False
+  USE_ALIBI_POSITION_EMB = True
+
 
   LOAD_TF_ID = True
   LOAD_MESH = False

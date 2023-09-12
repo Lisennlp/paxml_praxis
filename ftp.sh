@@ -2,9 +2,9 @@
 
 REMOTE_PROJECTS_DIR=/home/lishengping/projects
 # 获取命令行参数
-file_name=$1
+file_name=$3
 direction=$2
-tpu_suffix=$3
+tpu_suffix=$1
 
 echo "file_name: $file_name"
 echo "direction: $direction"

@@ -1571,13 +1571,13 @@ class LanguageModelFeatures(seqio.DecoderFeatureConverter,
 
   def __init__(
       self,
-      pack: bool = False,
-      use_custom_packing_ops: bool = False,
+      pack: bool = False, # train -> true , valid: false
+      use_custom_packing_ops: bool = False, # false
       weights_on_targets_only: Optional[bool] = None,
       apply_length_check: bool = True,
       bos_id: int = 0,
-      reverse_bos_padding: bool = False,
-      eos_id: int = 1,
+      reverse_bos_padding: bool = False, # true
+      eos_id: int = 1,  # GPT_EOS_ID: 1
       target_has_suffix: bool = False
   ) -> None:
     """Args to construct a language model feature converter.
@@ -1660,13 +1660,13 @@ class LanguageModelFeatures(seqio.DecoderFeatureConverter,
     ret = py_utils.NestedMap()
     ret.ids = b.decoder_input_tokens
     ret.labels = b.decoder_target_tokens
-    non_padding = (b.decoder_loss_weights > 0)
+    non_padding = (b.decoder_loss_weights > 0) # 不用pad的位置
     if hasattr(b, 'decoder_causal_attention'):
       non_padding = tf.math.logical_or(b.decoder_causal_attention > 0,
                                        non_padding)
       ret.inputs_indicator = b.decoder_causal_attention
-    ret.weights = tf.cast(non_padding, dtype=tf.float32)
-    ret.paddings = 1.0 - ret.weights
+    ret.weights = tf.cast(non_padding, dtype=tf.float32) # 需要计算loss的位置为1
+    ret.paddings = 1.0 - ret.weights # # 不需要计算loss的位置为0
     if hasattr(b, 'decoder_segment_ids'):  # typical case for packed examples.
       ret.segment_ids = b.decoder_segment_ids
       ret.segment_pos = b.decoder_positions
@@ -1701,12 +1701,54 @@ class LanguageModelFeatures(seqio.DecoderFeatureConverter,
       ret.paddings = self._shift_left_and_pad(ret.paddings, 1.0)
 
     return ret
-
+  # lsp
   def __call__(self, ds: tf.data.Dataset,
                task_feature_lengths: Mapping[str, int]) -> tf.data.Dataset:
     ds = super().__call__(ds, task_feature_lengths)
     ds = ds.map(self._to_pax)
     return ds
+
+
+class MyLanguageModelFeatures(LanguageModelFeatures):
+  MAX_SEQ_LEN=2048
+
+  def _to_pax(self, b) -> NestedMap:
+    b = py_utils.NestedMap.FromNestedDict(b)
+    ret = py_utils.NestedMap()
+    ret.ids = b.targets
+    ret.labels = b.targets
+    b.decoder_loss_weights = (b.masks > 0) # labels > 0
+    # non_padding = (b.decoder_loss_weights > 0) #decoder_loss_weights: 是根据targets制作的，targets中为0的地方进行pad
+    ret.weights = tf.cast(b.decoder_loss_weights, dtype=tf.float32) # 需要计算loss的位置为1
+    # ret.paddings = 1.0 - ret.weights # # 不需要计算loss的位置为0 这样做的padding只适用训练预训练模型，不适合指令微调，因为指令微调在human部分不计算loss
+    # 但是model在forward中的Attention mask会根据这个paddings去制作，因此指令微调需要改变一下。
+    ret.paddings = tf.zeros_like(ret.ids) # 全0
+    ret.segment_ids = tf.ones_like(ret.ids) # 全1
+    pos = tf.range(self.MAX_SEQ_LEN)
+    ret.segment_pos = ret.segment_ids * pos
+    if self._reverse_bos_padding:
+      ret.ids = ret.labels
+      ret.labels = self._shift_left_and_pad(ret.labels, self._eos_id)
+      ret.weights = self._shift_left_and_pad(ret.weights, 0.0)
+      ret.paddings = self._shift_left_and_pad(ret.paddings, 1)
+    return ret
+
+  def truncate_or_pad_to_length(self, k, t, length=2048):
+    t = t[:length]
+    pad_amt = length - tf.shape(t)[0]
+    padded_t = tf.pad(t, [(0, pad_amt)] + [(0, 0)] * (len(t.shape) - 1))
+    padded_t.set_shape([length] + t.shape.as_list()[1:])
+    return padded_t
+
+  # lsp
+  def __call__(self, ds: tf.data.Dataset,
+               task_feature_lengths: Mapping[str, int]) -> tf.data.Dataset:
+    ds = ds.map(lambda x: {k: self.truncate_or_pad_to_length(k, t, task_feature_lengths[k]) for k, t in x.items()}, 
+                num_parallel_calls=tf.data.experimental.AUTOTUNE,
+    )
+    ds = ds.map(self._to_pax)
+    return ds
+  
 
 
 class PackedLanguageModelFeatures(LanguageModelFeatures):

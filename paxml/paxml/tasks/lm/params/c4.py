@@ -56,163 +56,49 @@ NestedMap = py_utils.NestedMap
 
 WeightInit = base_layer.WeightInit
 
-GPT_SPM_PATH = (
-    # 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
-    # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
-    'gs://llm_base_models/baichuan-7b-hf/tokenizer.model'
-)
+# GPT_SPM_PATH = (
+#     'gs://llm_base_models/baichuan-7b-hf/tokenizer.model'
+# )
 
 GPT_EOS_ID = 1
-GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH) # lsp：相当于hf的tokenizer
-# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257) # ?
-# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=64000) #lsp: 啥也不干, 为什么用这个？
-PASS_THROUGH_VOCABULARY = GPT_VOCABULARY # lsp
 
-# lsp: Feature: 对象。存储属性
-C4_GPT_TRAIN_FEATURES_LM = {
-    'targets': t5.data.Feature(vocabulary=GPT_VOCABULARY, add_eos=False)
-}
-C4_GPT_EVAL_FEATURES_LM = {
-    'targets': t5.data.Feature(
-        vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
-    )
-}
-C4_TRAIN_DATADIR = 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
-C4_EVAL_DATADIR = 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
+TRAIN_DATAPATH = 'gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords'
+TEST_DATAPATH = 'gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords'
 
-# XD
-# import tensorflow as tf
-# RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
-# feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
-# RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
+feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64), "labels": tf.io.VarLenFeature(tf.int64)}
+PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=64000)
+RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32), 
+                     'masks': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32), }
+@seqio.map_over_dataset
+def convert_datatype(ex):
+  return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
 
-# @seqio.map_over_dataset
-# def convert_datatype(ex):
-#   return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
-
-# seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
-#     seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
-#     preprocessors=[
-#         convert_datatype,
-#         functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
-#     ],
-#     output_features=RT_GPT_FEATURES_LM,
-# )
-
-# TaskRegistry: t5/data/dataset_providers.py
-class TaskRegistry(t5.data.TaskRegistry):
-  """Task registry with extra tracking."""
-
-  TASK_NAMES = []
-
-  @classmethod
-  def add_versioned_tfds_task(cls,
-                              name: str,
-                              *,
-                              versions: List[str],
-                              pinned_version: Optional[str] = None,
-                              tfds_name: str,
-                              tfds_data_dir: Optional[str] = None,
-                              **kwargs) -> List[seqio.Task]:
-    tasks = []
-    for version in versions:
-      tasks.append(
-          cls.add(
-              f'{name}_{version}',
-              seqio.Task,
-              source=seqio.TfdsDataSource(
-                  tfds_name=f'{tfds_name}:{version}',
-                  tfds_data_dir=tfds_data_dir,
-              ),
-              **kwargs,
-          ))
-    if pinned_version is not None:
-      tasks.append(
-          cls.add(
-              name,
-              seqio.Task, # task_cls # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py
-              # 
-              source=seqio.TfdsDataSource(
-                  tfds_name=f'{tfds_name}:{pinned_version}',
-                  tfds_data_dir=tfds_data_dir,
-              ),
-              **kwargs,
-          ))
-    return tasks
-# source, **kwargs  传入-> seqio.Task
-# cls.add() : add_provider:将name映射为provider 而provider：seqio.Task(name, **kwargs1)
-# kwargs1 = seqio.Task, source, preprocessors, output_features, metric_fns=[]...
-# 所以最终返回的是Tasks对象，最后数据集通过seqio.get_mixture_or_task()：https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py#L2248C5-L2248C24
-# 获取刚刚实例化的Task对象,该对象再通过.get_dataset(**kwargs2)获取 # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py#L1486
-# kwargs2 = dict(
-#     sequence_length=task_feature_lengths,
-#     split='train',
-#     shuffle=True,
-#     num_epochs=2,
-#     shard_info=shard_info,
-#     use_cached=False,
-#     seed=1234,
-#     trim_output_features=True, # default: True
-#     try_in_mem_cache=True, # default: True
-# )
-# def add(cls, name: str, task_cls=FunctionTask, **kwargs) -> seqio.Task:
-#     provider = task_cls(name, **kwargs)
-#     super().add_provider(name, provider)
-
-
-
-# lsp: 数据的原始输入格式：{'content-length': .., 'content-type': .., 'text': .., 'timestamp': ..., 'url'...}
-# 只用到了key：text
-# C4 corpus for language model pretraining
-TaskRegistry.add_versioned_tfds_task(
-    'c4_lm_v301_gpt',
-    versions=['3.0.1'],  # XD: 3.0.4 -> 3.0.1
-    pinned_version='3.0.1',  # XD: 3.0.4 -> 3.0.1
-    tfds_name='c4/en',
-    tfds_data_dir=C4_TRAIN_DATADIR,
+seqio.TaskRegistry.add(f'tf_ids.train', 
+    seqio.TFExampleDataSource(split_to_filepattern={'train': TRAIN_DATAPATH}, feature_description=feature_desc),
     preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                'inputs': None,
-                'targets': 'text', # lsp：增加inputs和targets key. target = 数据中的text， input=None
-            },
-        ),
-        seqio.preprocessors.tokenize, # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/preprocessors.py#L57
-        functools.partial(
-            t5_preprocessors.reduce_concat_tokens,
-            batch_size=4096,  # 4096个句子拼一起
-        ),
-        t5_preprocessors.split_tokens_to_targets_length, # 每份2048
+        convert_datatype,
+        functools.partial(t5_preprocessors.rekey, 
+                          key_map={'targets': 'input_ids',
+                                  'masks': 'labels',}),
+        # functools.partial(t5_preprocessors.reduce_concat_tokens,
+        #                   batch_size=1),
+        # t5_preprocessors.split_tokens_to_targets_length,
     ],
-    output_features=C4_GPT_TRAIN_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=10000,
+    output_features=RT_GPT_FEATURES_LM,
 )
 
-TaskRegistry.add_versioned_tfds_task(
-    'c4_lm_v301_gpt_eval_tokenized',
-    versions=['3.0.1'],  # XD: 3.0.5 -> 3.0.1
-    pinned_version='3.0.1',  # XD: 3.0.5 -> 3.0.1
-    tfds_name='c4/en',
-    tfds_data_dir=C4_EVAL_DATADIR,
+seqio.TaskRegistry.add(f'tf_ids.test', 
+    seqio.TFExampleDataSource(split_to_filepattern={'test': TEST_DATAPATH}, feature_description=feature_desc),
     preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                'inputs': None,
-                'targets': 'text', # ids -> text
-            },
-        ),
-        seqio.preprocessors.tokenize,
-        functools.partial(
-            t5_preprocessors.reduce_concat_tokens,
-            batch_size=4096,  # 1个句子，不进行拼接
-        ),
+        convert_datatype,
+        functools.partial(t5_preprocessors.rekey, 
+                          key_map={'targets': 'input_ids',
+                                  'masks': 'labels'}),
+        # functools.partial(t5_preprocessors.reduce_concat_tokens,
+        #                   batch_size=1),
+        # t5_preprocessors.split_tokens_to_targets_length,
     ],
-    output_features=C4_GPT_EVAL_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=None,
+    output_features=RT_GPT_FEATURES_LM,
 )
 
 
@@ -273,25 +159,37 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       # TODO(sgpyc): enable sync of seeds across hosts, currently the
       # following failed because of "sync_global_devices name mismatch"
       # seed = jnp.int32(multihost_utils.broadcast_one_to_all(seed))
-      logging.info('Train input seed: %s',
-                   'None' if seed is None else seed)
+      logging.info('Train input seed: %s', 'None' if seed is None else seed)
+
+    if self.LOAD_TF_ID:
+      DataFeature = seqio_input.MyLanguageModelFeatures
+      DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
+      mixture_name = 'tf_ids.train' if is_training else 'tf_ids.test'
+      name = 'sft_train' if is_training else 'sft_test'
+      split_name='train' if is_training else 'test'
+      # task_feature_lengths = {'targets': self.MAX_SEQ_LEN, 'masks': self.MAX_SEQ_LEN}
+      task_feature_lengths = {'targets': self.MAX_SEQ_LEN, 'masks': self.MAX_SEQ_LEN}
+
+    else:
+      DataFeature = seqio_input.LanguageModelFeatures
+      mixture_name = 'c4_lm_v301_gpt' if is_training else 'c4_lm_v301_gpt_eval_tokenized'
+      name = 'C4Train' if is_training else 'C4Validation'
+      split_name = 'train' if is_training else 'validation'
+      task_feature_lengths = {'targets': self.MAX_SEQ_LEN}
+
     p = pax_fiddle.Config(
         seqio_input.SeqIOInput,
-        name='C4Train' if is_training else 'C4Validation',
-        mixture_name='c4_lm_v301_gpt'
-        if is_training
-        else 'c4_lm_v301_gpt_eval_tokenized',
-        # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
-        split_name='train' if is_training else 'validation',  # XD for 3.0.1
-        # mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
-        task_feature_lengths={'targets': self.MAX_SEQ_LEN},
+        name=name,
+        mixture_name=mixture_name,
+        split_name=split_name,
+        task_feature_lengths=task_feature_lengths,
         use_cached=False,
         repeat=True if is_training else False,
-        feature_converter=seqio_input.LanguageModelFeatures(
+        feature_converter=DataFeature(
             pack=True if is_training else False,
             use_custom_packing_ops=False,
             bos_id=0,
-            reverse_bos_padding=True,
+            reverse_bos_padding=True, 
             eos_id=GPT_EOS_ID,
         ),
         is_training=is_training,
@@ -829,7 +727,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  NUM_LAYERS = 32
+  NUM_LAYERS = 2
   MODEL_DIMS = 4096
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
@@ -845,8 +743,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 16, 4]
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 8, 1]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
@@ -879,32 +777,38 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-  # lsp
-  def _dataset_common(
-      self, is_training,
-      num_batches_to_skip=0
-  ) -> pax_fiddle.Config[base_input.BaseInput]:
-    path = self.TRAIN_FILE if is_training  else self.VALID_FILE
-    if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
-      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}')
-      num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
-    else:
-      logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
-    
-    repeat = 3 if is_training else 3 * 30
-    p = pax_fiddle.Config(
-        MyDatasets,
-        name='baichuan-train-data' if is_training else 'baichuan-eval-data',
-        path=path,
-        is_training=is_training,
-        num_batches_to_skip=num_batches_to_skip,
-        batch_size=int(self.PERCORE_BATCH_SIZE * 8),
-        seq_len=self.MAX_SEQ_LEN,
-        reset_for_eval=False, 
-        repeat=repeat,
-        eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES
-    )
-    return p
+  TRAINING_SEED = 1234
+
+  LOAD_TF_ID = True
+  LOAD_MESH = False
+  if not LOAD_TF_ID and LOAD_MESH:
+    # lsp
+    def _dataset_common(
+        self, is_training,
+        num_batches_to_skip=0
+    ) -> pax_fiddle.Config[base_input.BaseInput]:
+      path = self.TRAIN_FILE if is_training  else self.VALID_FILE
+      if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
+        logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}')
+        num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
+      else:
+        logging.info(f'TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}')
+      
+      repeat = 3 if is_training else 3 * 30
+      p = pax_fiddle.Config(
+          MyDatasets,
+          name='baichuan-train-data' if is_training else 'baichuan-eval-data',
+          path=path,
+          is_training=is_training,
+          num_batches_to_skip=num_batches_to_skip,
+          batch_size=int(self.PERCORE_BATCH_SIZE * 8),
+          seq_len=self.MAX_SEQ_LEN,
+          reset_for_eval=False, 
+          repeat=repeat,
+          eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
+          train_seed=self.TRAINING_SEED
+      )
+      return p
 
 
 @experiment_registry.register
@@ -1387,6 +1291,7 @@ class MyDatasets(base_input.BaseInput):
   batch_size: int = 8
   seq_len: int = 2048
   repeat: int = 1
+  train_seed = 1234
 
   def __post_init__(self):
     # valid_path = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -1450,7 +1355,7 @@ class MyDatasets(base_input.BaseInput):
 
   def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
     # tf.random.set_seed(42)
-    tf.random.set_seed(1234)
+    tf.random.set_seed(self.train_seed)
     fnames = [index_fname] if index_fname.endswith('.tfrecords') else open(index_fname).read().splitlines()
     ds = tf.data.Dataset.from_tensor_slices(fnames)
     ds = ds.apply(tf.data.TFRecordDataset)

@@ -884,7 +884,6 @@ def train_step_single_learner(
 
       # Fetch all the summary tensors.
       summary_tensors = updated_vars.get(SUMMARIES, {})
-      logging.info(f'summary_tensors: {summary_tensors}')
       # TODO(yonghui): Fetch aux losses and add them to summaries.
       summary_tensors = summary_utils.flatten_flax_summaries(summary_tensors)
 

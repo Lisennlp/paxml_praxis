@@ -193,6 +193,7 @@ TaskRegistry.add_versioned_tfds_task(
             t5_preprocessors.reduce_concat_tokens,
             batch_size=4096,  # 1个句子，不进行拼接
         ),
+        t5_preprocessors.split_tokens_to_targets_length, # 每份2048
     ],
     output_features=C4_GPT_EVAL_FEATURES_LM,
     metric_fns=[],

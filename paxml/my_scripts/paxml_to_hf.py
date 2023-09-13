@@ -6,10 +6,13 @@ import json
 import argparse
 import subprocess
 
+os.environ["JAX_PLATFORMS"] = "cpu"
+
 import jax
 import numpy as np
 import jax.numpy as jnp
 import orbax
+import orbax.checkpoint
 from optax import MaskedNode
 from etils import epath
 
@@ -30,8 +33,6 @@ from paxml import trainer_lib
 from flax.traverse_util import flatten_dict, unflatten_dict
 
 
-os.environ["JAX_PLATFORMS"] = "cpu"
-
 TrainState = train_states.TrainState
 CheckpointType = checkpoints.CheckpointType
 Checkpointer = checkpoints.Checkpointer
@@ -42,21 +43,26 @@ SAVE_INTERVAL_STEPS = 1
 
 
 LLAMA_STANDARD_CONFIGS = {
+    '1b': {
+        'dim': 4096,
+        'intermediate_size': 11008,
+        'n_layers': 2,
+        'n_heads': 32,
+        'norm_eps': 1e-6,
+    },
     '7b': {
         'dim': 4096,
         'intermediate_size': 11008,
         'n_layers': 32,
         'n_heads': 32,
         'norm_eps': 1e-6,
-        'vocab_size': 64000,
     },
     '13b': {
         'dim': 5120,
-        'intermediate_size': 13696, # baichuan
+        'intermediate_size': 13696,
         'n_layers': 40,
         'n_heads': 40,
         'norm_eps': 1e-6,
-        'vocab_size': 64000, # baichuan
     },
     '30b': {
         'dim': 6656,
@@ -80,6 +86,7 @@ parser.add_argument('--save_dir', type=str,  help='Save model weight file path, 
 parser.add_argument('--model_size', type=str, default='7b', choices=['7b', '13b', '30b', '65b'], help='model size')
 parser.add_argument('--step', type=int, default=None, help='Load checkpoint step')
 parser.add_argument('--check', action='store_true', default=False, help='whether to check model is saved successful')
+parser.add_argument('--version', type=str, default='v1', choices=['v1', 'v2'], help='Model version')
 
 args = parser.parse_args()
 
@@ -87,19 +94,25 @@ model_size = args.model_size
 read_dir = args.read_dir
 save_dir = args.save_dir
 step = args.step
+version = args.version
 
-assert 'gs:' not in save_dir, print(f'Please provide a local dir, not bucket dir.')
 os.makedirs(save_dir, exist_ok=True)
 
-params = LLAMA_STANDARD_CONFIGS[model_size.lower()]
-n_layers = params['n_layers']
-dim = params['dim']
-vocab_size = params['vocab_size']
+params = LLAMA_STANDARD_CONFIGS[model_size]
+n_layers = params["n_layers"]
+n_heads = params["n_heads"]
+dim = params["dim"]
+
+if version == 'v1':
+    vocab_size = 64000
+elif version == 'v2':
+    vocab_size = 125696
+else:
+    raise
+
 intermediate_size = params['intermediate_size']
 x_times = 32
-n_heads = params['n_heads']
 head_dim = dim // n_heads
-
 
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,

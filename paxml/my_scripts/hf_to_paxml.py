@@ -1,45 +1,39 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-# In[2]:
-
-
-import torch
-import numpy as np
-import flax
-import jax
-import orbax
-import orbax.checkpoint
 import sys
 import time
 import os
 import gc
 import json
-
-import os
-import time
-from pathlib import Path
 import argparse
+from pathlib import Path
 
+os.environ["JAX_PLATFORMS"] = "cpu"
+
+try:
+    import torch
+except:
+    command = 'pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpu'
+    subprocess.run(command, stdout=subprocess.PIPE, shell=True)
+    import torch
 
 import jax
+import flax
 import numpy as np
 import jax.numpy as jnp
 import orbax
+import orbax.checkpoint
 from optax import MaskedNode
 from etils import epath
-import torch
-
 from praxis import base_hyperparams
 from praxis import pax_fiddle
 from praxis import py_utils
-from paxml import checkpoints  # mapped to internal
+from paxml import checkpoints
 from paxml import checkpoint_managers
 from paxml import train_states
 from paxml import trainer_lib
 from flax.traverse_util import flatten_dict, unflatten_dict
 
-os.environ["JAX_PLATFORMS"] = "cpu"
 
 TrainState = train_states.TrainState
 CheckpointType = checkpoints.CheckpointType

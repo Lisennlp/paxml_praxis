@@ -72,6 +72,7 @@ class Linear(base_layer.BaseLayer):
   output_dims: int = 0
   weight_init: Optional[WeightInit] = None
   einsum_tpl: LayerTpl = template_field(base_ops.EinsumOp)
+  norm: bool = False
 
   def setup(self) -> None:
     wp = self.weight_split_dims_mapping
@@ -96,8 +97,14 @@ class Linear(base_layer.BaseLayer):
       Projected inputs.
     """
     ap = self.activation_split_dims_mapping
+    if self.norm:
+      # __import__(f'ipdb').set_trace()
+      wnorm = jnp.linalg.norm(self.theta.w, ord=2.0, axis=1, keepdims=True)
+      w = self.theta.w / wnorm.clip(1e-12)
+    else:
+      w = self.theta.w
     # input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
-    out = self.einsum('...y,yz->...z', inputs, self.theta.w)
+    out = self.einsum('...y,yz->...z', inputs, w)
 
     # Adjust sharding annotation during decoding.
     # TODO(pax): This logic should likely be lifted somewhere else.

@@ -588,16 +588,21 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     model_p.lm_tpl.vocab_size = self.VOCAB_SIZE
 
     if self.SEPARATE_EMBEDDING:
-      # lsp embed
+      # lsp embed 这是词向量层
       model_p.lm_tpl.separate_embedding_tpl = pax_fiddle.Config(
           layers.Embedding
       )
+      # lsp: 这是后面的lm_head层
       model_p.lm_tpl.softmax_tpl = pax_fiddle.Config(layers.FullSoftmax)
 
     softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(self.MODEL_DIMS))
     # pytype: disable=attribute-error  # enable-nested-classes
     # lsp: 最后的lm_head
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init
+
+    # lsp: lm_head norm
+    model_p.lm_tpl.softmax_tpl.feed_forward_tpl.linear_tpl.norm = self.LM_HEAD_NORM
+
     if self.SEPARATE_EMBEDDING:
       # lsp: 词向量
       model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = True

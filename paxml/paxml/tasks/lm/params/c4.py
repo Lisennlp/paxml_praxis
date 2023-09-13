@@ -726,28 +726,29 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-  NUM_LAYERS = 2
+  NUM_LAYERS = 40
   MODEL_DIMS = 4096
-  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
-  NUM_HEADS = 32
+  # HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = 13696  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 40
   # DIMS_PER_HEAD = 128
   COMBINE_QKV = False # False 占用显存小于 True 1G+
   NUM_GROUPS = -1
   
   # ICI_MESH_SHAPE = [1, 4, 2]  # bs=1*8, 0.315 paxml 0.273 mesh
   # ICI_MESH_SHAPE = [1, 8, 1]  # bs=1*8, 0.311 paxml 0.272 mesh
-
   # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
   # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
   PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 8, 1]
+  ICI_MESH_SHAPE = [1, 16, 2]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
-  VOCAB_SIZE = 64000
+  # VOCAB_SIZE = 64000
+  VOCAB_SIZE = 125696
   CHECKPOINT_EVERY_N_STEPS = 500
 
   LAYERNORM_EPSILON = 1e-06
@@ -780,10 +781,11 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   TRAINING_SEED = 1234
   USE_ROTARY_POSITION_EMB = False
   USE_ALIBI_POSITION_EMB = True
-
+  LM_HEAD_NORM = True
 
   LOAD_TF_ID = True
   LOAD_MESH = False
+
   if not LOAD_TF_ID and LOAD_MESH:
     # lsp
     def _dataset_common(

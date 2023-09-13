@@ -50,6 +50,8 @@ checkpoint_type = CheckpointType.GDA
 SAVE_INTERVAL_STEPS = 1
 
 
+# Usage:
+# python hf_to_paxml.py --read_dir /path/to/hf_model_dir/  --save_dir /path/to/paxml_model_dir/ --step 0 --version v1
 
 LLAMA_STANDARD_CONFIGS = {
     '1b': {
@@ -68,7 +70,7 @@ LLAMA_STANDARD_CONFIGS = {
     },
     '13b': {
         'dim': 5120,
-        'intermediate_size': 13824,
+        'intermediate_size': 13696,
         'n_layers': 40,
         'n_heads': 40,
         'norm_eps': 1e-6,
@@ -88,12 +90,41 @@ LLAMA_STANDARD_CONFIGS = {
         'norm_eps': 1e-5,
     },
 }
-params = LLAMA_STANDARD_CONFIGS['7b']
+
+parser = argparse.ArgumentParser(description='Mesh-orbax to paxml-orbax format script')
+parser.add_argument('--read_dir', type=str, help='Need to be converted model weight dir. it is a dir, stong recomand use local dir instead of cloud bucket.')
+parser.add_argument('--save_dir', type=str,  help='Save model weight file path, it is a local dir not bucket dir.')
+parser.add_argument('--model_size', type=str, default='7b', choices=['7b', '13b', '30b', '65b'], help='model size')
+parser.add_argument('--step', type=int, default=None, help='Load checkpoint step')
+parser.add_argument('--check', action='store_true', default=False, help='whether to check model is saved successful')
+parser.add_argument('--version', type=str, default='v1', choices=['v1', 'v2'], help='Model version')
+
+args = parser.parse_args()
+
+model_size = args.model_size
+read_dir = args.read_dir
+save_dir = args.save_dir
+step = args.step
+version = args.version
+
+params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
 n_heads = params["n_heads"]
 dim = params["dim"]
 
-read_dir = '/home/lishengping/baichuan-1b-hf'
+if version == 'v1':
+    vocab_size = 64000
+elif version == 'v2':
+    vocab_size = 125696
+else:
+    raise
+
+intermediate_size = params['intermediate_size']
+x_times = 32
+head_dim = dim // n_heads
+
+assert 'gs:' not in read_dir, print(f'Pytorch dir must be local path......')
+
 ckpt_paths = sorted(Path(read_dir).glob("*.bin"))
 ckpt = {}
 for i, ckpt_path in enumerate(ckpt_paths):
@@ -102,9 +133,8 @@ for i, ckpt_path in enumerate(ckpt_paths):
         if k.startswith('model.'):
             k = k[6:]
         ckpt[k] = v
-assert len(ckpt) > 0
+assert len(ckpt) > 0,  print(f'ckpt is empty, please model path whether right or error.....')
 
-save_dir = 'gs://llm_base_models/baichuan_l2_debug/checkpoints'
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,
       save_interval_steps=SAVE_INTERVAL_STEPS,
@@ -126,16 +156,6 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       tensorstore_use_ocdbt=False,
   )
 
-
-model_size = '1b'
-vocab_size = 64000
-intermediate_size = params['intermediate_size']
-x_times = 32
-n_heads = params['n_heads']
-head_dim = dim // n_heads
-n_layers = 2
-step = 0
-
 paxml_to_hf_key_and_shape = {
  'params.lm.embedding_lookup.emb_var': {'shape': (vocab_size, dim), 'map_to_hf': 'embed_tokens'},
  'params.lm.transformer.repeat.sub.x_layers_0.ff_layer.ffn_layer1.linear.w': {'shape': (dim, intermediate_size), 'map_to_hf': 'up_proj'},
@@ -151,21 +171,7 @@ paxml_to_hf_key_and_shape = {
  'params.lm.softmax.logits_ffn.linear.w': {'shape': (dim, vocab_size), 'map_to_hf': 'lm_head'}
 }
 
-# hf_to_paxml_format = {v['map_to_hf']: k for k, v in paxml_to_hf_key_and_shape.items()}
-# padded_global_shapes = {}
-# for k, v in paxml_to_hf_key_and_shape.items():
-#     k = tuple(k.split('.'))
-#     if 'repeat' in k:
-#         padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=(x_times, ) + v['shape'], dtype=jnp.float16)
-#     else:
-#         padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v['shape'], dtype=jnp.float16)
-        
-# padded_global_shapes = TrainState(step=jnp.array(step), mdl_vars=unflatten_dict(padded_global_shapes), opt_states=None)
-# print(f'Padded_global_shapes bulid finished!!!')
-
 gold_w = ckpt
-
-
 split_qkv = {}
 for k, v in gold_w.items():
     if v.dtype == torch.float32:
@@ -189,7 +195,6 @@ for k, v in gold_w.items():
         
 for k, v in split_qkv.items():
     print(k, v.shape)
-
 
 trans_result = {}
 flag = 0

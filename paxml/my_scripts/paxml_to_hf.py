@@ -183,6 +183,13 @@ def permute(w):
     #     res = w.reshape(n_heads, dim // n_heads // 2, 2, dim).transpose(0, 2, 1, 3).reshape(dim, dim)
     # return res
 
+# ===================================== =====================================
+# transpose原因：pytorch的linear（input * w^T）和flax的linear（input * w）的实现不一致导致的
+# jax中的linear实现有多重写法，而pytorch基本固定写法。所以需要看jax的model中的linear实现方式，以此
+# 决定pytorch转jax model是否需要transpose
+# 此外，除了linear的实现不同之外，rotary的实现方式也会导致qk的不同。需要注意。
+# ===================================== =====================================
+
 flated_paxml_w = flatten_dict(restored_model['state'].mdl_vars)
 loaded = {'.'.join(k): v for k, v in flated_paxml_w.items()}
 index_dict = {"weight_map": {}}
@@ -196,7 +203,7 @@ for layer_i in range(n_layers):
     v = loaded[mesh_to_paxml_format['wv']][layer_i].reshape(dim, -1).transpose(1, 0)
     repeat_state_dict = {
         f"model.layers.{layer_i}.self_attn.W_pack.weight": np.concatenate([q, k, v], axis=0),
-        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[mesh_to_paxml_format['wo']][layer_i].reshape(dim, -1),
+        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[mesh_to_paxml_format['wo']][layer_i].reshape(dim, -1), # no transpose
 
         f"model.layers.{layer_i}.mlp.gate_proj.weight": loaded[mesh_to_paxml_format['w1']][layer_i].transpose(1, 0),
         f"model.layers.{layer_i}.mlp.down_proj.weight": loaded[mesh_to_paxml_format['w2']][layer_i].transpose(1, 0),
@@ -212,8 +219,8 @@ for layer_i in range(n_layers):
     save_model(repeat_state_dict, save_path, mode='torch')
     
 no_repeat_state_dict = {
-    "model.embed_tokens.weight": loaded[mesh_to_paxml_format['wte']],
-    "model.norm.weight": loaded[mesh_to_paxml_format['ln_f']],
+    "model.embed_tokens.weight": loaded[mesh_to_paxml_format['wte']], # no transpose
+    "model.norm.weight": loaded[mesh_to_paxml_format['ln_f']], # no transpose
     "lm_head.weight": loaded[mesh_to_paxml_format['lm_head']].transpose(1, 0),
 }
 filename = f"pytorch_model-{n_layers + 1}-of-{n_layers + 1}.bin"
@@ -224,7 +231,6 @@ for k, v in no_repeat_state_dict.items():
 save_model(no_repeat_state_dict, os.path.join(save_dir, filename), mode='torch')
 # save configs
 index_dict["metadata"] = {"total_size": param_count * 2}
-
 
 command = 'gsutil cp gs://llm_base_models/baichuan-%s-hf/*.{py,model,json} %s'%(model_size.lower(), save_dir)
 subprocess.run(command, stdout=subprocess.PIPE, shell=True)

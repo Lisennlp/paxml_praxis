@@ -1499,8 +1499,8 @@ class DotProductAttention(base_layer.BaseLayer):
     # Apply attention masking
     padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask) # attention mask
     logging.info(f'padded_logits: {padded_logits.shape}')
-    logging.info(f'alibi_mask: {alibi_mask.shape}')
     if alibi_mask is not None:
+      logging.info(f'alibi_mask: {alibi_mask.shape}')
       padded_logits += alibi_mask
 
     # lsp: alibi -> 在attn logits基础上加一个位置分数

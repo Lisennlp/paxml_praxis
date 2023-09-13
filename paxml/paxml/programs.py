@@ -763,7 +763,8 @@ class BaseEvalProgram(Program):
   def should_run(self, state: TrainState, step: int) -> bool:
     # TODO(laigd): implement and use this.
     raise NotImplementedError()
-
+    
+  # lsp: eval run
   def run(self, state: TrainState, step: int) -> EvalProgramOutput:
     if can_load_written_outputs(
         self._job_log_dir, self._name, EvaluationMode.EVAL, step

@@ -559,7 +559,7 @@ class TransformerLm(base_layer.BaseLayer):
       ln_params = self.final_ln_tpl.clone().set(dim=self.model_dims)
       self.create_child('final_ln', ln_params)
 
-    # Final softmax
+    # Final softmax, lm_head, FullSoftmax
     softmax_params = self.softmax_tpl.clone()
     softmax_params.input_dims = self.model_dims
     softmax_params.num_classes = self.vocab_size
@@ -569,7 +569,7 @@ class TransformerLm(base_layer.BaseLayer):
     embed_dropout_tpl = self.embed_dropout_tpl.clone()
     embed_dropout_tpl.keep_prob = 1.0 - self.embed_dropout_prob
     self.create_child('embed_dropout', embed_dropout_tpl)
-
+    # lsp
     if self.use_alibi_position_emb:
       self._create_alibi_position_emb(self.alibi_position_emb_tpl, xformer_params.num_heads)
 
@@ -812,7 +812,7 @@ class TransformerLm(base_layer.BaseLayer):
 
     if self.use_alibi_position_emb:
       alibi_mask = self.alibi_position_emb(seq_length)
-      self.add_summary('[lsp]alibi_mask', alibi_mask, verbosity=3)
+      self.add_summary('[lsp]alibi_mask', alibi_mask, verbosity=self.user_summary_level)
     else:
       alibi_mask = None
 

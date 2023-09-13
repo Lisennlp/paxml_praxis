@@ -727,7 +727,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   NUM_LAYERS = 40
-  MODEL_DIMS = 4096
+  MODEL_DIMS = 5120
   # HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   HIDDEN_DIMS = 13696  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 40

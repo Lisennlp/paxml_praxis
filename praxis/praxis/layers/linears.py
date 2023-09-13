@@ -99,7 +99,9 @@ class Linear(base_layer.BaseLayer):
     ap = self.activation_split_dims_mapping
     if self.norm:
       # __import__(f'ipdb').set_trace()
-      wnorm = jnp.linalg.norm(self.theta.w, ord=2.0, axis=1, keepdims=True)
+      # lsp: 在进行norm的时候要注意，torch的w：vocab_size * model_dim，而paxml中的w的shape是，model_dim * vocab_size
+      # 归一化的维度为model_dim维。
+      wnorm = jnp.linalg.norm(self.theta.w, ord=2.0, axis=0, keepdims=True)
       w = self.theta.w / wnorm.clip(1e-12)
     else:
       w = self.theta.w

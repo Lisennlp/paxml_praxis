@@ -53,20 +53,15 @@ from jax.experimental.multihost_utils import host_local_array_to_global_array, g
 
 
 NestedMap = py_utils.NestedMap
-
 WeightInit = base_layer.WeightInit
-
-# GPT_SPM_PATH = (
-#     'gs://llm_base_models/baichuan-7b-hf/tokenizer.model'
-# )
-
 GPT_EOS_ID = 1
 
+# ========================================================================================================
+vocab_size = 125696 # baichuan2
 TRAIN_DATAPATH = 'gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords'
 TEST_DATAPATH = 'gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords'
-
 feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64), "labels": tf.io.VarLenFeature(tf.int64)}
-PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=64000)
+PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=vocab_size)
 RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32), 
                      'masks': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32), }
 @seqio.map_over_dataset
@@ -80,9 +75,6 @@ seqio.TaskRegistry.add(f'tf_ids.train',
         functools.partial(t5_preprocessors.rekey, 
                           key_map={'targets': 'input_ids',
                                   'masks': 'labels',}),
-        # functools.partial(t5_preprocessors.reduce_concat_tokens,
-        #                   batch_size=1),
-        # t5_preprocessors.split_tokens_to_targets_length,
     ],
     output_features=RT_GPT_FEATURES_LM,
 )
@@ -94,12 +86,119 @@ seqio.TaskRegistry.add(f'tf_ids.test',
         functools.partial(t5_preprocessors.rekey, 
                           key_map={'targets': 'input_ids',
                                   'masks': 'labels'}),
-        # functools.partial(t5_preprocessors.reduce_concat_tokens,
-        #                   batch_size=1),
-        # t5_preprocessors.split_tokens_to_targets_length,
     ],
     output_features=RT_GPT_FEATURES_LM,
 )
+
+# ========================================================================================================
+
+# ========================================================================================================
+# C4 datasets
+C4_TRAIN_DATADIR = 'gs://common_datasets'
+C4_EVAL_DATADIR = 'gs://common_datasets'
+GPT_SPM_PATH = ('gs://llm_base_models/baichuan2-13b-hf/tokenizer.model')
+GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH) # lsp：相当于hf的tokenizer
+# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257) # #lsp: 啥也不干, 为什么用这个？
+PASS_THROUGH_VOCABULARY = GPT_VOCABULARY # lsp
+# lsp: Feature: 对象。存储属性
+C4_GPT_TRAIN_FEATURES_LM = {'targets': t5.data.Feature(vocabulary=GPT_VOCABULARY, add_eos=False)}
+C4_GPT_EVAL_FEATURES_LM = {
+    'targets': t5.data.Feature(
+        vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
+    )
+}
+
+class TaskRegistry(t5.data.TaskRegistry):
+  """Task registry with extra tracking."""
+
+  TASK_NAMES = []
+
+  @classmethod
+  def add_versioned_tfds_task(cls,
+                              name: str,
+                              *,
+                              versions: List[str],
+                              pinned_version: Optional[str] = None,
+                              tfds_name: str,
+                              tfds_data_dir: Optional[str] = None,
+                              **kwargs) -> List[seqio.Task]:
+    tasks = []
+    for version in versions:
+      tasks.append(
+          cls.add(
+              f'{name}_{version}',
+              seqio.Task,
+              source=seqio.TfdsDataSource(
+                  tfds_name=f'{tfds_name}:{version}',
+                  tfds_data_dir=tfds_data_dir,
+              ),
+              **kwargs,
+          ))
+    if pinned_version is not None:
+      tasks.append(
+          cls.add(
+              name,
+              seqio.Task, # task_cls # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py
+              # 
+              source=seqio.TfdsDataSource(
+                  tfds_name=f'{tfds_name}:{pinned_version}',
+                  tfds_data_dir=tfds_data_dir,
+              ),
+              **kwargs,
+          ))
+    return tasks
+
+TaskRegistry.add_versioned_tfds_task(
+    'c4_lm_v301_gpt',
+    versions=['3.0.1'],  # XD: 3.0.4 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.4 -> 3.0.1
+    tfds_name='c4/en',
+    tfds_data_dir=C4_TRAIN_DATADIR,
+    preprocessors=[
+        functools.partial(
+            t5_preprocessors.rekey,
+            key_map={
+                'inputs': None,
+                'targets': 'text', # lsp：增加inputs和targets key. target = 数据中的text， input=None
+            },
+        ),
+        seqio.preprocessors.tokenize, # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/preprocessors.py#L57
+        functools.partial(
+            t5_preprocessors.reduce_concat_tokens,
+            batch_size=4096,  # 4096个句子拼一起
+        ),
+        t5_preprocessors.split_tokens_to_targets_length, # 每份2048
+    ],
+    output_features=C4_GPT_TRAIN_FEATURES_LM,
+    metric_fns=[],
+    shuffle_buffer_size=10000,
+)
+
+TaskRegistry.add_versioned_tfds_task(
+    'c4_lm_v301_gpt_eval_tokenized',
+    versions=['3.0.1'],  # XD: 3.0.5 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.5 -> 3.0.1
+    tfds_name='c4/en',
+    tfds_data_dir=C4_EVAL_DATADIR,
+    preprocessors=[
+        functools.partial(
+            t5_preprocessors.rekey,
+            key_map={
+                'inputs': None,
+                'targets': 'text', # ids -> text
+            },
+        ),
+        seqio.preprocessors.tokenize,
+        functools.partial(
+            t5_preprocessors.reduce_concat_tokens,
+            batch_size=4096,  # 1个句子，不进行拼接
+        ),
+    ],
+    output_features=C4_GPT_EVAL_FEATURES_LM,
+    metric_fns=[],
+    shuffle_buffer_size=None,
+)
+# ========================================================================================================
 
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
@@ -747,8 +846,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
-  # VOCAB_SIZE = 64000
   VOCAB_SIZE = 125696
+  # VOCAB_SIZE = 125696
   CHECKPOINT_EVERY_N_STEPS = 500
 
   LAYERNORM_EPSILON = 1e-06
@@ -783,7 +882,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   USE_ALIBI_POSITION_EMB = True
   LM_HEAD_NORM = True
 
-  LOAD_TF_ID = True
+  LOAD_TF_ID = False
   LOAD_MESH = False
 
   if not LOAD_TF_ID and LOAD_MESH:

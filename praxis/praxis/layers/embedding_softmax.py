@@ -221,7 +221,7 @@ class FullSoftmax(base_layer.BaseLayer):
       self.create_child('logits_ffn', ff_p)
     if self.bi_tempered_loss_tpl:
       self.create_child('bi_tempered_loss', self.bi_tempered_loss_tpl)
-
+  # lsp
   def get_logits(self, inputs: JTensor) -> JTensor:
     """Returns logits given the inputs with an option to soft cap it.
 

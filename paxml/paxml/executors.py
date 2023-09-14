@@ -500,7 +500,7 @@ def _train_and_evaluate_common(
     logging.log_first_n(
         INFO, '[PAX STATUS]: Step `%d` completed.', 5, step_i - 1
     )
-
+    # loss 低于某个值自动停止
     if early_stopping_fn is not None:
       if tuning_lib.should_early_stop(
           early_stopping_fn,

@@ -842,8 +842,8 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
   # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
   # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True, 
-  PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 16, 2]
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 8, 4]
   DCN_MESH_SHAPE = [1, 1, 1] #lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
   MAX_SEQ_LEN = 2048
@@ -866,7 +866,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   ADAM_EPSILON=1e-8
   CLIP_GRADIENT_NORM_TO_VALUE=1.0
 
-  TRAINING_NUM_BATCHES_TO_SKIP = 0
+  TRAINING_NUM_BATCHES_TO_SKIP = None
 
   EMBED_DROPOUT_PROB = 0.0
   ATTEN_DROPOUT_PROB = 0.0
@@ -874,7 +874,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   EVAL_LOOP_NUM_BATCHES = 50 # 每次评测多少batch
   EVAL_INTERVAL_STEPS = 250 # 每隔多少step评测一次
-  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0906_fix_lr_bug_drop0'
+  WANDB_PROJECT = 'lr8e_6_decoupled_base32_0913_fix_lr_bug_drop0_baichuan2_13b'
 
   TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
   VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
@@ -885,6 +885,9 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
   LOAD_TF_ID = False
   LOAD_MESH = False
+  # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
+  TARGET_LOG_PPLX = -1
+
 
   if not LOAD_TF_ID and LOAD_MESH:
     # lsp

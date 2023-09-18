@@ -57,15 +57,17 @@ from praxis import py_utils
 # internal debugging module import
 # internal experiment module import
 
-FLAGS =flags.FLAGS
+FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
     "exp",
     None,
-    "Experiment configuration identifier name. This name typically "
-    'has a format like "<task>.<module>.<experiment>", which should have been '
-    "already registered in the global experiment registry with "
-    "@experiment_registry.register.",
+    (
+        "Experiment configuration identifier name. This name typically "
+        'has a format like "<task>.<module>.<experiment>", which should have been '
+        "already registered in the global experiment registry with "
+        "@experiment_registry.register."
+    ),
 )
 _JOB_LOGDIR = epath.DEFINE_path(
     "job_log_dir",
@@ -90,45 +92,52 @@ flags.DEFINE_enum(
 flags.DEFINE_bool(
     "eval_on_test",
     False,
-    "If True, then the training loop "
-    "includes a full evaluation on all the test set splits. "
-    "This can be set to True if we do not want an additional job "
-    "to run continuous eval.",
+    (
+        "If True, then the training loop "
+        "includes a full evaluation on all the test set splits. "
+        "This can be set to True if we do not want an additional job "
+        "to run continuous eval."
+    ),
 )
 flags.DEFINE_bool(
     "decode_during_train",
     False,
-    "If True, then the training loop "
-    "includes running decode over decoder_datasets(). This can be set to True "
-    "if we do not want an additional job to run continuous decode.",
+    (
+        "If True, then the training loop "
+        "includes running decode over decoder_datasets(). This can be set to True "
+        "if we do not want an additional job to run continuous decode."
+    ),
 )
 flags.DEFINE_bool(
     "eval_during_decode",
     False,
-    "If True, then the decoder run will "
-    "include running eval over the non-training data in datasets(). This is "
-    "ignored if --mode is not decode or decode_once.",
+    (
+        "If True, then the decoder run will "
+        "include running eval over the non-training data in datasets(). This is "
+        "ignored if --mode is not decode or decode_once."
+    ),
 )
 flags.DEFINE_bool(
     "maybe_use_persistence_checkpointing",
     False,
-    "If suitable, will try to rely on persistence-based checkpointing rather "
-    "than Flax-based checkpointing for SPMD models.",
+    (
+        "If suitable, will try to rely on persistence-based checkpointing rather "
+        "than Flax-based checkpointing for SPMD models."
+    ),
 )
 flags.DEFINE_bool(
     "jax_fully_async_checkpoint",
     False,
-    "Enables fully asynchronous checkpointing via GDA and TensorStore. This "
-    "means that the training can continue ahead when checkpointing is "
-    "happening.",
+    (
+        "Enables fully asynchronous checkpointing via GDA and TensorStore. This "
+        "means that the training can continue ahead when checkpointing is "
+        "happening."
+    ),
 )
 flags.DEFINE_bool(
     "exit_after_ondemand_checkpoint",
     False,
-    (
-        "If True, exits immediately after finishing saving on-demand checkpoint"
-        " due to preemption."
-    ),
+    "If True, exits immediately after finishing saving on-demand checkpoint due to preemption.",
 )
 flags.DEFINE_bool(
     "tensorstore_use_ocdbt",
@@ -138,55 +147,57 @@ flags.DEFINE_bool(
 flags.DEFINE_string(
     "jax_traceback_filtering_option",
     "auto",
-    "Controls how JAX filters internal frames out of tracebacks: "
-    "off, auto, tracebackhide, remove_frames. "
-    "See https://github.com/google/jax/blob/main/jax/_src/config.py",
+    (
+        "Controls how JAX filters internal frames out of tracebacks: "
+        "off, auto, tracebackhide, remove_frames. "
+        "See https://github.com/google/jax/blob/main/jax/_src/config.py"
+    ),
 )
 flags.DEFINE_bool(
     "decode_output_pickle",
     True,
-    "Output the .pickle file alongside the .jsonl file when decoding, this "
-    "can take a lot of memory with large decodings so can be disabled here.",
+    (
+        "Output the .pickle file alongside the .jsonl file when decoding, this "
+        "can take a lot of memory with large decodings so can be disabled here."
+    ),
 )
 flags.DEFINE_string(
     "checkpoint_todelete_subdir",
     None,
-    "If set, checkpoints to be deleted will be only renamed into a "
-    "subdirectory with the provided string. Otherwise, they will be directly "
-    "deleted from the file system. Useful if checkpoint deletion is time "
-    "consuming. By default, delete the checkpoint assets.",
+    (
+        "If set, checkpoints to be deleted will be only renamed into a "
+        "subdirectory with the provided string. Otherwise, they will be directly "
+        "deleted from the file system. Useful if checkpoint deletion is time "
+        "consuming. By default, delete the checkpoint assets."
+    ),
 )
 epath.DEFINE_path(
     "restore_checkpoint_dir",
     None,
-    "If set, the directory from which to restore checkpoint. Only supported "
-    "for --mode=decode_once and --mode=decode.",
+    (
+        "If set, the directory from which to restore checkpoint. Only supported "
+        "for --mode=decode_once and --mode=decode."
+    ),
 )
 flags.DEFINE_multi_integer(
     "restore_checkpoint_step",
     None,
-    (
-        "If set, the checkpoint step to restore. Only supported when "
-        "--mode=decode_once."
-    ),
+    "If set, the checkpoint step to restore. Only supported when --mode=decode_once.",
 )
 flags.DEFINE_bool(
     "globally_use_hardware_rng",
     True,
-    "Whether to globally use fast hardware RNG. Deterministic only at the "
-    "same compiler version and with the same sharding",
+    (
+        "Whether to globally use fast hardware RNG. Deterministic only at the "
+        "same compiler version and with the same sharding"
+    ),
 )
 flags.DEFINE_integer(
     "jax_profiler_port",
     None,
-    (
-        "If set, the jax.profiler port to use. Only needed for profiling in open"
-        " source."
-    ),
+    "If set, the jax.profiler port to use. Only needed for profiling in open source.",
 )
-flags.DEFINE_bool(
-    "enable_auto_sharding", False, "Enable the XLA Auto SPMD partitioner."
-)
+flags.DEFINE_bool("enable_auto_sharding", False, "Enable the XLA Auto SPMD partitioner.")
 flags.DEFINE_bool(
     "enable_checkpoint_saving",
     True,  # lsp
@@ -204,35 +215,43 @@ flags.DEFINE_bool(
 flags.DEFINE_string(
     "study",
     None,
-    "Study name for current tuning. If None, the program will be running in "
-    "standard training/evaluation mode. Otherwise, it will run in tuning mode.",
+    (
+        "Study name for current tuning. If None, the program will be running in "
+        "standard training/evaluation mode. Otherwise, it will run in tuning mode."
+    ),
 )
 flags.DEFINE_enum(
     "controller_mode",
     "auto",
     ["primary", "secondary", "auto"],
-    "Mode for tuning controller. If primary, current processs will only work "
-    "as the controller, without running tuning workload. If secondary, current "
-    "process will only run tuning workload. Otherwise, current process may "
-    "elect controller role in a background thread, and run the tuning workload "
-    "in the main thread.",
+    (
+        "Mode for tuning controller. If primary, current processs will only work "
+        "as the controller, without running tuning workload. If secondary, current "
+        "process will only run tuning workload. Otherwise, current process may "
+        "elect controller role in a background thread, and run the tuning workload "
+        "in the main thread."
+    ),
 )
 flags.DEFINE_string(
     "tuner_group",
     None,
-    "The identifier for the tuner group that current process belongs to. "
-    "If None, all processes will be working on different trials. "
-    "When specified, paired training, eval and decoder processes should use "
-    "the same tuner group, which will get the same trial during tuning. Only "
-    "one process should report the measurement and signal the completion or "
-    "stopping of the training. See flag `metrics_from` for details.",
+    (
+        "The identifier for the tuner group that current process belongs to. "
+        "If None, all processes will be working on different trials. "
+        "When specified, paired training, eval and decoder processes should use "
+        "the same tuner group, which will get the same trial during tuning. Only "
+        "one process should report the measurement and signal the completion or "
+        "stopping of the training. See flag `metrics_from` for details."
+    ),
 )
 flags.DEFINE_enum(
     "metrics_from",
     "eval",
     ["train", "eval", "decode"],
-    "This flag specifies from which process the measurements should be "
-    "used for tuning. By default it is set to eval.",
+    (
+        "This flag specifies from which process the measurements should be "
+        "used for tuning. By default it is set to eval."
+    ),
 )
 flags.DEFINE_integer(
     "num_trials",
@@ -242,14 +261,16 @@ flags.DEFINE_integer(
 flags.DEFINE_integer(
     "pythia_port",
     None,
-    "Port for hosting Pythia service when non-Vizier built-in algorithms " "is used",
+    "Port for hosting Pythia service when non-Vizier built-in algorithms is used",
 )
 flags.DEFINE_string(
     "tfds_data_dir",
     None,
-    "If set, directory used to store datasets prepared by "
-    "TensorFlow Datasets that are not available in the public TFDS GCS "
-    "bucket.",
+    (
+        "If set, directory used to store datasets prepared by "
+        "TensorFlow Datasets that are not available in the public TFDS GCS "
+        "bucket."
+    ),
 )
 # Google-internal TFDS override-like flag definition.
 
@@ -345,7 +366,7 @@ def run_experiment(
     task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
     if FLAGS.mode == "train":
-        work_unit.set_task_status(f"Train experiment {FLAGS.exp} at" f" {job_log_dir}")
+        work_unit.set_task_status(f"Train experiment {FLAGS.exp} at {job_log_dir}")
         logging.info(f"===========eval_on_test: {FLAGS.eval_on_test}============")
         train.train_and_evaluate(
             experiment_config=experiment_config,
@@ -364,7 +385,7 @@ def run_experiment(
         )
 
     elif FLAGS.mode == "eval":
-        work_unit.set_task_status(f"Eval experiment {FLAGS.exp} at" f" {job_log_dir}")
+        work_unit.set_task_status(f"Eval experiment {FLAGS.exp} at {job_log_dir}")
         eval_lib.evaluate(
             experiment_config=experiment_config,
             job_log_dir=job_log_dir,
@@ -375,7 +396,7 @@ def run_experiment(
             tensorstore_use_ocdbt=FLAGS.tensorstore_use_ocdbt,
         )
     elif FLAGS.mode == "decode":
-        work_unit.set_task_status(f"Decode experiment {FLAGS.exp} at" f" {job_log_dir}")
+        work_unit.set_task_status(f"Decode experiment {FLAGS.exp} at {job_log_dir}")
         eval_lib.decode(
             experiment_config=experiment_config,
             job_log_dir=job_log_dir,
@@ -395,8 +416,7 @@ def run_experiment(
 
         for restore_step in restore_checkpoint_steps:
             work_unit.set_task_status(
-                f"Decode-once experiment {FLAGS.exp} at"
-                f" {job_log_dir} for step={restore_step}"
+                f"Decode-once experiment {FLAGS.exp} at {job_log_dir} for step={restore_step}"
             )
             restore_step = int(restore_step) if restore_step is not None else None
             logging.info("Decode-once on step: %s", restore_step)
@@ -435,8 +455,7 @@ def _setup_xm_work_unit():
     """Setup the global work unit for XM."""
     work_unit = platform.work_unit()
     work_unit.set_task_status(
-        f"process_index: {jax.process_index()}, "
-        f"process_count: {jax.process_count()}"
+        f"process_index: {jax.process_index()}, process_count: {jax.process_count()}"
     )
     if jax.process_index() == 0:
         work_unit.create_artifact(
@@ -474,9 +493,10 @@ def run(
             FLAGS.jax_profiler_port
         )  # pylint:disable=unused-variable
 
-    if (
-        FLAGS.restore_checkpoint_dir or FLAGS.restore_checkpoint_step
-    ) and FLAGS.mode not in {"decode_once", "decode"}:
+    if (FLAGS.restore_checkpoint_dir or FLAGS.restore_checkpoint_step) and FLAGS.mode not in {
+        "decode_once",
+        "decode",
+    }:
         raise ValueError(
             "--restore_checkpoint_dir and --restore_checkpoint_step only supported "
             "with --mode=decode_once or --mode=decode."
@@ -497,9 +517,7 @@ def run(
         )
     else:
         if not enable_checkpoint_saving:
-            logging.warning(
-                "Ignoring flag `--enable_checkpoint_saving` for tuning experiment."
-            )
+            logging.warning("Ignoring flag `--enable_checkpoint_saving` for tuning experiment.")
         tuning_lib.tune(
             trial_fn=run_experiment,
             experiment_config=experiment_config,
@@ -535,9 +553,7 @@ def _main(argv: Sequence[str]) -> None:
         seqio.set_tfds_data_dir_override(FLAGS.tfds_data_dir)
     # Google-internal setting of TFDS override-like param.
 
-    should_initialize_jax_distributed = (
-        FLAGS.jax_fully_async_checkpoint or FLAGS.multiprocess_gpu
-    )
+    should_initialize_jax_distributed = FLAGS.jax_fully_async_checkpoint or FLAGS.multiprocess_gpu
     setup_jax.setup_jax(
         FLAGS.globally_use_hardware_rng,
         FLAGS.jax_backend_target,
@@ -545,9 +561,7 @@ def _main(argv: Sequence[str]) -> None:
         FLAGS.jax_enable_checks,
         FLAGS.jax_traceback_filtering_option,
         should_initialize_jax_distributed,
-        setup_jax.JaxDistributedOptions(
-            FLAGS.server_addr, FLAGS.num_hosts, FLAGS.host_idx
-        ),
+        setup_jax.JaxDistributedOptions(FLAGS.server_addr, FLAGS.num_hosts, FLAGS.host_idx),
     )
 
     if FLAGS.exp is not None:

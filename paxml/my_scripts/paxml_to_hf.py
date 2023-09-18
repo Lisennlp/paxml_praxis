@@ -20,7 +20,10 @@ try:
     import torch
 except Exception as e:
     print(f"Error: {e}")
-    command = "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpu"
+    command = (
+        "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url"
+        "https://download.pytorch.org/whl/cpu"
+    )
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import torch
 
@@ -76,7 +79,10 @@ parser = argparse.ArgumentParser(description="Mesh-orbax to paxml-orbax format s
 parser.add_argument(
     "--read_dir",
     type=str,
-    help="Need to be converted model weight dir. it is a dir, stong recomand use local dir instead of cloud bucket.",
+    help=(
+        "Need to be converted model weight dir. it is a dir, stong recomand use local dir instead"
+        " of cloud bucket."
+    ),
 )
 parser.add_argument(
     "--save_dir",
@@ -97,9 +103,7 @@ parser.add_argument(
     default=False,
     help="whether to check model is saved successful",
 )
-parser.add_argument(
-    "--version", type=str, default="v1", choices=["v1", "v2"], help="Model version"
-)
+parser.add_argument("--version", type=str, default="v1", choices=["v1", "v2"], help="Model version")
 
 args = parser.parse_args()
 
@@ -197,9 +201,7 @@ paxml_to_mesh_key_and_shape = {
     },
 }
 
-mesh_to_paxml_format = {
-    v["map_to_mesh"]: k for k, v in paxml_to_mesh_key_and_shape.items()
-}
+mesh_to_paxml_format = {v["map_to_mesh"]: k for k, v in paxml_to_mesh_key_and_shape.items()}
 padded_global_shapes = {}
 for k, v in paxml_to_mesh_key_and_shape.items():
     k = tuple(k.split("."))
@@ -208,9 +210,7 @@ for k, v in paxml_to_mesh_key_and_shape.items():
             shape=(x_times,) + v["shape"], dtype=jnp.float16
         )
     else:
-        padded_global_shapes[k] = jax.ShapeDtypeStruct(
-            shape=v["shape"], dtype=jnp.float16
-        )
+        padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v["shape"], dtype=jnp.float16)
 
 padded_global_shapes = TrainState(
     step=jnp.array(step), mdl_vars=unflatten_dict(padded_global_shapes), opt_states=None
@@ -225,9 +225,7 @@ items = {"state": padded_global_shapes}
 restored_model = checkpoint_manager._manager.restore(
     step, items=items, restore_kwargs=restore_kwargs
 )
-loaded = {
-    ".".join(k): v for k, v in flatten_dict(restored_model["state"].mdl_vars).items()
-}
+loaded = {".".join(k): v for k, v in flatten_dict(restored_model["state"].mdl_vars).items()}
 print("Model load finished!!!")
 
 
@@ -272,33 +270,25 @@ param_count = 0
 start = time.time()
 for layer_i in range(n_layers):
     filename = f"pytorch_model-{layer_i + 1}-of-{n_layers + 1}.bin"
-    print(
-        f"layer_i: {layer_i} || filename: {filename} take time: {time.time() - start}s"
-    )
-    q = permute(
-        loaded[mesh_to_paxml_format["wq"]][layer_i].reshape(dim, -1).transpose(1, 0)
-    )
-    k = permute(
-        loaded[mesh_to_paxml_format["wk"]][layer_i].reshape(dim, -1).transpose(1, 0)
-    )
+    print(f"layer_i: {layer_i} || filename: {filename} take time: {time.time() - start}s")
+    q = permute(loaded[mesh_to_paxml_format["wq"]][layer_i].reshape(dim, -1).transpose(1, 0))
+    k = permute(loaded[mesh_to_paxml_format["wk"]][layer_i].reshape(dim, -1).transpose(1, 0))
     v = loaded[mesh_to_paxml_format["wv"]][layer_i].reshape(dim, -1).transpose(1, 0)
     repeat_state_dict = {
-        f"model.layers.{layer_i}.self_attn.W_pack.weight": np.concatenate(
-            [q, k, v], axis=0
-        ),
+        f"model.layers.{layer_i}.self_attn.W_pack.weight": np.concatenate([q, k, v], axis=0),
         # no transpose
-        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[
-            mesh_to_paxml_format["wo"]
-        ][layer_i].reshape(dim, -1),
-        f"model.layers.{layer_i}.mlp.gate_proj.weight": loaded[
-            mesh_to_paxml_format["w1"]
-        ][layer_i].transpose(1, 0),
-        f"model.layers.{layer_i}.mlp.down_proj.weight": loaded[
-            mesh_to_paxml_format["w2"]
-        ][layer_i].transpose(1, 0),
-        f"model.layers.{layer_i}.mlp.up_proj.weight": loaded[
-            mesh_to_paxml_format["w3"]
-        ][layer_i].transpose(1, 0),
+        f"model.layers.{layer_i}.self_attn.o_proj.weight": loaded[mesh_to_paxml_format["wo"]][
+            layer_i
+        ].reshape(dim, -1),
+        f"model.layers.{layer_i}.mlp.gate_proj.weight": loaded[mesh_to_paxml_format["w1"]][
+            layer_i
+        ].transpose(1, 0),
+        f"model.layers.{layer_i}.mlp.down_proj.weight": loaded[mesh_to_paxml_format["w2"]][
+            layer_i
+        ].transpose(1, 0),
+        f"model.layers.{layer_i}.mlp.up_proj.weight": loaded[mesh_to_paxml_format["w3"]][
+            layer_i
+        ].transpose(1, 0),
         f"model.layers.{layer_i}.input_layernorm.weight": loaded[
             mesh_to_paxml_format["attention_norm"]
         ][layer_i],

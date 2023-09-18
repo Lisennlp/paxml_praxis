@@ -98,9 +98,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
         self._partitioner: partitioning.Partitioner = None
         self._train_program: programs.BaseTrainProgram = None
         self._eval_programs: Sequence[programs.BaseEvalProgram] = None
-        self._decode_programs: Sequence[
-            decode_programs_lib.SingleTaskDecodeProgram
-        ] = None
+        self._decode_programs: Sequence[decode_programs_lib.SingleTaskDecodeProgram] = None
 
         # States to lazily initialize in .setup().
         self._train_input_pipeline = None
@@ -141,22 +139,16 @@ class DefaultExecutor(base_executor.BaseExecutor):
             passed to checkpointer.get_model_states(). If set, the checkpointer will
             restore its states from checkpoint.
         """
-        logging.info(
-            "[PAX STATUS]: Instantiating train input pipeline (%s)", train_input_p
-        )
+        logging.info("[PAX STATUS]: Instantiating train input pipeline (%s)", train_input_p)
         if not task.train.enable_input_checkpointing:
             # 更新输入数据的开始步数
             _maybe_update_latest_model_step(train_input_p, step, task)
         # 实例化train_input_p
         train_input = instantiate(train_input_p)
         # 输入数据的一个对象
-        train_input_for_partitioner = (
-            None if task.train.enforce_input_specs else train_input
-        )
+        train_input_for_partitioner = None if task.train.enforce_input_specs else train_input
         # None
-        train_input_for_checkpoint = (
-            train_input if task.train.enable_input_checkpointing else None
-        )
+        train_input_for_checkpoint = train_input if task.train.enable_input_checkpointing else None
         return train_input, train_input_for_partitioner, train_input_for_checkpoint
 
     def setup(
@@ -191,9 +183,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
             train_input,
             train_input_for_partitioner,
             train_input_for_checkpoint,
-        ) = self._maybe_create_train_input(
-            self._task, checkpointer.step_to_restore, train_input_p
-        )
+        ) = self._maybe_create_train_input(self._task, checkpointer.step_to_restore, train_input_p)
 
         # Sets up the partitioner. Note it only needs shape/dtype information of the
         # prng key.
@@ -255,9 +245,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
             trainer_lib.write_train_provenance_file(train_state_provenance, job_log_dir)
 
         # Splits the key.
-        train_prng_seed, eval_prng_seed, decode_prng_seed = jax.random.split(
-            root_prng_key, 3
-        )
+        train_prng_seed, eval_prng_seed, decode_prng_seed = jax.random.split(root_prng_key, 3)
         logging.info("train prng seed: %s", train_prng_seed)
         logging.info("eval prng seed: %s", eval_prng_seed)
         logging.info("decode prng seed: %s", decode_prng_seed)
@@ -335,9 +323,7 @@ def _train_and_evaluate_common(
     """Training loop code common to both pmap and spmd."""
     train_p = task.train
     train_state_metadata = partitioner.get_train_state_metadata()
-    train_input_for_checkpoint = (
-        train_input if train_p.enable_input_checkpointing else None
-    )
+    train_input_for_checkpoint = train_input if train_p.enable_input_checkpointing else None
     initial_global_step = int(
         py_utils.maybe_unreplicate_for_fully_replicated(partitioned_train_state.step)
     )
@@ -375,9 +361,7 @@ def _train_and_evaluate_common(
     )
     # train_state_provenance is None when model restored from checkpoint
     if train_state_provenance:
-        summary_utils.write_model_provenance(
-            train_summary_writer, train_state_provenance
-        )
+        summary_utils.write_model_provenance(train_summary_writer, train_state_provenance)
     summary_utils.write_total_num_params(train_summary_writer, total_num_params)
     summary_utils.write_global_batch_size(
         train_summary_writer, train_program.train_unpadded_global_batch_size
@@ -407,10 +391,7 @@ def _train_and_evaluate_common(
 
         if not train_program.should_run(partitioned_train_state, step_i):
             logging.info(
-                (
-                    "Training loop completed (step (`%d`) greater than "
-                    "num_train_step (`%d`)."
-                ),
+                "Training loop completed (step (`%d`) greater than num_train_step (`%d`).",
                 step_i,
                 train_p.num_train_steps,
             )
@@ -467,9 +448,7 @@ def _train_and_evaluate_common(
                         eval_result = {
                             "eval_step": step_i,
                             "eval_loss": eval_metric["avg_xent"],
-                            "eval_acc": eval_metric[
-                                "fraction_of_correct_next_step_preds"
-                            ],
+                            "eval_acc": eval_metric["fraction_of_correct_next_step_preds"],
                         }
                         wandb.log(eval_result)
                         logging.info(f"eval_result: {eval_result}")

@@ -186,9 +186,7 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         # specific version may impact the checkpoint format, so it must be known in
         # advance of any operations.
         self._directory = epath.Path(directory)
-        self._use_digit_step_subdirectory = _has_digit_step_subdirectory(
-            self._directory
-        )
+        self._use_digit_step_subdirectory = _has_digit_step_subdirectory(self._directory)
         if self._directory.exists():
             step = self.any_step()
             if step is not None:
@@ -218,11 +216,9 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         super().__init__(directory, *args, **kwargs)
         # Set to 1 if not provided or set to 0.
         self._options.save_interval_steps = self._options.save_interval_steps or 1
-        self._options.step_prefix = checkpoint_paths.checkpoint_prefix(
+        self._options.step_prefix = checkpoint_paths.checkpoint_prefix(self._checkpoint_type)
+        self._options.step_format_fixed_length = checkpoint_paths.checkpoint_name_fixed_length(
             self._checkpoint_type
-        )
-        self._options.step_format_fixed_length = (
-            checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
         )
 
     @property
@@ -267,16 +263,13 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         """Indicates whether there is a need to save a checkpoint."""
         if self._use_digit_step_subdirectory:
             raise NotImplementedError(
-                "Checkpoints with digit step subdirectories do not support the "
-                "saving mode."
+                "Checkpoints with digit step subdirectories do not support the saving mode."
             )
 
         # Whether to save an on-demand checkpoint due to preemption
         if self.reached_preemption(step):
             return True
-        last_checkpoint_step = (
-            self._last_checkpoint.step if self._last_checkpoint else None
-        )
+        last_checkpoint_step = self._last_checkpoint.step if self._last_checkpoint else None
         # Ensure current step is between the last step and next step (accounting for
         # save interval). The `last_checkpoint_step` may not be initialized, in
         # which case we should save. Otherwise, step must fall on the specified
@@ -284,8 +277,7 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         # on preemption, in which case we want to maintain the same save period as
         # if preemption had not happened.
         return last_checkpoint_step is None or (
-            last_checkpoint_step < step
-            and step % self._options.save_interval_steps == 0
+            last_checkpoint_step < step and step % self._options.save_interval_steps == 0
         )
 
     def delete(self, step: int):
@@ -300,8 +292,7 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         """Saves the provided items."""
         if self._use_digit_step_subdirectory:
             raise NotImplementedError(
-                "Checkpoints with digit step subdirectories do not support the "
-                "saving mode."
+                "Checkpoints with digit step subdirectories do not support the saving mode."
             )
         return super().save(*args, **kwargs)
 
@@ -499,9 +490,7 @@ class OrbaxCheckpointManager:
         logging.info(f"items: {items}")
         logging.info(f"restore_kwargs: {restore_kwargs}")
         logging.info(f"step: {step}")
-        restored = self._manager.restore(
-            step, items=items, restore_kwargs=restore_kwargs
-        )
+        restored = self._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
 
         # Skip metadata checks if using transformations, since the TrainState may be
         # completely altered.
@@ -520,9 +509,7 @@ class OrbaxCheckpointManager:
                 restored_metadata = checkpoint_metadata.PaxMetadata.from_dict(
                     restored[METADATA_ITEM_NAME]
                 )
-                metadata = checkpoint_metadata.PaxMetadata.from_dict(
-                    items[METADATA_ITEM_NAME]
-                )
+                metadata = checkpoint_metadata.PaxMetadata.from_dict(items[METADATA_ITEM_NAME])
                 if not metadata.is_compatible(restored_metadata):
                     raise ValueError(
                         "PaxMetadata is not compatible with the restored PaxMetadata. "

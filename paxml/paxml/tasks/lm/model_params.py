@@ -71,9 +71,7 @@ def set_sharding_annotations_v1(
     )
     model_p.mesh_axis_names = mesh_axis_names
     if hasattr(model_p, "lm_tpl"):
-        lm_cls = cast(
-            Type[layers.TransformerLm], pax_fiddle.get_callable(model_p.lm_tpl)
-        )
+        lm_cls = cast(Type[layers.TransformerLm], pax_fiddle.get_callable(model_p.lm_tpl))
         model_p.lm_tpl = lm_cls.set_sharding_params_v1(
             model_p.lm_tpl,
             replica_axis=replica_axis,
@@ -228,9 +226,7 @@ class ClassificationModelAdam(base_experiment.BaseExperiment):
 
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         task_p = pax_fiddle.Config(tasks_lib.SingleTask, name="classification_task")
-        task_p.model = pax_fiddle.Config(
-            models.ClassificationMLPModel, name="classification_model"
-        )
+        task_p.model = pax_fiddle.Config(models.ClassificationMLPModel, name="classification_model")
         model_p = task_p.model
         # pytype: disable=attribute-error  # enable-nested-classes
         model_p.mlp_tpl.ff_tpl.input_dims = self.INPUT_DIM
@@ -307,12 +303,8 @@ class TransformerBertPmapAdam(base_experiment.BaseExperiment):
         transformer_layer_p = stacked_transformer_tpl.transformer_layer_params_tpl
         transformer_layer_p.tr_atten_tpl.atten_logit_cap = 50.0
         transformer_layer_p.tr_atten_tpl.use_bias = False
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
-            self.ACTIVATION_CLS
-        )
-        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
-            self.USE_GATED_ACTIVATION
-        )
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
+        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
 
         if self.USE_REPEATED_LAYER:
             model_p.lm_tpl.stacked_transformer_tpl = pax_fiddle.Config(
@@ -321,9 +313,7 @@ class TransformerBertPmapAdam(base_experiment.BaseExperiment):
             stacked_transformer_tpl.num_layers = 1
             model_p.lm_tpl.stacked_transformer_tpl.block = stacked_transformer_tpl
             model_p.lm_tpl.stacked_transformer_tpl.x_times = self.NUM_LAYERS
-            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
-                self.CHECKPOINT_POLICY
-            )
+            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = self.CHECKPOINT_POLICY
         else:
             model_p.lm_tpl.stacked_transformer_tpl = stacked_transformer_tpl
 
@@ -338,9 +328,7 @@ class TransformerBertPmapAdam(base_experiment.BaseExperiment):
 
         maybe_setup_moe_params(model_p.lm_tpl.stacked_transformer_tpl)
 
-        set_default_adam(
-            task_p, self.LEARNING_RATE, self.WEIGHT_DECAY, decay_end=self.DECAY_END
-        )
+        set_default_adam(task_p, self.LEARNING_RATE, self.WEIGHT_DECAY, decay_end=self.DECAY_END)
 
         return task_p
 
@@ -397,12 +385,8 @@ class TransformerBertSpmdAdafactor(base_experiment.BaseExperiment):
         transformer_layer_p.tr_atten_tpl.atten_logit_cap = 50.0
         transformer_layer_p.tr_atten_tpl.use_bias = False
         transformer_layer_p.tr_atten_tpl.combine_qkv = True
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
-            self.ACTIVATION_CLS
-        )
-        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
-            self.USE_GATED_ACTIVATION
-        )
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
+        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
 
         if self.USE_REPEATED_LAYER:
             model_p.lm_tpl.stacked_transformer_tpl = pax_fiddle.Config(
@@ -411,9 +395,7 @@ class TransformerBertSpmdAdafactor(base_experiment.BaseExperiment):
             stacked_transformer_tpl.num_layers = 1
             model_p.lm_tpl.stacked_transformer_tpl.block = stacked_transformer_tpl
             model_p.lm_tpl.stacked_transformer_tpl.x_times = self.NUM_LAYERS
-            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
-                self.CHECKPOINT_POLICY
-            )
+            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = self.CHECKPOINT_POLICY
         else:
             model_p.lm_tpl.stacked_transformer_tpl = stacked_transformer_tpl
 
@@ -489,12 +471,8 @@ class TransformerLmPmapAdam(base_experiment.BaseExperiment):
         )
         transformer_layer_p.tr_atten_tpl.atten_logit_cap = self.ATTEN_LOGIT_CAP
         transformer_layer_p.tr_atten_tpl.use_bias = self.USE_BIAS
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
-            self.ACTIVATION_CLS
-        )
-        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
-            self.USE_GATED_ACTIVATION
-        )
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
+        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
 
         if self.REL_POS_EMB_DIM is not None:
             atten_xl_p = pax_fiddle.Config(layers.DotProductAttentionXL)
@@ -517,9 +495,7 @@ class TransformerLmPmapAdam(base_experiment.BaseExperiment):
         # pytype: enable=attribute-error  # enable-nested-classes
 
         maybe_setup_moe_params(model_p.lm_tpl.stacked_transformer_tpl)
-        set_default_adam(
-            task_p, self.LEARNING_RATE, self.WEIGHT_DECAY, decay_end=self.DECAY_END
-        )
+        set_default_adam(task_p, self.LEARNING_RATE, self.WEIGHT_DECAY, decay_end=self.DECAY_END)
 
         return task_p
 
@@ -657,18 +633,10 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         # transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
         transformer_layer_p.tr_atten_tpl.use_bias = False
         transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
-        transformer_layer_p.tr_fflayer_tpl.has_bias = (
-            not self.USE_GATED_ACTIVATION
-        )  # XD
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
-            self.ACTIVATION_CLS
-        )
-        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
-            self.USE_GATED_ACTIVATION
-        )
-        transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(
-            self.NORMALIZATION_CLS
-        )  # XD
+        transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
+        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
+        transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
         transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
         # pytype: enable=attribute-error  # enable-nested-classes
 
@@ -695,9 +663,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
             stacked_transformer_tpl.num_layers = 1
             model_p.lm_tpl.stacked_transformer_tpl.block = stacked_transformer_tpl
             model_p.lm_tpl.stacked_transformer_tpl.x_times = self.NUM_LAYERS
-            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
-                self.CHECKPOINT_POLICY
-            )
+            model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = self.CHECKPOINT_POLICY
         else:
             model_p.lm_tpl.stacked_transformer_tpl = stacked_transformer_tpl
 
@@ -864,12 +830,8 @@ class TransformerLmSpmdPipelineAdafactor(TransformerLmSpmdAdafactor):
         transformer_layer_p.norm_policy = self.NORM_POLICY
         transformer_layer_p.tr_atten_tpl.use_bias = False
         transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
-            self.ACTIVATION_CLS
-        )
-        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
-            self.USE_GATED_ACTIVATION
-        )
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
+        transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
         transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
         # pytype: enable=attribute-error  # enable-nested-classes
 
@@ -936,9 +898,7 @@ class TransformerLmSpmdPipelineAdafactor(TransformerLmSpmdAdafactor):
         model_p.mesh_axis_names = mesh_axis_names
 
         # Set in-stage layer shardings.
-        lm_cls = cast(
-            Type[layers.TransformerLm], pax_fiddle.get_callable(model_p.lm_tpl)
-        )
+        lm_cls = cast(Type[layers.TransformerLm], pax_fiddle.get_callable(model_p.lm_tpl))
         model_p.lm_tpl = lm_cls.set_sharding_params_v1(
             model_p.lm_tpl,
             replica_axis=replica_axis,
@@ -969,10 +929,7 @@ class TransformerLmSpmdPipelineAdafactor(TransformerLmSpmdAdafactor):
             mdl_axis,
         ]
         embedding_p.activation_split_dims_mapping.out = [batch_dims, None, mdl_axis]
-        if (
-            fdl.get_callable(softmax_p)
-            == embedding_softmax.GShardSharedEmbeddingSoftmax
-        ):
+        if fdl.get_callable(softmax_p) == embedding_softmax.GShardSharedEmbeddingSoftmax:
             # Softmax weight is of shape [vocab_size, input_dim].
             softmax_p.weight_split_dims_mapping.wt = [mdl_axis, self.EMB_W_DATA_DIMS]
         elif fdl.get_callable(softmax_p) in {
@@ -982,9 +939,7 @@ class TransformerLmSpmdPipelineAdafactor(TransformerLmSpmdAdafactor):
             # Softmax weight is of shape [input_dim, vocab_size].
             softmax_p.weight_split_dims_mapping.wt = [self.EMB_W_DATA_DIMS, mdl_axis]
         else:
-            raise NotImplementedError(
-                f"softmax class {fdl.get_callable(softmax_p)} not supported"
-            )
+            raise NotImplementedError(f"softmax class {fdl.get_callable(softmax_p)} not supported")
         if self.SEPARATE_EMBEDDING:
             embedding_p.weight_split_dims_mapping.wt = [
                 self.EMB_W_DATA_DIMS,

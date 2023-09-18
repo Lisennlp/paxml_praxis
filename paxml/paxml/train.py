@@ -82,13 +82,9 @@ def write_hparams_file(
                 hparams_file.write("\n\n")
             for decoder_dataset in model_config.decoder_datasets():
                 hparams_file.write("decoder dataset hparams\n")
-                hparams_file.write(
-                    base_hyperparams.nested_struct_to_text(decoder_dataset)
-                )
+                hparams_file.write(base_hyperparams.nested_struct_to_text(decoder_dataset))
                 hparams_file.write("\n\n")
-            hparams_file.write(
-                base_hyperparams.nested_struct_to_text(model_config.task())
-            )
+            hparams_file.write(base_hyperparams.nested_struct_to_text(model_config.task()))
 
 
 def write_experiment_class_vars_file(
@@ -209,14 +205,11 @@ def train_and_evaluate(
             ),
         ):
             raise ValueError(
-                "Expecting pax_fiddle.Config[BaseInput] from datasets(), got:"
-                f" {inp.ToText()}"
+                f"Expecting pax_fiddle.Config[BaseInput] from datasets(), got: {inp.ToText()}"
             )
     train_input_p = [v for v in input_p if v.is_training]
     if len(train_input_p) != 1:
-        raise ValueError(
-            f"Expecting exactly one training split. Got `{len(train_input_p)}`."
-        )
+        raise ValueError(f"Expecting exactly one training split. Got `{len(train_input_p)}`.")
     train_input_p = train_input_p[0]
     logging.info("[PAX STATUS]: Done getting dataset configurations.")
     # 打印训练数据集参数
@@ -258,17 +251,14 @@ def train_and_evaluate(
     )
     # enable_checkpoint_saving: false
     if not enable_checkpoint_saving:
-        logging.info(
-            "Checkpointing is disabled and no checkpoint will be saved to disk."
-        )
+        logging.info("Checkpointing is disabled and no checkpoint will be saved to disk.")
     # EarlyStoppingFn(target_log_pplx=2.69, name='')
     if jax_task.early_stopping_fn is not None:
         if early_stopping_fn is None:
             early_stopping_fn = jax_task.early_stopping_fn
         else:
             raise ValueError(
-                "early_stopping_fn is set in both task and "
-                "train_and_evel function parameter."
+                "early_stopping_fn is set in both task and train_and_evel function parameter."
             )
 
     logging.info("[PAX STATUS]: Initializing partitioner")
@@ -318,8 +308,7 @@ def train_and_evaluate(
     # TODO(wangpeng): Make decode programs configurable.
     # []
     decode_programs = [
-        decode_programs_lib.SingleTaskDecodeProgram(input_p)
-        for input_p in decode_input_p
+        decode_programs_lib.SingleTaskDecodeProgram(input_p) for input_p in decode_input_p
     ]
 
     # Creates the executor and run the training pipeline.

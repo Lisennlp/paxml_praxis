@@ -57,7 +57,7 @@ from praxis import py_utils
 # internal debugging module import
 # internal experiment module import
 
-FLAGS = flags.FLAGS
+FLAGS =flags.FLAGS
 
 flags.DEFINE_string(
     "exp",

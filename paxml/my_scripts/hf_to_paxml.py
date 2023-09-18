@@ -30,7 +30,10 @@ from flax.traverse_util import flatten_dict, unflatten_dict
 try:
     import torch
 except:
-    command = "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpu"
+    command = (
+        "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url"
+        " https://download.pytorch.org/whl/cpu"
+    )
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import torch
 
@@ -88,7 +91,10 @@ parser = argparse.ArgumentParser(description="Mesh-orbax to paxml-orbax format s
 parser.add_argument(
     "--read_dir",
     type=str,
-    help="Need to be converted model weight dir. it is a dir, stong recomand use local dir instead of cloud bucket.",
+    help=(
+        "Need to be converted model weight dir. it is a dir, stong recomand use local dir instead"
+        " of cloud bucket."
+    ),
 )
 parser.add_argument(
     "--save_dir",
@@ -109,9 +115,7 @@ parser.add_argument(
     default=False,
     help="whether to check model is saved successful",
 )
-parser.add_argument(
-    "--version", type=str, default="v1", choices=["v1", "v2"], help="Model version"
-)
+parser.add_argument("--version", type=str, default="v1", choices=["v1", "v2"], help="Model version")
 
 args = parser.parse_args()
 
@@ -147,9 +151,7 @@ for i, ckpt_path in enumerate(ckpt_paths):
         if k.startswith("model."):
             k = k[6:]
         ckpt[k] = v
-assert len(ckpt) > 0, print(
-    f"ckpt is empty, please model path whether right or error....."
-)
+assert len(ckpt) > 0, print(f"ckpt is empty, please model path whether right or error.....")
 
 options = checkpoint_managers.CheckpointManagerOptions(
     max_to_keep=10,
@@ -278,11 +280,7 @@ for k, v in trans_result.items():
 if step is None:
     latest_step = checkpoint_manager.latest_step()
     if save_dir == read_dir:
-        step = (
-            latest_step + SAVE_INTERVAL_STEPS
-            if latest_step is not None
-            else SAVE_INTERVAL_STEPS
-        )
+        step = latest_step + SAVE_INTERVAL_STEPS if latest_step is not None else SAVE_INTERVAL_STEPS
     else:
         step = latest_step
 
@@ -303,8 +301,7 @@ temp_other = unflatten_dict(temp_other)
 no_prefix = {"count": jnp.array(step), "m": temp_no_prefix, "v": temp_no_prefix}
 other = {"count": jnp.array([step] * n_layers), "m": temp_other, "v": temp_other}
 trans_opt_states = {
-    "no_prefix": [{"count": jnp.array(step)}] * 2
-    + [no_prefix, {"count": jnp.array(step)}],
+    "no_prefix": [{"count": jnp.array(step)}] * 2 + [no_prefix, {"count": jnp.array(step)}],
     f"p#{n_layers}#i-1": [{"count": jnp.array([step] * n_layers)}] * 2
     + [other, {"count": jnp.array([step] * n_layers)}],
 }
@@ -315,9 +312,7 @@ new_trainstate = TrainState(
     opt_states=trans_opt_states,
 )
 padded_global_shapes = jax.tree_map(
-    lambda x: jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
-    if hasattr(x, "shape")
-    else x,
+    lambda x: jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype) if hasattr(x, "shape") else x,
     new_trainstate,
 )
 print(f"padded_global_shapes: {padded_global_shapes}")

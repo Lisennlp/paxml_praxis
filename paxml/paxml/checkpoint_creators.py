@@ -87,11 +87,7 @@ def _parse_duration(
         return None
     pattern = re.compile(r"(\d+)(\w)*")
     match = pattern.match(duration_str)
-    if (
-        not match
-        or len(match.groups()) != 2
-        or match.group(2) not in {None, "s", "m", "h", "d"}
-    ):
+    if not match or len(match.groups()) != 2 or match.group(2) not in {None, "s", "m", "h", "d"}:
         raise ValueError(f"Unable to parse string duration `{duration_str}`.")
     int_value = int(match.group(1))
     if match.group(2) is None or match.group(2) == "s":
@@ -138,9 +134,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         ocdbt_coordinator_server: Optional[Any] = None,
         restore_transformations: Optional[Dict[str, Any]] = None,
         external_checkpoint_path: Optional[epath.Path] = None,
-        external_checkpoint_handler: Optional[
-            orbax.checkpoint.CheckpointHandler
-        ] = None,
+        external_checkpoint_handler: Optional[orbax.checkpoint.CheckpointHandler] = None,
     ):
         self.checkpoint_manager = checkpoint_manager
         self._checkpoint_type = checkpoint_type
@@ -189,9 +183,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                 force=force,
             )
         # 记录时间
-        monitoring.record_event_duration_secs(
-            _WRITE_CHECKPOINT_EVENT, save_period.elapsed
-        )
+        monitoring.record_event_duration_secs(_WRITE_CHECKPOINT_EVENT, save_period.elapsed)
         logging.info(f"save_period.elapsed000: {save_period.elapsed}")
         logging.info(f"_WRITE_CHECKPOINT_EVENT: {_WRITE_CHECKPOINT_EVENT}")
 
@@ -303,9 +295,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     metadata.partition_specs,
                     train_input_pipeline,
                 )
-        monitoring.record_event_duration_secs(
-            _READ_CHECKPOINT_EVENT, restore_period.elapsed
-        )
+        monitoring.record_event_duration_secs(_READ_CHECKPOINT_EVENT, restore_period.elapsed)
 
         (
             root_prng_key,
@@ -338,9 +328,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         ocdbt_coordinator_server: Optional[Any] = None,
         restore_transformations: Optional[Dict[str, Any]] = None,
         external_checkpoint_path: Optional[epath.Path] = None,
-        external_checkpoint_handler: Optional[
-            orbax.checkpoint.CheckpointHandler
-        ] = None,
+        external_checkpoint_handler: Optional[orbax.checkpoint.CheckpointHandler] = None,
     ):
         self.job_log_dir = job_log_dir
         self.checkpoint_dir = _checkpoint_dir(job_log_dir)
@@ -381,9 +369,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     return jax.sharding.PartitionSpec()
 
             global_mesh = jax.sharding.Mesh(np.array(jax.devices()), axis_names=("x",))
-            fully_replicated_state_specs = jax.tree_map(
-                _get_spec, train_state_global_shapes
-            )
+            fully_replicated_state_specs = jax.tree_map(_get_spec, train_state_global_shapes)
             restore_args = {
                 "specs": fully_replicated_state_specs,
                 "mesh": global_mesh,
@@ -435,9 +421,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     metadata.unpadded_global_shapes,
                     train_input_pipeline,
                 )
-        monitoring.record_event_duration_secs(
-            _READ_CHECKPOINT_EVENT, restore_period.elapsed
-        )
+        monitoring.record_event_duration_secs(_READ_CHECKPOINT_EVENT, restore_period.elapsed)
 
         # TODO(laigd): move the logic below outside of get_model_states.
         (
@@ -488,9 +472,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
 
         with py_utils.timeit() as save_period:
             if py_utils.pmap_use_tensorstore():
-                logging.info(
-                    "Saving a ckpt at %sstep: %d", "final " if is_final else "", step_i
-                )
+                logging.info("Saving a ckpt at %sstep: %d", "final " if is_final else "", step_i)
                 fully_replicated_gda_train_state = jax.tree_map(
                     py_utils.convert_host_local_array_to_global_array,
                     partitioned_train_state,
@@ -505,9 +487,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     force=is_final,
                 )
             else:
-                unreplicated_train_state = jax.tree_map(
-                    lambda x: x[0], partitioned_train_state
-                )
+                unreplicated_train_state = jax.tree_map(lambda x: x[0], partitioned_train_state)
                 self._save_with_args(
                     step_i,
                     train_state=unreplicated_train_state,
@@ -517,9 +497,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     train_input_pipeline=train_input_pipeline,
                     force=is_final,
                 )
-        monitoring.record_event_duration_secs(
-            _WRITE_CHECKPOINT_EVENT, save_period.elapsed
-        )
+        monitoring.record_event_duration_secs(_WRITE_CHECKPOINT_EVENT, save_period.elapsed)
 
     def save_if_needed(
         self,
@@ -637,10 +615,7 @@ def _create_checkpointer(
 
     train_input_checkpointer = None
     if train_p.enable_input_checkpointing:
-        if (
-            hasattr(train_input_p, "deterministic_input")
-            and train_input_p.deterministic_input
-        ):
+        if hasattr(train_input_p, "deterministic_input") and train_input_p.deterministic_input:
             raise ValueError(
                 "Checkpointing deterministic Seqio inputs is not supported via Orbax"
                 " (will be checkpointed independently). Please set"

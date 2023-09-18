@@ -265,9 +265,7 @@ def adjust_input_params_for_small_batch(
     """
     # Remote input adjusts the params for small batch itself.
     # lsp: false
-    logging.info(
-        f"input_p.experimental_remote_input: {input_p.experimental_remote_input}==="
-    )
+    logging.info(f"input_p.experimental_remote_input: {input_p.experimental_remote_input}===")
     if input_p.experimental_remote_input:
         return input_p
 
@@ -276,10 +274,7 @@ def adjust_input_params_for_small_batch(
         input_p
     )  # pytype: disable=attribute-error
 
-    if (
-        batch_size % local_device_count == 0
-        and input_p.num_infeed_hosts == jax.process_count()
-    ):
+    if batch_size % local_device_count == 0 and input_p.num_infeed_hosts == jax.process_count():
         return input_p
 
     # Determine correct padding amount.
@@ -298,9 +293,7 @@ def adjust_input_params_for_small_batch(
             else:
                 # Single-host input doesn't need to do custom order resharding.
                 copy.batch_padding_size = (
-                    (batch_size + local_device_count)
-                    // local_device_count
-                    * local_device_count
+                    (batch_size + local_device_count) // local_device_count * local_device_count
                 ) - batch_size
 
     assert input_p.num_infeed_hosts <= jax.process_count()
@@ -392,9 +385,7 @@ def initialize_model_state(
             summary_verbosity=jax_task.summary_verbosity,
         )
         with base_layer.JaxContext.new_context(hparams=context_p):
-            inputs = jax.tree_map(
-                lambda x: jnp.zeros(x.shape, x.dtype), inputs_shape_dtype
-            )
+            inputs = jax.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), inputs_shape_dtype)
             if model.hparams.fprop_dtype == jnp.bfloat16:
                 inputs = jax.tree_map(_maybe_to_bfloat16, inputs)
             # lsp : model.init
@@ -407,9 +398,7 @@ def initialize_model_state(
     # variable collection.
     if "params_axes" in initial_vars:
         del initial_vars["params_axes"]
-    train_state = jax_task.create_train_state(
-        initial_vars, var_weight_hparams, discard_opt_states
-    )
+    train_state = jax_task.create_train_state(initial_vars, var_weight_hparams, discard_opt_states)
     train_state_provenance = train_states.build_train_state_provenance(train_state)
     # `do_init_checkpoint_rules` is False for pjit/spmd.
     if do_init_checkpoint_rules:
@@ -431,9 +420,7 @@ def initialize_model_state(
             # Free the previous opt_states as it will be re-computed.
             jax.tree_util.tree_map(lambda x: x.delete(), train_state.opt_states)
             # Re-compute opt_states after the model variables are updated.
-            opt_states = jax_task.create_opt_states(
-                train_state.mdl_vars, var_weight_hparams
-            )
+            opt_states = jax_task.create_opt_states(train_state.mdl_vars, var_weight_hparams)
             train_state = train_state.replace(opt_states=opt_states)
     return train_state, train_state_provenance
 
@@ -505,9 +492,7 @@ def _maybe_aggregate_metrics_summaries(
     weighted_scalars: WeightedScalars,
     summary_dict: SummaryDict,
     per_example_out: NestedMap,
-) -> Tuple[
-    JTensor, JTensor, Optional[JTensor], WeightedScalars, SummaryDict, NestedMap
-]:
+) -> Tuple[JTensor, JTensor, Optional[JTensor], WeightedScalars, SummaryDict, NestedMap]:
     """If in pmap, aggregate metrics and summaries across model replicas.
 
     Args:
@@ -541,9 +526,7 @@ def _maybe_aggregate_metrics_summaries(
             sum_value = jax.lax.psum(value * weight, axis_name=PMAP_PARALLEL_AXIS_NAME)
             sum_weight = jax.lax.psum(weight, axis_name=PMAP_PARALLEL_AXIS_NAME)
             aggregated_scalars[key] = (sum_value / (sum_weight + 1e-8), sum_weight)
-        aggregated_summaries = summary_utils.aggregate_per_replica_summaries(
-            summary_dict
-        )
+        aggregated_summaries = summary_utils.aggregate_per_replica_summaries(summary_dict)
         per_example_out = jax.lax.all_gather(
             per_example_out, axis_name=PMAP_PARALLEL_AXIS_NAME, tiled=True
         )
@@ -817,8 +800,10 @@ def train_step_single_learner(
     if not var_weight_hparams:
         with base_layer.JaxContext.new_context(hparams=context_p):
             var_weight_hparams = model.abstract_init_with_metadata(inputs)
-    updated_mdl_vars = jax_task.maybe_adjust_train_state(  # pytype: disable=wrong-arg-types  # jax-ndarray
-        states.step, states.mdl_vars, var_weight_hparams, prng_key
+    updated_mdl_vars = (
+        jax_task.maybe_adjust_train_state(  # pytype: disable=wrong-arg-types  # jax-ndarray
+            states.step, states.mdl_vars, var_weight_hparams, prng_key
+        )
     )
 
     def _loss_fn(
@@ -843,9 +828,7 @@ def train_step_single_learner(
                     inputs: NestedMap,
                     mutable: bool,
                     rngs: Dict[str, PRNGKey],
-                ) -> Tuple[
-                    Tuple[base_model.WeightedScalars, Dict[str, Any]], NestedJTensor
-                ]:
+                ) -> Tuple[Tuple[base_model.WeightedScalars, Dict[str, Any]], NestedJTensor]:
                     # lsp
                     return model.apply(
                         variables,
@@ -907,9 +890,7 @@ def train_step_single_learner(
     prng_key, subkey = jax.random.split(prng_key)
 
     # Skip variables for gradients.
-    excluded_for_grad = tasks_lib.get_excluded_var_mask_for_grad(
-        var_weight_hparams, learner
-    )
+    excluded_for_grad = tasks_lib.get_excluded_var_mask_for_grad(var_weight_hparams, learner)
     logging.info(f"[lsp]excluded_for_grad: {excluded_for_grad}")
     # Excluded for optimizer states.
     excluded_for_opt = tasks_lib.get_excluded_var_mask_for_opt(
@@ -921,15 +902,9 @@ def train_step_single_learner(
     class GradFn(flax.linen.Module):
         # def grad_fn(mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
         # lsp: 如果True则赋值为py_utils.BpropMaskedNode()对象，否则不变
-        def __call__(
-            self, mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey
-        ):
-            with_grad = tasks_lib.filter_vars_for_grad_or_opt(
-                mdl_vars, excluded_for_grad
-            )
-            no_grad = jax.tree_map(
-                lambda x, e: x if e else {}, mdl_vars, excluded_for_grad
-            )
+        def __call__(self, mdl_vars: NestedJTensor, inputs: NestedMap, prng_key: PRNGKey):
+            with_grad = tasks_lib.filter_vars_for_grad_or_opt(mdl_vars, excluded_for_grad)
+            no_grad = jax.tree_map(lambda x, e: x if e else {}, mdl_vars, excluded_for_grad)
 
             def _loss(
                 mdl_vars_grad: NestedJTensor,
@@ -1001,35 +976,22 @@ def train_step_single_learner(
             pass
 
         # Add a summary for learning rate
-        learner.plot_learning_rate(
-            states.step
-        )  # pytype: disable=wrong-arg-types  # jax-ndarray
+        learner.plot_learning_rate(states.step)  # pytype: disable=wrong-arg-types  # jax-ndarray
 
         # Apply gradient transformations.
-        mdl_vars = (
-            states.mdl_vars.copy()
-        )  # pytype: disable=attribute-error  # jax-ndarray
-        if (
-            expose_updated_nontrainables_to_learner
-            and NON_TRAINABLE in fwd_updated_vars
-        ):
+        mdl_vars = states.mdl_vars.copy()  # pytype: disable=attribute-error  # jax-ndarray
+        if expose_updated_nontrainables_to_learner and NON_TRAINABLE in fwd_updated_vars:
             # Make updated non-trainable vars visible to EMA.
             mdl_vars[NON_TRAINABLE] = fwd_updated_vars[NON_TRAINABLE]
-        vars_with_opt = tasks_lib.filter_vars_for_grad_or_opt(
-            mdl_vars, excluded_for_opt
-        )
+        vars_with_opt = tasks_lib.filter_vars_for_grad_or_opt(mdl_vars, excluded_for_opt)
         # lsp: var_weight_hparams字典字符串
-        wps_with_opt = tasks_lib.filter_vars_for_grad_or_opt(
-            var_weight_hparams, excluded_for_opt
-        )
+        wps_with_opt = tasks_lib.filter_vars_for_grad_or_opt(var_weight_hparams, excluded_for_opt)
         # wps_with_opt: {'params': {'lm': {'embedding_lookup': {'emb_var': WeightHParams(shape=[64000, 4096], init=WeightInit(method='gaussian', scale=0.006), dtype=<class 'jax.numpy.float32'>, collections=[], mesh_shape=[1, 8, 1], tensor_split_dims_mapping=['data', 'mdl'], repeat_prefix=None, repeat_prefix_split_dims_mapping=None, repeat_optimizer_dims_mapping=None, fan_in_axes=None, fan_out_axes=None)}, 'fi
         # vars_with_opt: {'params': {'lm': {'embedding_lookup': {'emb_var': Traced<ShapedArray(float32[64000,4096])>with<DynamicJaxprTrace(level=1/0)>}, 'fina
         transformed_grads, new_opt_states = learner.update_states(
             grads, states.opt_states[0], vars_with_opt, wps_with_opt
         )
-        vars_with_opt = learner.apply_gradient(
-            vars_with_opt, transformed_grads, wps_with_opt
-        )
+        vars_with_opt = learner.apply_gradient(vars_with_opt, transformed_grads, wps_with_opt)
         mdl_vars = jax.tree_map(
             lambda e, old, new: old if e else new,
             excluded_for_grad,
@@ -1168,9 +1130,7 @@ def eval_step_single_learner(
     else:
         assert NotImplementedError(f"fprop_dtype {fprop_dtype} not supported.")
 
-    enum_keys, inputs = py_utils.filter_by_matching_keys(
-        inputs, [py_utils.PROVENANCE_PREFIX]
-    )
+    enum_keys, inputs = py_utils.filter_by_matching_keys(inputs, [py_utils.PROVENANCE_PREFIX])
     with base_layer.JaxContext.new_context(hparams=context_p):
         prng_key, k1, k2, k3 = jax.random.split(prng_key, 4)
         apply_rng_keys = {PARAMS: k1, RANDOM: k2, NON_PAX_RNG_KEY: k3}
@@ -1268,9 +1228,7 @@ def decode_step(
     elif fprop_dtype != jnp.float32:
         assert NotImplementedError(f"fprop_dtype {fprop_dtype} not supported.")
 
-    enum_keys, inputs = py_utils.filter_by_matching_keys(
-        inputs, [py_utils.PROVENANCE_PREFIX]
-    )
+    enum_keys, inputs = py_utils.filter_by_matching_keys(inputs, [py_utils.PROVENANCE_PREFIX])
     with base_layer.JaxContext.new_context(hparams=context_p):
         k1, k2, k3 = jax.random.split(prng_key, 3)
         apply_rng_keys = {PARAMS: k1, RANDOM: k2, NON_PAX_RNG_KEY: k3}
@@ -1400,16 +1358,12 @@ def initialize_partitioned_model_states(
         var_weight_hparams = model.abstract_init_with_metadata(global_input_shapes)
     # discard_opt_states: False  state_specs.to_eval_state(): 没有opt_states的trainstate specs
     # params and opt_states shard
-    train_state_partition_specs = (
-        state_specs.to_eval_state() if discard_opt_states else state_specs
-    )
+    train_state_partition_specs = state_specs.to_eval_state() if discard_opt_states else state_specs
     # params and opt_states shape
     train_state_unpadded_shapes = jax.tree_map(
         lambda x: x.shape,
         # jax_task class train?还是继承了train类？
-        jax_task.create_train_state_unpadded_shapes(
-            var_weight_hparams, discard_opt_states
-        ),
+        jax_task.create_train_state_unpadded_shapes(var_weight_hparams, discard_opt_states),
     )
     assert train_state_partition_specs is not None
 
@@ -1434,9 +1388,7 @@ def initialize_partitioned_model_states(
 
     logging.info("unpadded_out_shape: %s", train_state_unpadded_shapes)
     logging.info("train_state_partition_specs: %s", train_state_partition_specs)
-    asserts.assert_same_structure(
-        train_state_unpadded_shapes, train_state_partition_specs
-    )
+    asserts.assert_same_structure(train_state_unpadded_shapes, train_state_partition_specs)
 
     mesh_names = model.hparams.mesh_axis_names
     # rng key: PartitionSpec(None,)
@@ -1529,9 +1481,7 @@ def get_inputs_shape_dtype(
         lambda x: jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype),
         sample_inputs,
     )
-    global_inputs_shape_dtype = jax.tree_map(
-        py_utils.get_global_input_shape_dtype, sample_inputs
-    )
+    global_inputs_shape_dtype = jax.tree_map(py_utils.get_global_input_shape_dtype, sample_inputs)
     return perhost_inputs_shape_dtype, global_inputs_shape_dtype
 
 
@@ -1542,9 +1492,7 @@ def get_input_partition_specs(mesh_axis_names, inputs_shape_dtype):
     #     mesh_axis_names,
     #     inputs_shape_dtype)
     # Compute inputs PartitionSpec from inputs_shape_dtype
-    inputs_partition_spec_fn = functools.partial(
-        shard_on_batch_dim_partition_spec, mesh_axis_names
-    )
+    inputs_partition_spec_fn = functools.partial(shard_on_batch_dim_partition_spec, mesh_axis_names)
     return jax.tree_util.tree_map(inputs_partition_spec_fn, inputs_shape_dtype)
 
 

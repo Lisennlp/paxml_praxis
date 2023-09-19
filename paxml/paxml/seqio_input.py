@@ -655,7 +655,9 @@ class SeqIOInput(base_input.BaseInput):
                     " and target enum fields will be mismatched."
                 ),
             )
-        return self.shuffle and self.is_training
+        # return self.shuffle and self.is_training
+        # lsp
+        return self.shuffle or self.is_training
 
     @property
     def should_repeat(self) -> bool:

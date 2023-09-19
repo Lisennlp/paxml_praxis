@@ -124,6 +124,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 "targets": self.MAX_SEQ_LEN,
                 "masks": self.MAX_SEQ_LEN,
             }
+            shuffle = True
 
         else:
             DataFeature = seqio_input.LanguageModelFeatures
@@ -131,6 +132,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             name = "C4Train" if is_training else "C4Validation"
             split_name = "train" if is_training else "validation"
             task_feature_lengths = {"targets": self.MAX_SEQ_LEN}
+            shuffle = None
 
         p = pax_fiddle.Config(
             seqio_input.SeqIOInput,
@@ -139,6 +141,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             split_name=split_name,
             task_feature_lengths=task_feature_lengths,
             use_cached=False,
+            shuffle=shuffle,
             repeat=True if is_training else False,
             feature_converter=DataFeature(
                 pack=True if is_training else False,
@@ -1387,8 +1390,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     LR_LRED_WARMUP = 2000
     LR_LRED_DECAY_START = 2001
     LR_LRED_DECAY_END = 200000
-    LR_LRED_MIN_RATIO = 1
-    LR_LRED_MAX = 1
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
     Z_LOSS_WEIGHT = 2e-4
 
     # LEARNING_RATE = 8e-6
@@ -1500,6 +1503,7 @@ def tfids_registry():
     ]
     feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
     for mode in ["train", "test"]:
+        shuffle_buffer_size = 10000
         source = seqio.TFExampleDataSource(
             split_to_filepattern={mode: BC2Gpt13B.DATA_PATH[mode]},
             feature_description=feature_desc,
@@ -1509,6 +1513,7 @@ def tfids_registry():
             source,
             preprocessors=preprocessors,
             output_features=output_features,
+            shuffle_buffer_size=shuffle_buffer_size
         )
 
 

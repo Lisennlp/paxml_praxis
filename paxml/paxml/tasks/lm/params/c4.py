@@ -1376,8 +1376,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 40
     COMBINE_QKV = False
     NUM_GROUPS = -1
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 32, 4]
     DCN_MESH_SHAPE = [1, 1, 1]
 
     MAX_SEQ_LEN = 4096

@@ -202,6 +202,7 @@ class FullSoftmax(base_layer.BaseLayer):
     bias_init: Optional[float] = 0.0
     feed_forward_tpl: LayerTpl = template_field(linears.FeedForward)
 
+
     def setup(self) -> None:
         if self.feed_forward_tpl is not None:
             wp = self.weight_split_dims_mapping
@@ -306,13 +307,15 @@ class FullSoftmax(base_layer.BaseLayer):
             class_probabilities = jax.lax.stop_gradient(class_probabilities)
 
         if self.bi_tempered_loss_tpl is None:
+            # per_example_xent: bsz * len
+           
             per_example_xent = -jnp.sum(log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
         else:
             per_example_xent = self.bi_tempered_loss(logits, class_probabilities)
         per_example_argmax = jax.lax.stop_gradient(jnp.argmax(logits.astype(jnp.float32), axis=-1))
 
         # Compute total softmax cross-entropy loss for the output tensor.
-        # lsp: total loss
+        # lsp: total_loss
         total_xent = jnp.sum(
             jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
             dtype=jnp.float32,
@@ -326,16 +329,22 @@ class FullSoftmax(base_layer.BaseLayer):
             axis=-2,
         )
         total_weight_batch = jnp.maximum(jnp.sum(class_weights, dtype=jnp.float32, axis=-2), 1e-10)
+        # lsp: 最后变成 total_loss，然后基于这个计算grad
         avg_xent = jnp.mean(total_xent_batch / total_weight_batch)
         # lsp end
 
         if self.z_loss_weight > 0.0:
-            z_loss = (
-                jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32) / total_weight
-            )
-            z_loss *= self.z_loss_weight
+            # lsp: 
+            softmax_normalizer = logits.max(-1) ** 2
+            z_loss = self.z_loss_weight * softmax_normalizer.mean()
+            # z_loss = (
+            #     jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32) / total_weight
+            # )
+            # z_loss *= self.z_loss_weight
             self.add_summary("aux_z_loss", z_loss)
             self.add_aux_loss("aux_z_loss", z_loss)
+            # lsp: 因此，如果需要计算z_loss的梯度的话，需要在avg_xent的基础上加上z_loss
+            avg_xent += z_loss
 
         output_nmap = NestedMap(
             logits=logits.astype(inputs_dtype),
@@ -349,7 +358,7 @@ class FullSoftmax(base_layer.BaseLayer):
             # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
         )
         if self.z_loss_weight > 0.0:
-            output_nmap["z_loss"] = z_loss
+            output_nmap["z_loss"] = z_loss            
         return output_nmap
 
 

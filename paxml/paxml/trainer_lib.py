@@ -516,6 +516,7 @@ def _maybe_aggregate_metrics_summaries(
       per_example_out - the aggregated per_example_out.
     """
     # compute weighted loss and mean across shards
+    # weighted_scalars: 一些loss信息, weighted_loss == mean_loss
     weighted_loss, mean_loss, loss_weight = loss_aggregator.aggregate(weighted_scalars)
 
     if base_layer.is_running_under_pmap():
@@ -841,6 +842,7 @@ def train_step_single_learner(
             else:
                 apply = functools.partial(apply_fn, model)
             # lsp： 开始前传
+            # weighted_scalars: loss信息
             (weighted_scalars, per_example_output), updated_vars = apply(
                 mdl_vars,
                 inputs,
@@ -852,7 +854,6 @@ def train_step_single_learner(
             summary_tensors = updated_vars.get(SUMMARIES, {})
             # TODO(yonghui): Fetch aux losses and add them to summaries.
             summary_tensors = summary_utils.flatten_flax_summaries(summary_tensors)
-
             (
                 weighted_loss,
                 mean_loss,
@@ -876,6 +877,7 @@ def train_step_single_learner(
                     forward_updated_vars[collection] = updated_vars[collection]
         if fprop_dtype == jnp.bfloat16 and weighted_loss.dtype == fprop_dtype:
             weighted_loss = weighted_loss.astype(jnp.float32)
+        # lsp: 基于 weighted_loss计算的grad
         return weighted_loss, sgf.GradAuxInfo(
             loss_weight=loss_weight,
             aux_info=(

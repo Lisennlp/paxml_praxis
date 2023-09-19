@@ -596,7 +596,7 @@ class TransformerLm(base_layer.BaseLayer):
             xent_output.per_sequence_xent = jnp.sum(per_token_xent, -1)
 
             # Sum aux_loss and add to avg_xent.
-            # lsp: avg_xent: 平均loss
+            # lsp: avg_xent: 平均loss, 最后基于total_loss计算的梯度
             xent_output.total_loss = xent_output.avg_xent
             if not self.skip_aux_loss:
                 aux_loss = 0.0
@@ -630,6 +630,7 @@ class TransformerLm(base_layer.BaseLayer):
         # tricky to first compute the activation and then logits which would require
         # extensive modification to `LanguageModel.compute_loss` (and other
         # callers).
+        # __import__('ipdb').set_trace()
         if self.record_activations_in_xent_output:
             xent_output.activations = activations
         return xent_output
@@ -672,7 +673,6 @@ class TransformerLm(base_layer.BaseLayer):
             )
 
         if self.position_emb_tpl is not None:
-            __import__("ipdb").set_trace()
             position_emb = self.position_emb(seq_length=seq_length, position=segment_pos)
             inputs = input_emb + position_emb
         else:

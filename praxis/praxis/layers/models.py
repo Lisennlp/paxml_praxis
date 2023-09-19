@@ -77,7 +77,7 @@ def _merge_per_token_and_per_example_weights(
     )
     return per_token_weights * per_example_weights_tiled
 
-
+# lsp：走这
 def compute_xent_loss_helper(
     predictions: NestedMap,
     input_batch: NestedMap,
@@ -162,9 +162,12 @@ def compute_xent_loss_helper(
 
     # The score for the sequence is the negative of the sum of per token cross
     # entropy, which is the (weighted) sum of log probs on the tokens.
+    # __import__('ipdb').set_trace()
     per_example_output = NestedMap(labels=labels, scores=-predictions.per_sequence_xent)
+    # apply_eval_sample_weights:false, hasattr(input_batch, "eval_sample_weights"):true
     if apply_eval_sample_weights and hasattr(input_batch, "eval_sample_weights"):
         per_example_output.eval_sample_weights = input_batch.eval_sample_weights
+    # false
     if return_predictions:
         per_example_output = predictions
     return metrics, per_example_output

@@ -1366,7 +1366,7 @@ class MyDatasets(base_input.BaseInput):
 
 
 @experiment_registry.register
-class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
+class BC2Gpt13B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 2
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
@@ -1384,7 +1384,12 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
 
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
-    LR_COS_MIN_RATIO = 1
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1
+    LR_LRED_MAX = 1
+    Z_LOSS_WEIGHT = 2e-4
 
     # LEARNING_RATE = 8e-6
     # LR_SCHEDULE = "linear_rampup_cosine_decay" # warmup_cosine_decay_schedule
@@ -1394,14 +1399,14 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     LR_COS_WARMUP = int(58497 * 0.02 * 1)
     LR_COS_DECAY_START = LR_COS_WARMUP + 1
     LR_COS_DECAY_END = int(19499 * 1)
-    WEIGHT_DECAY = 0.001
-    ADAM_BETA2 = 0.999
+
+    ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    WEIGHT_DECAY = 0.005 # baichuan2 finetune
 
     NUM_TRAIN_STEPS = 1e7 # 训练最大步数
-
     TRAINING_NUM_BATCHES_TO_SKIP = None
 
     EMBED_DROPOUT_PROB = 0.0
@@ -1421,7 +1426,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     LM_HEAD_NORM = True
 
     TARGET_LOG_PPLX = -1
-    SAVE_ON_STEPS = list(range(5000, 100000, 5000))
+    SAVE_ON_STEPS = list(range(2000, 50000, 2000))
 
     # tfids datasets
     KEY_MAP = {"targets": "input_ids", "masks": "labels"}
@@ -1448,6 +1453,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
         train_test_dataset = defaultdict(list)
         for k, v in dataset.items():
             random.shuffle(v)
+            v = v[:10]
             test = v[:int(len(v) * test_ratio)]
             train = v[int(len(v) * test_ratio): ]
             train_test_dataset['train'].extend(train)

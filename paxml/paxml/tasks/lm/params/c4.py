@@ -1370,14 +1370,14 @@ class MyDatasets(base_input.BaseInput):
 
 @experiment_registry.register
 class BC2Gpt13B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 2
+    NUM_LAYERS = 40
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
     COMBINE_QKV = False
     NUM_GROUPS = -1
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]
+    ICI_MESH_SHAPE = [1, 8, 4]
     DCN_MESH_SHAPE = [1, 1, 1]
 
     MAX_SEQ_LEN = 4096
@@ -1456,7 +1456,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
         train_test_dataset = defaultdict(list)
         for k, v in dataset.items():
             random.shuffle(v)
-            v = v[:10]
             test = v[:int(len(v) * test_ratio)]
             train = v[int(len(v) * test_ratio): ]
             train_test_dataset['train'].extend(train)

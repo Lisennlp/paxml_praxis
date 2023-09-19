@@ -20,6 +20,7 @@ import math
 from typing import Dict, List, Optional
 from collections import defaultdict
 import os
+import random
 
 from absl import logging
 import fiddle as fdl
@@ -1380,10 +1381,12 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     VOCAB_SIZE = 125696
 
     LAYERNORM_EPSILON = 1e-06
+
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
     LR_COS_MIN_RATIO = 1
 
+    # LEARNING_RATE = 8e-6
     # LR_SCHEDULE = "linear_rampup_cosine_decay" # warmup_cosine_decay_schedule
     # LR_COS_MIN_RATIO = 0.1
 
@@ -1397,6 +1400,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     ADAM_EPSILON = 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
 
+    NUM_TRAIN_STEPS = 1e7 # 训练最大步数
+
     TRAINING_NUM_BATCHES_TO_SKIP = None
 
     EMBED_DROPOUT_PROB = 0.0
@@ -1408,7 +1413,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
-    WANDB_PROJECT = "baichuan2_13b_lr1e-5"
+    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5"
 
     TRAINING_SEED = 1234
     USE_ROTARY_POSITION_EMB = False
@@ -1424,7 +1429,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     TEST_RATIO = 0.2
 
-    def extract_datapath(test_ratio):
+    def extract_datapath(test_ratio, seed):
+        random.seed(seed)
         dataset = defaultdict(list)
         client = storage.Client()
         bucket_name = 'jax_llm_data'
@@ -1441,7 +1447,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
                         break
         train_test_dataset = defaultdict(list)
         for k, v in dataset.items():
-            v = v[:10]
+            random.shuffle(v)
             test = v[:int(len(v) * test_ratio)]
             train = v[int(len(v) * test_ratio): ]
             train_test_dataset['train'].extend(train)
@@ -1449,7 +1455,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
             logging.info(f'dataset: {k}, nums: {len(v)}')
         return train_test_dataset
 
-    DATA_PATH = extract_datapath(TEST_RATIO)
+    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
 
     # baichuan1指令数据集
     # DATA_PATH = {

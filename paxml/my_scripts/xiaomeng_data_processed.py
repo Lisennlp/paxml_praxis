@@ -18,7 +18,7 @@ class DataProcessor:
         save_dir,
         data_type="zh",
         max_seq_len=2048,
-        ratio=0.5,
+        ratio=1.0,
         shuffle=True,
     ):
         bucket = True
@@ -46,9 +46,12 @@ class DataProcessor:
         self.save_dir = save_dir
         self.book_index = 0
         self.books_pathlist = []
-        # self.combine_nums = 50 if data_type == 'zh' else 250
-        self.combine_nums = 50 if data_type == "zh" else 1000
+        self.write_line = 0
+        self.writer = None
+        self.clear_threshold_length = 500
         self.extract_filepath()
+        self.split_map_dir = {'0': '_start', '1': '_median', '2': '_end'}
+        self.file_count = 0
 
     def _int64_feature(self, value):
         return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
@@ -66,33 +69,51 @@ class DataProcessor:
     def convert_line_to_ids(self, line):
         return self.tokenizer.encode(line)
 
-    def write_file(self, writer, book_input_ids):
+    def writer_factory(self, split_rank="1"):
+        # print(f'Rank: {self.rank}, write_line: {self.write_line}')
+        if self.write_line == self.per_file_line_num:
+            self.writer.close()
+            self.write_line = 0
+        if self.write_line == 0:
+            name = f"{self.data_type}_split{split_rank}_rank{self.rank}_count{self.file_count}"
+            # save_dir = self.save_dir.replace('_split', self.split_map_dir[split_rank])
+            # save_path = os.path.join(save_dir, name)
+            save_path = os.path.join(self.save_dir, name)
+            self.writer = tf.io.TFRecordWriter(save_path)
+            print(f"Rank: {self.rank}, save_path: {save_path}")
+            self.file_count += 1
+
+    def write_file(self, book_input_ids):
         input_ids = book_input_ids[: self.max_seq_len]
-        x = book_input_ids[self.max_seq_len :]
-        # attention_masks = len(input_ids) * [1]
+        if len(input_ids) < self.clear_threshold_length:
+            return []
         feature = {
             "input_ids": self._int64_feature(input_ids),
-            #             "attention_mask": self._int64_feature(attention_masks),
-            #             "labels": self._int64_feature(input_ids),
         }
         example = tf.train.Example(features=tf.train.Features(feature=feature))
-        writer.write(example.SerializeToString())
-        return x
+        self.writer.write(example.SerializeToString())
+        self.write_line += 1
+        book_input_ids = book_input_ids[self.max_seq_len :]
+        return book_input_ids
 
-    def process_book(self, writer, path):
+    def process_book(self, path):
         book_input_ids = []
-        # book_attention_mask_ids = []
-        # book_labels_ids = []
-        #         name = os.path.basename(path)
-        #         save_path = os.path.join(self.save_dir, f'{self.data_type}_BOOK_{rank}')
         with open(path) as fr:
-            for i, line in enumerate(fr):
-                ids = self.convert_line_to_ids(line)
-                book_input_ids.extend(ids)
-                if len(book_input_ids) > self.max_seq_len:
-                    book_input_ids = self.write_file(writer, book_input_ids)
-            if len(book_input_ids):
-                self.write_file(writer, book_input_ids)
+            lines = fr.readlines()
+            chunk_size = len(lines) // self.chunks
+            for i in range(self.chunks):
+                split_rank = str(i).zfill(len(str(self.chunks)))
+                split_lines = lines[i * chunk_size : (i + 1) * chunk_size]
+                for i, line in enumerate(split_lines):
+                    ids = self.convert_line_to_ids(line)
+                    book_input_ids.extend(ids)
+                    if len(book_input_ids) > self.max_seq_len:
+                        self.writer_factory(split_rank=split_rank)
+                        book_input_ids = self.write_file(book_input_ids)
+
+                if len(book_input_ids):
+                    self.writer_factory(split_rank=split_rank)
+                    book_input_ids = self.write_file(book_input_ids)
             self.book_index += 1
 
     def __len__(self):
@@ -104,24 +125,13 @@ class DataProcessor:
     def run(self, start, end, rank):
         N = end - start
         time_start = time.time()
-        print(f"Rank: {rank}. book: {self.books_pathlist[:10]}. combine_nums: {self.combine_nums}")
+        print(f"Rank: {rank}. book: {len(self.books_pathlist)}")
         for index, path in enumerate(self.books_pathlist[start:end]):
-            if index % self.combine_nums == 0:
-                print(f"rank: {rank} index: {index} self.combine_nums: {self.combine_nums}")
-                save_path = os.path.join(self.save_dir, f"{self.data_type}_BOOK_{rank}_{index}")
-                print(
-                    f"\n\n\n\n\n================Rank: {rank} save_path:"
-                    f" {save_path} ====================="
-                )
-                try:
-                    writer.close()
-                except NameError as e:
-                    print(f"Waining: {e}")
-                writer = tf.io.TFRecordWriter(save_path)
+            print(f"Rank: {rank} index: {index}")
             try:
-                self.process_book(writer, path)
+                self.process_book(path)
             except Exception as e:
-                print(f"Rank: {rank}, error: {e}")
+                print(f'Rank: {rank}, error: {e}')
             time_end = time.time()
             print(
                 f"{rank}-processed: {index}/{N}, path: ‘{path}’ deal finished, take:"
@@ -131,13 +141,13 @@ class DataProcessor:
                 wandb_stats = {"index": index, "N": N, "take": time_end - time_start}
                 wandb.log(wandb_stats)
         try:
-            writer.close()
-        except NameError as e:
-            print(f"Waining: {e}")
+            self.writer.close()
+        except Exception as e:
+            print(f'Final close......')
 
 
 def process_book_wrapper(args):
-    rank, LANG, WORKERS, max_seq_len, ratio = args
+    rank, LANG, WORKERS, max_seq_len, ratio, chunks = args
     bucket = True
     if bucket:
         data_pathfiles = {
@@ -153,7 +163,7 @@ def process_book_wrapper(args):
     if not os.path.exists(tokenizer_path):
         tokenizer_path = "baichuan-inc/Baichuan2-13B-Base"
     if bucket:
-        save_dir = f"gs://jax_llm_data/xiaomeng/processed_{LANG}_data/"
+        save_dir = f"gs://jax_llm_data/xiaomeng/processed_{LANG}_data_split/"
     else:
         save_dir = f"/nas2/lishengping/other_models/baichuan2-13b-base/processed_{LANG}_data/"
 
@@ -165,10 +175,13 @@ def process_book_wrapper(args):
         max_seq_len=max_seq_len,
         ratio=ratio,
     )
+    processor.rank = rank
+    processor.chunks = chunks
+    processor.per_file_line_num = 10000
     every_rank_nums = int(len(processor.books_pathlist) // WORKERS)
     if rank == 0:
         wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
-        wandb.init(project="xiaomeng", name="data_processed", config=None, resume=True)
+        wandb.init(project="xiaomeng_test", name="data_processed", config=None, resume=True)
     start = int(rank * every_rank_nums)
     end = int((rank + 1) * every_rank_nums)
     print(f"Rank: {rank} start: {start} end: {end}")
@@ -178,7 +191,7 @@ def process_book_wrapper(args):
 
 if __name__ == "__main__":
     random.seed(42)
-    set_start_method("spawn")  # tpu
+    set_start_method("spawn")  # tpu-vm
     tokenizer_path = "/nas2/lishengping/other_models/baichuan2-13b-base"
     if not os.path.exists(tokenizer_path):
         tokenizer_path = "baichuan-inc/Baichuan2-13B-Base"
@@ -188,18 +201,13 @@ if __name__ == "__main__":
     WORKERS = 240
     ratio = 1.0
     max_seq_len = 4096
+    chunks = 3
     pool = multiprocessing.Pool(processes=WORKERS)
     args = (
-        [rank, LANG, WORKERS, max_seq_len, ratio]
+        [rank, LANG, WORKERS, max_seq_len, ratio, chunks]
         for rank in range(WORKERS)
         for LANG in ["en", "zh"]
     )
-    pool.map(process_book_wrapper, args)  # 包含每个进程的返回值
-    # for LANG in ['en', 'zh']:
-    # workers_thread = []
-    # for rank in range(WORKERS):
-    # w = pool.apply_async(process_book_wrapper, (rank, LANG, WORKERS, max_seq_len, ratio))
-    # workers_thread.append(w)
+    results = pool.map(process_book_wrapper, args)  # 包含每个进程的返回值
     pool.close()
     pool.join()
-#             p.map(process_book_wrapper, [(processor, rank, every_rank_nums) for rank in range(workers)])

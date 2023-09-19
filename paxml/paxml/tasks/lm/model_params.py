@@ -685,6 +685,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         task_p.train.profiler_num_steps = self.PROFILER_NUM_STEPS
         task_p.train.profiler_min_duration_sec = self.PROFILER_MIN_DURATION_SEC
         task_p.train.profiler_capture_step = self.PROFILER_CAPTURE_STEP
+        # lsp
+        task_p.train.save_on_steps = self.SAVE_ON_STEPS
 
         if self.ICI_MESH_SHAPE is not None:
             # lsp：设置一大堆shard策略

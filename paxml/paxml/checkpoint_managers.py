@@ -276,8 +276,11 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         # save interval. This condition accounts for the possibility of saving
         # on preemption, in which case we want to maintain the same save period as
         # if preemption had not happened.
+        logging.info(f'self._options.save_on_steps: {self._options.save_on_steps}')
         return last_checkpoint_step is None or (
-            last_checkpoint_step < step and step % self._options.save_interval_steps == 0
+            last_checkpoint_step < step
+            and step % self._options.save_interval_steps == 0
+            or step in self._options.save_on_steps
         )
 
     def delete(self, step: int):
@@ -287,6 +290,88 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
                 "Checkpoints with digit step subdirectories do not support deletions."
             )
         super().delete(step)
+
+    def _remove_old_checkpoints(
+        self,
+    ):  # XD: copied from orbax/checkpoint/checkpoint_manager.py:795 (CheckpointManager)
+        """Keeps the `max_to_keep` most recent checkpoint steps."""
+        # Must have set max_to_keep in order to remove any checkpoints.
+        if self._options.max_to_keep is None:
+            return
+        # Not enough checkpoints accumulated to consider deletion.
+        if len(self._checkpoints) <= self._options.max_to_keep:
+            return
+        if self._track_best:
+            # Best steps (to keep) are at the end, after sorting.
+            (
+                checkpoints_without_metrics,
+                sorted_checkpoints,
+            ) = self._sort_checkpoints_by_metrics(self._checkpoints)
+        else:
+            # checkpoints already sorted by ascending step
+            checkpoints_without_metrics = []
+            sorted_checkpoints = self._checkpoints
+
+        keep = int(self._options.max_to_keep)
+        if self._options.keep_checkpoints_without_metrics:
+            maybe_delete = sorted_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+            active_checkpoints = (
+                checkpoints_without_metrics + sorted_checkpoints[-keep:] if keep > 0 else []
+            )
+        else:
+            all_checkpoints = checkpoints_without_metrics + sorted_checkpoints
+            maybe_delete = all_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+            active_checkpoints = all_checkpoints[-keep:] if keep > 0 else []
+        maybe_delete = [
+            info for info in maybe_delete if info.step not in self._options.save_on_steps
+        ]  # XD
+
+        kept_checkpoints = []
+        for info in maybe_delete:
+            if utils.is_locked(self.directory, info.step):
+                logging.info(
+                    "Preserving %s: (Reason: checkpoint is locked).",
+                    info,
+                )
+            if (
+                self._options.keep_time_interval is not None
+                and self._interval_preserved_checkpoints
+            ):
+                if info in self._interval_preserved_checkpoints:
+                    logging.info(
+                        "Preserving %s: (Reason: older falling on keep_time_interval).",
+                        info,
+                    )
+                    kept_checkpoints.append(info)
+                    continue
+                elif (
+                    info.time
+                    >= self._interval_preserved_checkpoints[-1].time
+                    + self._options.keep_time_interval
+                ):
+                    self._interval_preserved_checkpoints.append(info)
+                    logging.info(
+                        "Preserving %s: (Reason: latest falling on keep_time_interval).",
+                        info,
+                    )
+                    kept_checkpoints.append(info)
+                    continue
+
+            if self._options.keep_period is not None and info.step % self._options.keep_period == 0:
+                logging.info("Preserving %s: (Reason: on keep_period).", info)
+                kept_checkpoints.append(info)
+                continue
+
+            reason = "worse metric" if self._track_best else "old checkpoint"
+            logging.info("Deleting %s: (Reason: %s).", info, reason)
+            self._delete_directory(info.step)
+
+        kept_checkpoints += active_checkpoints
+        if self._track_best:
+            # Maintain in ascending step order.
+            self._checkpoints = sorted(kept_checkpoints, key=lambda info: info.step)
+        else:
+            self._checkpoints = kept_checkpoints
 
     def save(self, *args, **kwargs) -> bool:
         """Saves the provided items."""

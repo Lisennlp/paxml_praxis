@@ -1212,6 +1212,7 @@ class SingleTask(base_task.BaseTask):
     save_interval_steps: int = 5000
     save_keep_interval_duration: str = '12h'
     save_max_to_keep: int = 10
+    save_on_steps: Optional[List] = None  # XD
     max_inflight_steps: int = 2
     summary_interval_steps: int = 100
     log_train_output_interval_steps: Optional[int] = None

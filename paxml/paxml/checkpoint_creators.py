@@ -574,6 +574,8 @@ def _create_checkpointer(
         todelete_subdir=todelete_subdir,
         cleanup_tmp_directories=True,
     )
+    # lsp
+    options.save_on_steps = train_p.save_on_steps
 
     if checkpoint_type == CheckpointType.FLAX:
         if tensorstore_use_ocdbt:

@@ -705,7 +705,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-    NUM_LAYERS = 40
+    NUM_LAYERS = 2
     MODEL_DIMS = 5120
     # HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
     HIDDEN_DIMS = 13696  # XD: MODEL_DIMS * 4 * 2 // 3
@@ -721,19 +721,18 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 oom: 30M, combine_qkv: False
     # ICI_MESH_SHAPE = [1, 16, 1] # 8 * 1 * 16 * 1 combine_qkv: True, 0.138 * 2
     # ICI_MESH_SHAPE = [1, 16, 1] # 16 * 1 * 16 * 1 combine_qkv: True,
-
     # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8*4, 0.146, combine_qkv 0.1514
     # ICI_MESH_SHAPE = [1, 8, 4]  # seq: 4096 bs=1*8*4, 0.0692 paxml
     # ICI_MESH_SHAPE = [1, 32, 4]  # seq: 4096 bs=2*32*4, 0.0349 paxml
 
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 32, 4]
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
     DCN_MESH_SHAPE = [1, 1, 1]  # lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
     MAX_SEQ_LEN = 4096
-    VOCAB_SIZE = 125696
+    VOCAB_SIZE = 64000
     # VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 500
+    CHECKPOINT_EVERY_N_STEPS = 20
 
     LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule
@@ -775,10 +774,11 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     USE_ALIBI_POSITION_EMB = True
     LM_HEAD_NORM = True
 
-    LOAD_TF_ID = False
+    LOAD_TF_ID = True
     LOAD_MESH = False
     # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
     TARGET_LOG_PPLX = -1
+    SAVE_ON_STEPS = [23, 32]
 
     if not LOAD_TF_ID and LOAD_MESH:
         # lsp
@@ -1421,7 +1421,7 @@ def convert_datatype(ex):
 
 
 seqio.TaskRegistry.add(
-    "tf_ids.train_",
+    "tf_ids.train",
     seqio.TFExampleDataSource(
         split_to_filepattern={
             "train": [

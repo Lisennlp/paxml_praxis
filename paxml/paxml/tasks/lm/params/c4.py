@@ -18,6 +18,8 @@
 import functools
 import math
 from typing import Dict, List, Optional
+from collections import defaultdict
+import os
 
 from absl import logging
 import fiddle as fdl
@@ -45,6 +47,8 @@ from t5.data import preprocessors as t5_preprocessors
 import tensorflow as tf
 import numpy as np
 from praxis import py_utils
+from google.cloud import storage
+
 
 
 NestedMap = py_utils.NestedMap
@@ -66,12 +70,14 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     ) -> pax_fiddle.Config[base_input.BaseInput]:
         if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
             logging.info(
-                f"TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}"
+                "TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to:"
+                f" {self.TRAINING_NUM_BATCHES_TO_SKIP}"
             )
             num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
         else:
             logging.info(
-                f"TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}"
+                "TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to:"
+                f" {num_batches_to_skip}"
             )
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
@@ -83,28 +89,20 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
 
         num_local_devices = jax.local_device_count()  # 8
         # lsp: global_batch_size: percore_batch_size * 8 * N
-        global_batch_size = int(
-            percore_batch_size * num_local_devices * jax.process_count() + 1e-6
-        )
+        global_batch_size = int(percore_batch_size * num_local_devices * jax.process_count() + 1e-6)
         if percore_batch_size >= 1:
             assert global_batch_size % num_local_devices == 0
-            batch_size_per_process = int(
-                math.ceil(percore_batch_size) * num_local_devices + 1e-6
-            )
+            batch_size_per_process = int(math.ceil(percore_batch_size) * num_local_devices + 1e-6)
             num_infeed_hosts = global_batch_size // batch_size_per_process
         else:
             if jax.process_count() > 1:
                 # assert global_batch_size % num_local_devices == 0  # XD: bug?
                 # batch_size_per_process = num_local_devices  # XD: bug?
-                batch_size_per_process = int(
-                    percore_batch_size * num_local_devices + 1e-6
-                )
+                batch_size_per_process = int(percore_batch_size * num_local_devices + 1e-6)
                 # N hosts
                 num_infeed_hosts = global_batch_size // batch_size_per_process
             else:
-                batch_size_per_process = int(
-                    percore_batch_size * num_local_devices + 1e-6
-                )
+                batch_size_per_process = int(percore_batch_size * num_local_devices + 1e-6)
                 num_infeed_hosts = 1
         # batch_size_per_process, num_infeed_hosts = 4, 2  # XD
         seed = None
@@ -118,7 +116,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         if self.LOAD_TF_ID:
             DataFeature = seqio_input.MyLanguageModelFeatures
             DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
-            mixture_name = "tf_ids.train" if is_training else "tf_ids.test"
+            mixture_name = "tfids.train" if is_training else "tfids.test"
             name = "sft_train" if is_training else "sft_test"
             split_name = "train" if is_training else "test"
             task_feature_lengths = {
@@ -128,9 +126,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
 
         else:
             DataFeature = seqio_input.LanguageModelFeatures
-            mixture_name = (
-                "c4_lm_v301_gpt" if is_training else "c4_lm_v301_gpt_eval_tokenized"
-            )
+            mixture_name = "c4.train" if is_training else "c4.test"
             name = "C4Train" if is_training else "C4Validation"
             split_name = "train" if is_training else "validation"
             task_feature_lengths = {"targets": self.MAX_SEQ_LEN}
@@ -165,14 +161,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
 
     # lsp: 数据
 
-    def datasets(
-        self, num_batches_to_skip=0
-    ) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+    def datasets(self, num_batches_to_skip=0) -> List[pax_fiddle.Config[base_input.BaseInput]]:
         """Returns a list of dataset parameters."""
         return [
-            self._dataset_common(
-                is_training=True, num_batches_to_skip=num_batches_to_skip
-            ),
+            self._dataset_common(is_training=True, num_batches_to_skip=num_batches_to_skip),
             self._dataset_common(is_training=False),
         ]
 
@@ -212,10 +204,7 @@ def set_adam_and_learning_rate_schedule(
         global_batch_size = int(cls.PERCORE_BATCH_SIZE * jax.device_count() + 1e-6)
         if global_batch_size == 0:
             logging.warning(
-                (
-                    "Found global_batch_size = 0: cls.PERCORE_BATCH_SIZE=%s,"
-                    " jax.device_count()=%s"
-                ),
+                "Found global_batch_size = 0: cls.PERCORE_BATCH_SIZE=%s, jax.device_count()=%s",
                 cls.PERCORE_BATCH_SIZE,
                 jax.device_count(),
             )
@@ -270,9 +259,7 @@ def set_adam_and_learning_rate_schedule(
             max=cls.LR_COS_MAX,
         )
     else:
-        raise NotImplementedError(
-            f"Learning rate schedule {cls.LR_SCHEDULE} is not supported."
-        )
+        raise NotImplementedError(f"Learning rate schedule {cls.LR_SCHEDULE} is not supported.")
 
     return task_p
 
@@ -500,17 +487,13 @@ def configure_gpt3_task(
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
     # lsp: layer_norm
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(
-        cls.NORMALIZATION_CLS
-    )  # XD add
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
         # transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32 # lsp：inputs采用float32
         # transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
         # model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
-        transformer_layer_p.ln_tpl.intermediate_dtype = (
-            jnp.bfloat16
-        )  # lsp：inputs采用float32
+        transformer_layer_p.ln_tpl.intermediate_dtype = jnp.bfloat16  # lsp：inputs采用float32
         transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.bfloat16
         model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.bfloat16
 
@@ -531,9 +514,7 @@ def configure_gpt3_task(
         not cls.USE_GATED_ACTIVATION or cls.USE_BIAS
     )  # XD add
     if cls.ACTIVATION_CLS == layers.GELU:
-        transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = (
-            True  # XD: add if
-        )
+        transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
 
     for atten_p in (
         transformer_layer_p.tr_atten_tpl,
@@ -577,9 +558,7 @@ class C4SpmdAdam(TransformerLmSpmdAdam, C4UnsupervisedDataset):
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         """Returns the task parameters."""
         task_p = super().task()
-        model_p = (
-            task_p.model
-        )  # pytype: disable=attribute-error  # enable-nested-classes
+        model_p = task_p.model  # pytype: disable=attribute-error  # enable-nested-classes
         # pytype: disable=attribute-error  # enable-nested-classes
         model_p.decoder_tpl.eos_id = GPT_EOS_ID
         # pytype: disable=attribute-error  # enable-nested-classes
@@ -732,7 +711,6 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 64000
     # VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 20
 
     LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule
@@ -740,9 +718,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     LR_SCHEDULE = "linear_rampup_cosine_decay"
     # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
     LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = (
-        1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    )
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
     # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
     LR_COS_WARMUP = int(58497 * 0.02 * 1)
     LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
@@ -759,16 +735,15 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     ATTEN_DROPOUT_PROB = 0.0
     TRAINABLE_POSITION_EMB = False
 
-    EVAL_LOOP_NUM_BATCHES = 50  # 每次评测多少batch
-    EVAL_INTERVAL_STEPS = 250  # 每隔多少step评测一次
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 25  # 每次评测多少batch
+    EVAL_INTERVAL_STEPS = 100  # 每隔多少step评测一次
+    CHECKPOINT_MAX_TO_KEEP = 2  # 保留n个checkpoint
+
     WANDB_PROJECT = "lr8e_6_decoupled_base32_0913_fix_lr_bug_drop0_baichuan2_13b"
 
-    TRAIN_FILE = (
-        "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
-    )
-    VALID_FILE = (
-        "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-    )
+    TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
+    VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
     TRAINING_SEED = 1234
     USE_ROTARY_POSITION_EMB = False
     USE_ALIBI_POSITION_EMB = True
@@ -778,7 +753,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     LOAD_MESH = False
     # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
     TARGET_LOG_PPLX = -1
-    SAVE_ON_STEPS = [23, 32]
+    SAVE_ON_STEPS = list(range(5000, 1000000, 5000))
 
     if not LOAD_TF_ID and LOAD_MESH:
         # lsp
@@ -788,12 +763,14 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
             path = self.TRAIN_FILE if is_training else self.VALID_FILE
             if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
                 logging.info(
-                    f"TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to: {self.TRAINING_NUM_BATCHES_TO_SKIP}"
+                    "TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to:"
+                    f" {self.TRAINING_NUM_BATCHES_TO_SKIP}"
                 )
                 num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
             else:
                 logging.info(
-                    f"TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}"
+                    "TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to:"
+                    f" {num_batches_to_skip}"
                 )
 
             repeat = 3 if is_training else 3 * 30
@@ -865,9 +842,7 @@ class C4SpmdPipelineAdam(TransformerLmSpmdPipelineAdam, C4UnsupervisedDataset):
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         """Returns the task parameters."""
         task_p = super().task()
-        model_p = (
-            task_p.model
-        )  # pytype: disable=attribute-error  # enable-nested-classes
+        model_p = task_p.model  # pytype: disable=attribute-error  # enable-nested-classes
         # pytype: disable=attribute-error  # enable-nested-classes
         model_p.decoder_tpl.eos_id = GPT_EOS_ID
         # pytype: disable=attribute-error  # enable-nested-classes
@@ -1359,9 +1334,7 @@ class MyDatasets(base_input.BaseInput):
         # logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
         return model_needed_inputs
 
-    def load_tfrecord_dataset(
-        self, index_fname, batch_size, seq_len, restore_state=None, repeat=3
-    ):
+    def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
         # tf.random.set_seed(42)
         tf.random.set_seed(self.train_seed)
         fnames = (
@@ -1373,9 +1346,7 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
-        logging.info(
-            f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}"
-        )
+        logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")
         ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(buffer_size=10000)  # 从文件中取buffer_size数据，然后打乱
@@ -1393,189 +1364,169 @@ class MyDatasets(base_input.BaseInput):
         return map(lambda x: self.format(x), iter(ds))
 
 
-# ========================================================================================================
-vocab_size = 125696  # baichuan2
-TRAIN_DATAPATH = (
-    "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
-)
-TEST_DATAPATH = (
-    "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-)
-feature_desc = {
-    "input_ids": tf.io.VarLenFeature(tf.int64),
-    "labels": tf.io.VarLenFeature(tf.int64),
-}
-PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=vocab_size)
-RT_GPT_FEATURES_LM = {
-    "targets": seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32),
-    "masks": seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32),
-}
+@experiment_registry.register
+class BC2Gpt13B(C4SpmdGpt37BRoPE):  # XD
+    NUM_LAYERS = 2
+    MODEL_DIMS = 5120
+    HIDDEN_DIMS = 13696
+    NUM_HEADS = 40
+    COMBINE_QKV = False
+    NUM_GROUPS = -1
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
+    DCN_MESH_SHAPE = [1, 1, 1]
+
+    MAX_SEQ_LEN = 4096
+    VOCAB_SIZE = 125696
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
+    LR_COS_MIN_RATIO = 1
+
+    # LR_SCHEDULE = "linear_rampup_cosine_decay" # warmup_cosine_decay_schedule
+    # LR_COS_MIN_RATIO = 0.1
+
+    LR_COS_MAX = 1.0
+    LR_COS_WARMUP = int(58497 * 0.02 * 1)
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1
+    LR_COS_DECAY_END = int(19499 * 1)
+    WEIGHT_DECAY = 0.001
+    ADAM_BETA2 = 0.999
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+
+    EMBED_DROPOUT_PROB = 0.0
+    ATTEN_DROPOUT_PROB = 0.0
+    TRAINABLE_POSITION_EMB = False
+
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 25
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "baichuan2_13b_lr1e-5"
+
+    TRAINING_SEED = 1234
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = True
+    LM_HEAD_NORM = True
+
+    TARGET_LOG_PPLX = -1
+    SAVE_ON_STEPS = list(range(5000, 100000, 5000))
+
+    # tfids datasets
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
+    DATASET_NAME = "tfids"
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    TEST_RATIO = 0.2
+
+    def extract_datapath(test_ratio):
+        dataset = defaultdict(list)
+        client = storage.Client()
+        bucket_name = 'jax_llm_data'
+        # splits = ['split0', 'split1', 'split2']
+        splits = ['split0', 'split2']
+        start_files, median_files, end_files = [], [], []
+        for lang in ['zh', 'en']:
+            directory_path = f'xiaomeng/processed_{lang}_data_split'
+            for blob in client.list_blobs(bucket_name, prefix=directory_path):
+                for split in splits:
+                    if split in blob.name:
+                        path = os.path.join(f'gs://{bucket_name}', blob.name)
+                        dataset[split].append(path)
+                        break
+        train_test_dataset = defaultdict(list)
+        for k, v in dataset.items():
+            v = v[:10]
+            test = v[:int(len(v) * test_ratio)]
+            train = v[int(len(v) * test_ratio): ]
+            train_test_dataset['train'].extend(train)
+            train_test_dataset['test'].extend(test)
+            logging.info(f'dataset: {k}, nums: {len(v)}')
+        return train_test_dataset
+
+    DATA_PATH = extract_datapath(TEST_RATIO)
+
+    # baichuan1指令数据集
+    # DATA_PATH = {
+    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
+    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
+    # }
+    # c4 text datasets
+    # KEY_MAP = {"inputs": None, "targets": "text"}
+    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    # DATA_PATH = "gs://common_datasets"
+    # DATASET_NAME = "C4"
 
 
-@seqio.map_over_dataset
-def convert_datatype(ex):
-    return {
-        k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32)
-        for k, v in ex.items()
-    }
+def get_feature(key_map, vocabulary):
+    feature_desc, output_features = {}, {}
+    for k, v in key_map.items():
+        if v is None:
+            continue
+        feature_desc[v] = tf.io.VarLenFeature(tf.int64)
+        output_features[k] = seqio.Feature(vocabulary=vocabulary, dtype=tf.int32)
+    return feature_desc, output_features
 
 
-seqio.TaskRegistry.add(
-    "tf_ids.train",
-    seqio.TFExampleDataSource(
-        split_to_filepattern={
-            "train": [
-                TRAIN_DATAPATH,
-            ]
-        },
-        feature_description=feature_desc,
-    ),
-    preprocessors=[
+def tfids_registry():
+    @seqio.map_over_dataset
+    def convert_datatype(ex):
+        return {
+            k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32)
+            for k, v in ex.items()
+        }
+
+    preprocessors = [
         convert_datatype,
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                "targets": "input_ids",
-                "masks": "labels",
-            },
-        ),
-    ],
-    output_features=RT_GPT_FEATURES_LM,
-)
-
-seqio.TaskRegistry.add(
-    "tf_ids.test",
-    seqio.TFExampleDataSource(
-        split_to_filepattern={
-            "test": [
-                TEST_DATAPATH,
-            ]
-        },
-        feature_description=feature_desc,
-    ),
-    preprocessors=[
-        convert_datatype,
-        functools.partial(
-            t5_preprocessors.rekey, key_map={"targets": "input_ids", "masks": "labels"}
-        ),
-    ],
-    output_features=RT_GPT_FEATURES_LM,
-)
-
-# ========================================================================================================
-
-# ========================================================================================================
-# C4 datasets
-C4_TRAIN_DATADIR = "gs://common_datasets"
-C4_EVAL_DATADIR = "gs://common_datasets"
-GPT_SPM_PATH = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)  # lsp：相当于hf的tokenizer
-# PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257) # #lsp: 啥也不干, 为什么用这个？
-PASS_THROUGH_VOCABULARY = GPT_VOCABULARY  # lsp
-# lsp: Feature: 对象。存储属性
-C4_GPT_TRAIN_FEATURES_LM = {
-    "targets": t5.data.Feature(vocabulary=GPT_VOCABULARY, add_eos=False)
-}
-C4_GPT_EVAL_FEATURES_LM = {
-    "targets": t5.data.Feature(vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False)
-}
+        functools.partial(t5_preprocessors.rekey, key_map=BC2Gpt13B.KEY_MAP),
+    ]
+    feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
+    for mode in ["train", "test"]:
+        source = seqio.TFExampleDataSource(
+            split_to_filepattern={mode: BC2Gpt13B.DATA_PATH[mode]},
+            feature_description=feature_desc,
+        )
+        seqio.TaskRegistry.add(
+            f"{BC2Gpt13B.DATASET_NAME}.{mode}",
+            source,
+            preprocessors=preprocessors,
+            output_features=output_features,
+        )
 
 
-class TaskRegistry(t5.data.TaskRegistry):
-    """Task registry with extra tracking."""
-
-    TASK_NAMES = []
-
-    @classmethod
-    def add_versioned_tfds_task(
-        cls,
-        name: str,
-        *,
-        versions: List[str],
-        pinned_version: Optional[str] = None,
-        tfds_name: str,
-        tfds_data_dir: Optional[str] = None,
-        **kwargs,
-    ) -> List[seqio.Task]:
-        tasks = []
-        for version in versions:
-            tasks.append(
-                cls.add(
-                    f"{name}_{version}",
-                    seqio.Task,
-                    source=seqio.TfdsDataSource(
-                        tfds_name=f"{tfds_name}:{version}",
-                        tfds_data_dir=tfds_data_dir,
-                    ),
-                    **kwargs,
-                )
-            )
-        if pinned_version is not None:
-            tasks.append(
-                cls.add(
-                    name,
-                    seqio.Task,  # task_cls # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/dataset_providers.py
-                    #
-                    source=seqio.TfdsDataSource(
-                        tfds_name=f"{tfds_name}:{pinned_version}",
-                        tfds_data_dir=tfds_data_dir,
-                    ),
-                    **kwargs,
-                )
-            )
-        return tasks
-
-
-TaskRegistry.add_versioned_tfds_task(
-    "c4_lm_v301_gpt",
-    versions=["3.0.1"],  # XD: 3.0.4 -> 3.0.1
-    pinned_version="3.0.1",  # XD: 3.0.4 -> 3.0.1
-    tfds_name="c4/en",
-    tfds_data_dir=C4_TRAIN_DATADIR,
-    preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                "inputs": None,
-                "targets": "text",  # lsp：增加inputs和targets key. target = 数据中的text， input=None
-            },
-        ),
-        # https://github.com/google/seqio/blob/856943a1f4bc1dddc7821abd2c131ac0df568051/seqio/preprocessors.py#L57
+def c4_registry():
+    preprocessors = [
+        functools.partial(t5_preprocessors.rekey, key_map=BC2Gpt13B.KEY_MAP),
         seqio.preprocessors.tokenize,
-        functools.partial(
-            t5_preprocessors.reduce_concat_tokens,
-            batch_size=4096,  # 4096个句子拼一起
-        ),
-        t5_preprocessors.split_tokens_to_targets_length,  # 每份2048
-    ],
-    output_features=C4_GPT_TRAIN_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=10000,
-)
+        functools.partial(t5_preprocessors.reduce_concat_tokens, batch_size=4096),
+        t5_preprocessors.split_tokens_to_targets_length,
+    ]
+    feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
+    for mode in ["train", "test"]:
+        shuffle_buffer_size = 10000 if mode == "train" else None
+        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=BC2Gpt13B.DATA_PATH)
+        t5.data.TaskRegistry.add(
+            f"{BC2Gpt13B.DATASET_NAME}.{mode}",
+            seqio.Task,
+            source=source,
+            preprocessors=preprocessors,
+            output_features=output_features,
+            metric_fns=[],
+            shuffle_buffer_size=shuffle_buffer_size,
+        )
 
-TaskRegistry.add_versioned_tfds_task(
-    "c4_lm_v301_gpt_eval_tokenized",
-    versions=["3.0.1"],  # XD: 3.0.5 -> 3.0.1
-    pinned_version="3.0.1",  # XD: 3.0.5 -> 3.0.1
-    tfds_name="c4/en",
-    tfds_data_dir=C4_EVAL_DATADIR,
-    preprocessors=[
-        functools.partial(
-            t5_preprocessors.rekey,
-            key_map={
-                "inputs": None,
-                "targets": "text",  # ids -> text
-            },
-        ),
-        seqio.preprocessors.tokenize,
-        functools.partial(
-            t5_preprocessors.reduce_concat_tokens,
-            batch_size=4096,  # 1个句子，不进行拼接
-        ),
-        t5_preprocessors.split_tokens_to_targets_length,  # 每份2048
-    ],
-    output_features=C4_GPT_EVAL_FEATURES_LM,
-    metric_fns=[],
-    shuffle_buffer_size=None,
-)
-# ========================================================================================================
+
+def dataset_registry():
+    if BC2Gpt13B.DATASET_NAME == 'tfids':
+        tfids_registry()
+    elif BC2Gpt13B.DATASET_NAME == 'c4':
+        c4_registry()
+
+        
+dataset_registry()

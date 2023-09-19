@@ -168,12 +168,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         train_input_pipeline: Optional[base_input.BaseInput] = None,
         force: Optional[bool] = False,
     ):
-        logging.info(f"_enable_checkpoint_saving0000: {self._enable_checkpoint_saving}")
         if not self._enable_checkpoint_saving:
             return
-        logging.info(
-            f"step_i: {step_i} ||_enable_checkpoint_saving1111: {self._enable_checkpoint_saving}"
-        )
         with py_utils.timeit() as save_period:
             self.checkpoint_manager.save(
                 step_i,
@@ -184,8 +180,6 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             )
         # 记录时间
         monitoring.record_event_duration_secs(_WRITE_CHECKPOINT_EVENT, save_period.elapsed)
-        logging.info(f"save_period.elapsed000: {save_period.elapsed}")
-        logging.info(f"_WRITE_CHECKPOINT_EVENT: {_WRITE_CHECKPOINT_EVENT}")
 
     # pjit
     def _restore_with_args(

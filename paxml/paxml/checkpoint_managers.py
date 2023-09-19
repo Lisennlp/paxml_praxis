@@ -276,7 +276,6 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         # save interval. This condition accounts for the possibility of saving
         # on preemption, in which case we want to maintain the same save period as
         # if preemption had not happened.
-        logging.info(f'self._options.save_on_steps: {self._options.save_on_steps}')
         return last_checkpoint_step is None or (
             last_checkpoint_step < step
             and step % self._options.save_interval_steps == 0

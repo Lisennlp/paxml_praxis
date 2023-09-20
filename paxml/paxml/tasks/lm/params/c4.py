@@ -1435,7 +1435,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     DATASET_NAME = "tfids"
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    TEST_RATIO = 0.2
+    TEST_RATIO = 0.02
 
     def extract_datapath(test_ratio, seed):
         random.seed(seed)
@@ -1460,7 +1460,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
             train = v[int(len(v) * test_ratio): ]
             train_test_dataset['train'].extend(train)
             train_test_dataset['test'].extend(test)
-            logging.info(f'dataset: {k}, nums: {len(v)}')
+            logging.info(f'dataset: {k}, file nums: {len(v)}')
         return train_test_dataset
 
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)

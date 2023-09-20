@@ -50,8 +50,9 @@ except:
     command = "pip install wandb"
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import wandb
-wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
 
+if jax.process_index() == 0:
+    wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
 
 Checkpointer = checkpoints.Checkpointer
 CheckpointType = checkpoints.CheckpointType
@@ -179,13 +180,14 @@ def train_and_evaluate(
     task_p = experiment_config.task()  # 怎么又设置了一遍参数？
     task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
-    wandb_name = task_p.name
-    wandb.init(
-        project=experiment_config.WANDB_PROJECT,
-        name=wandb_name,
-        config=experiment_config,
-        resume=True,
-    )
+    if jax.process_index() == 0:
+        wandb_name = task_p.name
+        wandb.init(
+            project=experiment_config.WANDB_PROJECT,
+            name=wandb_name,
+            config=experiment_config,
+            resume=True,
+        )
 
     # in case the user passed in a string dtype, convert it to an actual dtype
     # jnp.bfloat16

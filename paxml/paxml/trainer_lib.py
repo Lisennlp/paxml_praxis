@@ -1136,6 +1136,7 @@ def eval_step_single_learner(
     with base_layer.JaxContext.new_context(hparams=context_p):
         prng_key, k1, k2, k3 = jax.random.split(prng_key, 4)
         apply_rng_keys = {PARAMS: k1, RANDOM: k2, NON_PAX_RNG_KEY: k3}
+        # lsp: 和train一样
         (weighted_scalars, per_example_out), updated_vars = model.apply(
             mdl_vars,
             inputs,

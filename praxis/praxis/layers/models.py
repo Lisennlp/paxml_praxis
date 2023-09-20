@@ -114,6 +114,10 @@ def compute_xent_loss_helper(
     """
 
     labels = input_batch.labels
+    # lsp
+    if labels is None:
+        return predictions
+
     weights = input_batch.weights
     if apply_eval_sample_weights:
         if not hasattr(input_batch, "eval_sample_weights"):
@@ -225,7 +229,11 @@ class LanguageModel(base_model.BaseModel):
         inputs = input_batch.ids
         if self.count_tokens:
             self.token_counter(inputs, paddings)
-        labels = NestedMap(class_ids=input_batch.labels, class_weights=weights)
+
+        if input_batch.labels is not None:
+            labels = NestedMap(class_ids=input_batch.labels, class_weights=weights)
+        else:
+            labels = None
 
         extra_input_kwargs = {}
         if self.lm_tpl.packed_input:
@@ -267,6 +275,7 @@ class LanguageModel(base_model.BaseModel):
 
         return predictions
 
+    # lsp
     def compute_loss(  # pytype: disable=signature-mismatch  # jax-ndarray
         self, predictions: NestedMap, input_batch: NestedMap
     ) -> Tuple[WeightedScalars, Dict[str, Any]]:

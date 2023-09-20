@@ -795,10 +795,6 @@ class TransformerLm(base_layer.BaseLayer):
         else:
             # lsp
             xgent_output = self.compute_loss(output, labels)
-            per_token_xent = xgent_output.per_token_xent
-            self.add_summary(
-                "[lsp]per_token_xent", per_token_xent, verbosity=self.user_summary_level
-            )
             return xgent_output
 
     def _emb_lookup(self, input_ids):

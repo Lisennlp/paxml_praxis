@@ -742,16 +742,18 @@ class SeqIOInput(base_input.BaseInput):
         )
         # lsp： 跳过的数据step
         if self.num_batches_to_skip:
-            if self.is_training:
-                ds = ds.skip(self.num_batches_to_skip)
-            else:
-                logging.warning(
-                    (
-                        "num_batches_to_skip set tp '%d' but has no effect because "
-                        "is_training is false"
-                    ),
-                    self.num_batches_to_skip,
-                )
+            # lsp
+            ds = ds.skip(self.num_batches_to_skip)
+            # if self.is_training:
+            #     ds = ds.skip(self.num_batches_to_skip)
+            # else:
+            #     logging.warning(
+            #         (
+            #             "num_batches_to_skip set tp '%d' but has no effect because "
+            #             "is_training is false"
+            #         ),
+            #         self.num_batches_to_skip,
+            #     )
 
         return ds
 

@@ -169,7 +169,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         """Returns a list of dataset parameters."""
         return [
             self._dataset_common(is_training=True, num_batches_to_skip=num_batches_to_skip),
-            self._dataset_common(is_training=False),
+            self._dataset_common(is_training=False, num_batches_to_skip=num_batches_to_skip // 4),
         ]
 
 
@@ -1393,15 +1393,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     LR_LRED_MIN_RATIO = 1.0
     LR_LRED_MAX = 1.0
     Z_LOSS_WEIGHT = 2e-4
-
-    # LEARNING_RATE = 8e-6
-    # LR_SCHEDULE = "linear_rampup_cosine_decay" # warmup_cosine_decay_schedule
-    # LR_COS_MIN_RATIO = 0.1
-
-    LR_COS_MAX = 1.0
-    LR_COS_WARMUP = int(58497 * 0.02 * 1)
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1
-    LR_COS_DECAY_END = int(19499 * 1)
 
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9

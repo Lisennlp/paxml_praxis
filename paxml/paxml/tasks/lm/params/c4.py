@@ -1468,6 +1468,47 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # DATA_PATH = "gs://common_datasets"
     # DATASET_NAME = "C4"
 
+@experiment_registry.register
+class BC2Gpt1BTest(BC2Gpt13B):
+    NUM_LAYERS = 2
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
+    MAX_SEQ_LEN = 4096
+    VOCAB_SIZE = 125696
+    CHECKPOINT_EVERY_N_STEPS = 10000
+    EVAL_LOOP_NUM_BATCHES = 10
+    EVAL_INTERVAL_STEPS = 20
+    CHECKPOINT_MAX_TO_KEEP = 2
+    WANDB_PROJECT = "baichuan2_1b_test"
+    TEST_RATIO = 0.2
+    def extract_datapath(test_ratio, seed):
+        random.seed(seed)
+        dataset = defaultdict(list)
+        client = storage.Client()
+        bucket_name = 'jax_llm_data'
+        # splits = ['split0', 'split1', 'split2']
+        splits = ['split0', 'split2']
+        start_files, median_files, end_files = [], [], []
+        for lang in ['zh', 'en']:
+            directory_path = f'xiaomeng/processed_{lang}_data_split'
+            for blob in client.list_blobs(bucket_name, prefix=directory_path):
+                for split in splits:
+                    if split in blob.name:
+                        path = os.path.join(f'gs://{bucket_name}', blob.name)
+                        dataset[split].append(path)
+                        break
+        train_test_dataset = defaultdict(list)
+        for k, v in dataset.items():
+            v = v[:10]
+            random.shuffle(v)
+            test = v[:int(len(v) * test_ratio)]
+            train = v[int(len(v) * test_ratio): ]
+            train_test_dataset['train'].extend(train)
+            train_test_dataset['test'].extend(test)
+            logging.info(f'dataset: {k}, file nums: {len(v)}')
+        return train_test_dataset
+    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
+
 
 def get_feature(key_map, vocabulary):
     feature_desc, output_features = {}, {}

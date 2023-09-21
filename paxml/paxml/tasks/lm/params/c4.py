@@ -1481,6 +1481,7 @@ class BC2Gpt1BTest(BC2Gpt13B):
     CHECKPOINT_MAX_TO_KEEP = 2
     WANDB_PROJECT = "baichuan2_1b_test"
     TEST_RATIO = 0.2
+    TRAINING_SEED = 1234
     def extract_datapath(test_ratio, seed):
         random.seed(seed)
         dataset = defaultdict(list)

@@ -138,7 +138,6 @@ else:
     raise
 
 intermediate_size = params["intermediate_size"]
-x_times = 32
 head_dim = dim // n_heads
 
 assert "gs:" not in read_dir, print(f"Pytorch dir must be local path......")

@@ -119,6 +119,7 @@ params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
 n_heads = params["n_heads"]
 dim = params["dim"]
+x_times = n_layers
 
 if version == "v1":
     vocab_size = 64000
@@ -128,7 +129,6 @@ else:
     raise
 
 intermediate_size = params["intermediate_size"]
-x_times = 32
 head_dim = dim // n_heads
 
 options = checkpoint_managers.CheckpointManagerOptions(
@@ -207,10 +207,10 @@ for k, v in paxml_to_mesh_key_and_shape.items():
     k = tuple(k.split("."))
     if "repeat" in k:
         padded_global_shapes[k] = jax.ShapeDtypeStruct(
-            shape=(x_times,) + v["shape"], dtype=jnp.float16
+            shape=(x_times,) + v["shape"], dtype=jnp.float32
         )
     else:
-        padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v["shape"], dtype=jnp.float16)
+        padded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v["shape"], dtype=jnp.float32)
 
 padded_global_shapes = TrainState(
     step=jnp.array(step), mdl_vars=unflatten_dict(padded_global_shapes), opt_states=None
@@ -225,9 +225,6 @@ items = {"state": padded_global_shapes}
 restored_model = checkpoint_manager._manager.restore(
     step, items=items, restore_kwargs=restore_kwargs
 )
-loaded = {".".join(k): v for k, v in flatten_dict(restored_model["state"].mdl_vars).items()}
-print("Model load finished!!!")
-
 
 def save_model(state_dict, save_path, mode="torch"):
     save_path = os.path.join(save_dir, filename)
@@ -235,7 +232,7 @@ def save_model(state_dict, save_path, mode="torch"):
         np.save(open(save_path, "wb"), state_dict)
     else:
         torch.save(
-            {k: torch.from_numpy(v).to(torch.float16) for k, v in state_dict.items()},
+            {k: torch.from_numpy(v).to(torch.float32) for k, v in state_dict.items()},
             save_path,
         )
 

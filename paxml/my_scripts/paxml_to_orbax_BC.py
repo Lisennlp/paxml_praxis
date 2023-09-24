@@ -3,6 +3,7 @@ import time
 import json
 import argparse
 from collections import defaultdict
+import functools
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
@@ -82,6 +83,12 @@ parser.add_argument(
     help="whether to check model is saved successful",
 )
 parser.add_argument("--version", type=str, default="v1", choices=["v1", "v2"], help="Model version")
+parser.add_argument(
+    "--norm",
+    action="store_true",
+    default=False,
+    help="whether to normalize lm head weight",
+)
 
 args = parser.parse_args()
 
@@ -90,6 +97,7 @@ read_dir = args.read_dir
 save_dir = args.save_dir
 step = args.step
 version = args.version
+norm = args.norm
 
 # if not bucket dir, local dir in first indice must be ‘/’, such as /path/......
 if 'gs:' not in read_dir:
@@ -176,11 +184,15 @@ paxml_to_mesh_key_and_shape = {
 mesh_to_paxml_format = {v["map_to_mesh"]: k for k, v in paxml_to_mesh_key_and_shape.items()}
 
 
-def norm(x):
+
+def norm(x, norm=False):
+    if not norm:
+        return x
+    print(f'Note: lm head weight is normed......')
     wnorm = jnp.linalg.norm(x, ord=2.0, axis=0, keepdims=True)
     x = x / wnorm.clip(1e-12)
-    return x, wnorm
-
+    return x
+partial_norm = functools.partial(norm, norm=args.norm)
 
 def inverse_permute2(w):
     reshaped_w = w.reshape(dim, n_heads, 2, dim // n_heads // 2)
@@ -268,7 +280,7 @@ jax_weights = {
             for layer_i in range(params["n_layers"])
         },
     },
-    "lm_head": {"kernel": loaded[mesh_to_paxml_format["lm_head"]]},
+    "lm_head": {"kernel": partial_norm(loaded[mesh_to_paxml_format["lm_head"]])},
 }
 
 with jax.default_device(jax.devices("cpu")[0]):

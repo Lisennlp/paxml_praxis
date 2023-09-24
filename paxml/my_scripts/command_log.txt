@@ -1,0 +1,89 @@
+# 启动ray server
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32 --zone=us-east1-d --worker=0 --command="/home/lishengping/miniconda3/bin/ray start --head --port=3333 --resources='{\"tpu\": 1}'"  --project=llm-tpu
+
+# vpn
+sudo apt-get update && apt-get dist-upgrade
+wget https://git.io/vpnsetup -O vpnsetup.sh && sudo \
+VPN_IPSEC_PSK='lisen' \
+VPN_USER='lisen' \
+VPN_PASSWORD='lisen' sh vpnsetup.sh
+
+重启服务
+sudo service ipsec restart && sudo service xl2tpd restart
+
+查看连接客户端
+sudo ipsec whack --trafficstatus
+
+查看连接日志
+tail -F /var/log/auth.log | grep pluto
+
+查看服务状态
+sudo ipsec status
+sudo ipsec verify
+
+
+sudo iptables -A INPUT -p tcp --dport 12345 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --sport 12345 -j ACCEPT
+
+
+
+# 测试tpu初始化
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-0 --zone=us-east1-d  --command="cd ~/projects/mesh_easy_jax;/home/lishengping/miniconda3/bin/python device_train.py --config configs/32-test-llama.json"  --project=llm-tpu --worker=all
+gcloud compute tpus tpu-vm ssh llm-jax-v4-64-0 --zone=us-central2-b  --command="sudo rm -f /tmp/libtpu_lockfile;/home/lishengping/miniconda3/bin/python -c 'import jax; print(jax.devices())'"  --project=llm-tpu --worker=all
+gcloud compute tpus tpu-vm ssh llm-jax-v5litepod-32-0 --zone=us-west4-a  --command="/home/lishengping/miniconda3/bin/python -c 'import jax; print(jax.devices())'"  --project=llm-tpu --worker=all
+
+# 环境搭建
+gcloud compute tpus tpu-vm scp ~/install_new.sh llm-jax-v3-32-0:~/  --zone=us-east1-d  --worker=all  --project=llm-tpu
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32 --zone=us-east1-d --worker=all --command="bash install_new.sh"  --project=llm-tpu
+
+# train
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-0 --zone=us-east1-d --worker=all --command="cd /home/lishengping/projects/mesh_easy_jax;/home/lishengping/miniconda3/bin/python device_train.py  --config configs/baichuan/32-13b.json"  --project=llm-tpu
+
+
+gcloud compute tpus tpu-vm ssh llm-jax-v3-8-1 --zone=us-east1-d  --command="cd /home/lishengping/projects/paxml/paxml/;/home/lishengping/miniconda3/bin/python main.py --exp=tasks.lm.params.c4.C4SpmdGpt37BRoPE --job_log_dir=gs://jax_llm_logs/alsp_debug/0822/hf_to_paxml2 2>&1 --enable_checkpoint_saving=True | tee lsp_debug.log"  --project=llm-tpu --worker=all
+
+# 安装torch
+pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpus
+conda install -y pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 cpuonly -c pytorch
+
+
+
+gcloud compute tpus tpu-vm scp paxml/tasks/lm/params/c4.py  llm-jax-v3-32-0:/home/lishengping/projects/paxml/paxml/tasks/lm/params/  --zone=us-east1-d  --worker=all  --project=llm-tpu
+gcloud compute tpus tpu-vm scp paxml/executors.py  llm-jax-v3-32-0:/home/lishengping/projects/paxml/paxml/  --zone=us-east1-d  --worker=all  --project=llm-tpu
+
+
+
+
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-11 --zone=us-east1-d --worker=all --command="cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.C4SpmdGpt37BRoPE --job_log_dir=gs://llm_base_models/baichuan2/13b/  2>&1 --enable_checkpoint_saving=False  --eval_on_test=True| tee lsp_debug.log"
+
+
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="killall device_main.py;cd  /home/lishengping/projects/mesh_easy_jax/;/home/lishengping/miniconda3/bin/python  device_train.py --config configs/baichuan/32-7b-test.json  2>&1 | tee lsp_debug.log"   --project=llm-tpu
+
+
+
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.C4SpmdGpt37BRoPE --job_log_dir=gs://jax_llm_logs/alsp_debug/0919/  2>&1 --enable_checkpoint_saving=False  --eval_on_test=True| tee lsp_debug.log
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B --job_log_dir=gs://jax_llm_logs/alsp_debug/0919/  2>&1 --enable_checkpoint_saving=False  --eval_on_test=True| tee lsp_debug.log
+
+
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-0 --zone=us-east1-d    --project=llm-tpu --worker all --command=“sudo rm -r projects;git clone https://github.com/Lisennlp/paxml_praxis.git; mv paxml_praxis projects“
+
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-2 --zone=us-east1-d --worker=all --command=“sudo rm -r /home/lishengping/projects;git clone https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis  /home/lishengping/projects”
+
+
+
+
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.C4SpmdGpt37BRoPE --job_log_dir=gs://llm_base_models/baichuan2/13b/  2>&1 --enable_checkpoint_saving=False  --eval_on_test=True| tee lsp_debug.log
+
+
+ gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="killall main.py; cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B --job_log_dir=gs://llm_base_models/baichuan_models/13b/2/paxml  2>&1 --enable_checkpoint_saving=True  --eval_on_test=True| tee lsp_debug.log"
+
+
+# 抢占式训练
+ python3 create_tpu.py --type v3-128 --suffix 10 -inf install_0812.sh -p --del --check -trco "killall main.py; cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B --job_log_dir=gs://llm_base_models/baichuan_models/13b/2/paxml  2>&1 --enable_checkpoint_saving=True  --eval_on_test=True| tee lsp_debug.log"
+
+
+
+curl -X POST "​http://xiyun.aqiglobal.com:9000/llama"  -H 'Content-Type: application/json'      -d '{"human": "小明最初有7个球。", "history": [{"human":"小明有5个球，他送给小红2个球，还剩多 少个球？"},{"assistant":"首先我们需要知道小明原本的球数。如果我们不知道这一点，那么我们无法回答问题。因此，我们可以通过提供更多信息来解决这个问题：\n- 小 明总共有多少个球？\n- 小明送出去了多少个球？（2个）\n- 小明现在手中还剩下多少个球？\n根据上述三条线性关系，我们可以得到以下方程式：\n5 - (2 + ?) = ?\n将第二项移动到等号右边，并用小明现在手中球数代入：\n5 - (2 + x) = x\n化简后得到：\nx = 3\n所以，小明现在手中还剩下3个球。"},{"human":"小明有7个球，他送给小红2个球，还剩多少个球？"},{"assistant":"好的，请告诉我你想知道小明和小红交换球时，小明最初有多少个球。"}], "config": {"temperature": 0.1, "top_k": 20, "top_p": 0.85, "num_beams": 1, "repetition_penalty": 1.0}}'
+
+
+python paxml_to_orbax.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml/orbax/xm_bc2_13b_step8000/ --step 8000 --model_size 13b --version v2

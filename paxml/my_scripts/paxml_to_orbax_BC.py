@@ -91,7 +91,12 @@ save_dir = args.save_dir
 step = args.step
 version = args.version
 
-os.makedirs(save_dir, exist_ok=True)
+# if not bucket dir, local dir in first indice must be ‘/’, such as /path/......
+if 'gs:' not in read_dir:
+    assert os.path.exists(read_dir)
+
+if "gs" not in save_dir:
+    os.makedirs(save_dir, exist_ok=True)
 
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
@@ -108,13 +113,9 @@ elif version == "v2":
 else:
     raise
 
-if "gs" not in save_dir:
-    os.makedirs(save_dir, exist_ok=True)
-
 # checkpoint manager
 step_prefix = "checkpoint"
 step_format_fixed_length = 8
-step = None
 
 options = orbax.checkpoint.CheckpointManagerOptions(
     step_prefix=step_prefix, step_format_fixed_length=step_format_fixed_length
@@ -280,3 +281,6 @@ with jax.default_device(jax.devices("cpu")[0]):
     mngr.save(step, {"params": {"params": flax.core.frozen_dict.freeze(jax_weights)}, "step": jax.numpy.array([step])})
 
 print(f"Save orbax format finished, take time: {time.time() - start}")
+
+# usage:
+# python paxml_to_hf_BC.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml/orbax/xm_model_step8000/ --step 8000 --model_size 13b --version v2

@@ -21,6 +21,7 @@ import dataclasses
 import queue
 import time
 from typing import Any, Optional, Sequence, Tuple, Union, Mapping
+import pickle
 
 from absl import flags
 from absl import logging
@@ -356,6 +357,8 @@ class BaseTrainProgram(Program):
         eval_train_metrics = None
         if train_p.eval_interval_steps and new_step % train_p.eval_interval_steps == 0:
             eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
+        # if jax.process_index() == 0:
+        #     pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
         return TrainProgramOutput(
             new_state,
             loss=train_outputs.loss,

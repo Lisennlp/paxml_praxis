@@ -1731,7 +1731,7 @@ class LanguageModelFeatures(
     @property
     def target_has_suffix(self) -> bool:
         return self._target_has_suffix
-
+    # lsp: pad=0, a = [1, 2, 3] ->  _shift_left_and_pad(a, pad)  -> [2, 3, 0]
     def _shift_left_and_pad(self, tensor, pad_val):
         # Expand dims here so that the below code can work with 1-d tensors.
         v = tf.expand_dims(tensor, 0)

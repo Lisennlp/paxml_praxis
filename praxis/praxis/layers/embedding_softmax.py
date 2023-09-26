@@ -321,7 +321,7 @@ class FullSoftmax(base_layer.BaseLayer):
             dtype=jnp.float32,
         )
         total_weight = jnp.sum(class_weights, dtype=jnp.float32)
-
+        # self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=3)
         # lsp
         total_xent_batch = jnp.sum(
             jnp.expand_dims(per_example_xent, axis=-1) * class_weights,

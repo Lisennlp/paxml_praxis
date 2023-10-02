@@ -1423,7 +1423,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     SAVE_ON_STEPS = list(range(2000, 50000, 2000))
 
     # tfids datasets
-    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     DATASET_NAME = "tfids"
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     TEST_RATIO = 0.02
@@ -1565,37 +1565,30 @@ class BC2Gpt13B1001(BC2Gpt13B):
     ADAM_EPSILON = 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 0.5
 
-    SPLIT_BSZ = 10
-
+    SPLIT_BSZ = {'zh': 7, 'en': 20}
     def extract_datapath(test_ratio, seed, split_batch):
         random.seed(seed)
         dataset = defaultdict(list)
         client = storage.Client()
         bucket_name = 'jax_llm_data'
-        # splits = ['split0', 'split2']
-        split = 'zh_en'
-        start_files, median_files, end_files = [], [], []
         for lang in ['zh', 'en']:
             # directory_path = f'xiaomeng/processed_{lang}_data_split'
             directory_path = f'xiaomeng/processed_{lang}_data_1001'
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                index = blob.name.split('_')[-1]
-                # 每本书的前多少个4096
-                if index < split_batch:
-                    path = os.path.join(f'gs://{bucket_name}', blob.name)
-                    dataset[split].append(path)
+                logging.info(f'filename: {blob.name}=====')
+                if not blob.name or '_R' not in blob.name: continue
+                if len(dataset[lang]) > 2000:
                     break
-        train_test_dataset = defaultdict(list)
-        for k, v in dataset.items():
-            random.shuffle(v)
-            # v = v[:10]
-            test = v[:int(len(v) * test_ratio)]
-            train = v[int(len(v) * test_ratio): ]
-            train_test_dataset['train'].extend(train)
-            train_test_dataset['test'].extend(test)
-            logging.info(f'dataset: {k}, file nums: {len(v)}')
-        # train_test_dataset['train'] = random.shuffle(train_test_dataset['train'])
-        # train_test_dataset['test'] = random.shuffle(train_test_dataset['test'])
+                index = int(blob.name.rsplit('_', maxsplit=1)[-1])
+                # 每本书的前多少个4096
+                if index < split_batch[lang]:
+                    path = os.path.join(f'gs://{bucket_name}', blob.name)
+                    dataset[lang].append(path)
+        total = dataset['zh'] + dataset['en']
+        random.shuffle(total)
+        test_num = int(len(total) * test_ratio)
+        train_test_dataset = {'test': total[ :test_num], 'train': total[test_num:]}
+        logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
         return train_test_dataset
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
     Z_LOSS_WEIGHT = 0.0
@@ -1627,7 +1620,7 @@ def tfids_registry():
     for mode in ["train", "test"]:
         shuffle_buffer_size = 100000
         source = seqio.TFExampleDataSource(
-            split_to_filepattern={mode: BC2Gpt13B.DATA_PATH[mode]},
+            split_to_filepattern={mode: BC2Gpt13B1001.DATA_PATH[mode]},
             feature_description=feature_desc,
         )
         seqio.TaskRegistry.add(
@@ -1649,7 +1642,7 @@ def c4_registry():
     feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
     for mode in ["train", "test"]:
         shuffle_buffer_size = 10000 if mode == "train" else None
-        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=BC2Gpt13B.DATA_PATH)
+        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=BC2Gpt13B1001.DATA_PATH)
         t5.data.TaskRegistry.add(
             f"{BC2Gpt13B.DATASET_NAME}.{mode}",
             seqio.Task,

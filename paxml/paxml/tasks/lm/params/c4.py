@@ -1437,7 +1437,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
         splits = ['split0', 'split2']
         start_files, median_files, end_files = [], [], []
         for lang in ['zh', 'en']:
-            directory_path = f'xiaomeng/processed_{lang}_data_split'
+            # directory_path = f'xiaomeng/processed_{lang}_data_split'
+            directory_path = f'xiaomeng/processed_{lang}_data_1001'
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
                 for split in splits:
                     if split in blob.name:
@@ -1452,6 +1453,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
             train_test_dataset['train'].extend(train)
             train_test_dataset['test'].extend(test)
             logging.info(f'dataset: {k}, file nums: {len(v)}')
+        train_test_dataset['train'] = random.shuffle(train_test_dataset['train'])
+        train_test_dataset['test'] = random.shuffle(train_test_dataset['test'])
         return train_test_dataset
 
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
@@ -1530,6 +1533,74 @@ class BC2Gpt1BTest(BC2Gpt13B):
     Z_LOSS_WEIGHT = 0.0
 
 
+@experiment_registry.register
+class BC2Gpt13B1001(BC2Gpt13B):
+    NUM_LAYERS = 40
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 32, 4]
+    MAX_SEQ_LEN = 4096
+    VOCAB_SIZE = 125696
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 100
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+    WANDB_PROJECT = "baichuan2_13b_1001"
+    TEST_RATIO = 0.02
+    TRAINING_SEED = 1234
+
+    LAYERNORM_EPSILON = 1e-06
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_WARMUP = 300
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 15000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.1
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+
+    SPLIT_BSZ = 10
+
+    def extract_datapath(test_ratio, seed, split_batch):
+        random.seed(seed)
+        dataset = defaultdict(list)
+        client = storage.Client()
+        bucket_name = 'jax_llm_data'
+        # splits = ['split0', 'split2']
+        split = 'zh_en'
+        start_files, median_files, end_files = [], [], []
+        for lang in ['zh', 'en']:
+            # directory_path = f'xiaomeng/processed_{lang}_data_split'
+            directory_path = f'xiaomeng/processed_{lang}_data_1001'
+            for blob in client.list_blobs(bucket_name, prefix=directory_path):
+                index = blob.name.split('_')[-1]
+                # 每本书的前多少个4096
+                if index < split_batch:
+                    path = os.path.join(f'gs://{bucket_name}', blob.name)
+                    dataset[split].append(path)
+                    break
+        train_test_dataset = defaultdict(list)
+        for k, v in dataset.items():
+            random.shuffle(v)
+            # v = v[:10]
+            test = v[:int(len(v) * test_ratio)]
+            train = v[int(len(v) * test_ratio): ]
+            train_test_dataset['train'].extend(train)
+            train_test_dataset['test'].extend(test)
+            logging.info(f'dataset: {k}, file nums: {len(v)}')
+        # train_test_dataset['train'] = random.shuffle(train_test_dataset['train'])
+        # train_test_dataset['test'] = random.shuffle(train_test_dataset['test'])
+        return train_test_dataset
+    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
+    Z_LOSS_WEIGHT = 0.0
+
+
 def get_feature(key_map, vocabulary):
     feature_desc, output_features = {}, {}
     for k, v in key_map.items():
@@ -1554,7 +1625,7 @@ def tfids_registry():
     ]
     feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
     for mode in ["train", "test"]:
-        shuffle_buffer_size = 200000
+        shuffle_buffer_size = 100000
         source = seqio.TFExampleDataSource(
             split_to_filepattern={mode: BC2Gpt13B.DATA_PATH[mode]},
             feature_description=feature_desc,

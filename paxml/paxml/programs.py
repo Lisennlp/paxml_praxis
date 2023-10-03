@@ -855,8 +855,8 @@ class BaseEvalProgram(Program):
                 # lsp: eval dataloader
                 eval_inputs = self.eval_input.get_next_padded()
             except (tf.errors.OutOfRangeError, StopIteration):
-                if self._eval_num_steps > 0:
-                    raise
+                # if self._eval_num_steps > 0:
+                #     raise
                 logging.info("Data exhausted (%s) after %d steps", self._name, step_num)
                 # lsp: 测试集超过一个epoch的时候，进行重置.
                 self.eval_input.reset()

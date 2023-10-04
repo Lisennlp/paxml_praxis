@@ -657,7 +657,7 @@ class SeqIOInput(base_input.BaseInput):
             )
         # return self.shuffle and self.is_training
         # lsp
-        return self.shuffle or self.is_training
+        return self.shuffle
 
     @property
     def should_repeat(self) -> bool:

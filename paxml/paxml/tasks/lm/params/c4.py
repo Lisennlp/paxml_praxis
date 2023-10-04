@@ -118,7 +118,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             DataFeature = seqio_input.MyLanguageModelFeatures
             DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
             # train test shuffle flag
-            shuffle = self.SHUFFLE[0] if is_training else self.SHUFFLE[1]
+            shuffle = self.SHUFFLE['train'] if is_training else self.SHUFFLE['test']
             mixture_name = f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test"
             name = "sft_train" if is_training else "sft_test"
             split_name = "train" if is_training else "test"
@@ -126,6 +126,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 "targets": self.MAX_SEQ_LEN,
                 "masks": self.MAX_SEQ_LEN,
             }
+            print(f'is_training: {is_training} shuffle: {shuffle}')
 
         else:
             DataFeature = seqio_input.LanguageModelFeatures
@@ -1588,7 +1589,7 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     Z_LOSS_WEIGHT = 0.0
     TASK_NAME = 'BC2Gpt13BVsTorch'
     SHUFFLE = {'train': False, 'test': False}
-    SHUFFLE_SIZE = 100000
+    SHUFFLE_SIZE = None
 
 
 @experiment_registry.register
@@ -1683,6 +1684,7 @@ def tfids_registry(task):
             split_to_filepattern={mode: task.DATA_PATH[mode]},
             feature_description=feature_desc,
         )
+        print(f'mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}')
         seqio.TaskRegistry.add(
             f"{task.TASK_NAME}.{mode}",
             source,

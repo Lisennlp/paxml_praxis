@@ -117,14 +117,15 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         if self.LOAD_TF_ID:
             DataFeature = seqio_input.MyLanguageModelFeatures
             DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
-            mixture_name = "tfids.train" if is_training else "tfids.test"
+            # train test shuffle flag
+            shuffle = self.SHUFFLE[0] if is_training else self.SHUFFLE[1]
+            mixture_name = f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test"
             name = "sft_train" if is_training else "sft_test"
             split_name = "train" if is_training else "test"
             task_feature_lengths = {
                 "targets": self.MAX_SEQ_LEN,
                 "masks": self.MAX_SEQ_LEN,
             }
-            shuffle = True
 
         else:
             DataFeature = seqio_input.LanguageModelFeatures
@@ -1376,8 +1377,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 40
     COMBINE_QKV = False
     NUM_GROUPS = -1
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 16, 4]
     DCN_MESH_SHAPE = [1, 1, 1]
 
     MAX_SEQ_LEN = 4096
@@ -1392,12 +1393,12 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     LR_LRED_DECAY_END = 200000
     LR_LRED_MIN_RATIO = 1.0
     LR_LRED_MAX = 1.0
-    Z_LOSS_WEIGHT = 2e-4
+    Z_LOSS_WEIGHT = 0.0
 
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8 # baichuan2 use default 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
     WEIGHT_DECAY = 0.005 # baichuan2 finetune: 0.005  pretrain: 0.1
 
     NUM_TRAIN_STEPS = 1e7 # 训练最大步数
@@ -1408,11 +1409,11 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TRAINABLE_POSITION_EMB = False
 
     CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 250
+    EVAL_LOOP_NUM_BATCHES = 102
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
-    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5_test"
+    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5_vs_torch"
 
     TRAINING_SEED = 1234
     USE_ROTARY_POSITION_EMB = False
@@ -1424,7 +1425,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
 
     # tfids datasets
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    DATASET_NAME = "tfids"
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     TEST_RATIO = 0.02
 
@@ -1437,8 +1437,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
         splits = ['split0', 'split2']
         start_files, median_files, end_files = [], [], []
         for lang in ['zh', 'en']:
-            # directory_path = f'xiaomeng/processed_{lang}_data_split'
-            directory_path = f'xiaomeng/processed_{lang}_data_1001'
+            directory_path = f'xiaomeng/processed_{lang}_data_split'
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
                 for split in splits:
                     if split in blob.name:
@@ -1453,11 +1452,11 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
             train_test_dataset['train'].extend(train)
             train_test_dataset['test'].extend(test)
             logging.info(f'dataset: {k}, file nums: {len(v)}')
-        train_test_dataset['train'] = random.shuffle(train_test_dataset['train'])
-        train_test_dataset['test'] = random.shuffle(train_test_dataset['test'])
         return train_test_dataset
-
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
+    TASK_NAME = 'BC2Gpt13B'
+    SHUFFLE = {'train': True, 'test': True}
+    SHUFFLE_SIZE = 100000
 
     # baichuan1指令数据集
     # DATA_PATH = {
@@ -1468,21 +1467,19 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # KEY_MAP = {"inputs": None, "targets": "text"}
     # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
     # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    # DATA_PATH = "gs://common_datasets"
-    # DATASET_NAME = "C4"
 
 @experiment_registry.register
 class BC2Gpt1BTest(BC2Gpt13B):
     NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 16, 4]
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
     CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 250
+    EVAL_LOOP_NUM_BATCHES = 102
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_test"
+    WANDB_PROJECT = "baichuan2_13b_compare_to_torch"
     TEST_RATIO = 0.02
     TRAINING_SEED = 1234
 
@@ -1501,7 +1498,9 @@ class BC2Gpt1BTest(BC2Gpt13B):
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    # CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0 # kf torch
+    TASK_NAME = 'BC2Gpt1BTest'
 
     def extract_datapath(test_ratio, seed):
         random.seed(seed)
@@ -1529,8 +1528,67 @@ class BC2Gpt1BTest(BC2Gpt13B):
             train_test_dataset['test'].extend(test)
             logging.info(f'dataset: {k}, file nums: {len(v)}')
         return train_test_dataset
-    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
+    # DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
+
     Z_LOSS_WEIGHT = 0.0
+
+
+@experiment_registry.register
+class BC2Gpt13BVsTorch(BC2Gpt13B):
+    NUM_LAYERS = 40
+    MODEL_DIMS = 5120
+    HIDDEN_DIMS = 13696
+    NUM_HEADS = 40
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 16, 4]
+
+    MAX_SEQ_LEN = 4096
+    VOCAB_SIZE = 125696
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
+    Z_LOSS_WEIGHT = 0.0
+
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8 # baichuan2 use default 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    WEIGHT_DECAY = 0.005 # baichuan2 finetune: 0.005  pretrain: 0.1
+
+    NUM_TRAIN_STEPS = 1e7 # 训练最大步数
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+
+    TRAINABLE_POSITION_EMB = False
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 102
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5_vs_torch"
+    TRAINING_SEED = 1234
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = True
+    LM_HEAD_NORM = True
+
+    TARGET_LOG_PPLX = -1
+    SAVE_ON_STEPS = list(range(1000, 50000, 1000))
+    # tfids datasets
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    DATA_PATH = {
+        "test": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord", 
+        "train": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord"
+    }
+    Z_LOSS_WEIGHT = 0.0
+    TASK_NAME = 'BC2Gpt13BVsTorch'
+    SHUFFLE = {'train': False, 'test': False}
+    SHUFFLE_SIZE = 100000
 
 
 @experiment_registry.register
@@ -1564,6 +1622,9 @@ class BC2Gpt13B1001(BC2Gpt13B):
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    TASK_NAME = 'BC2Gpt13B1001'
+    SHUFFLE = {'train': True, 'test': True}
+    SHUFFLE_SIZE = 100000
 
     SPLIT_BSZ = {'zh': 7, 'en': 20}
     def extract_datapath(test_ratio, seed, split_batch):
@@ -1604,47 +1665,47 @@ def get_feature(key_map, vocabulary):
     return feature_desc, output_features
 
 
-def tfids_registry():
+def tfids_registry(task):
     @seqio.map_over_dataset
     def convert_datatype(ex):
         return {
             k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32)
             for k, v in ex.items()
         }
-
     preprocessors = [
         convert_datatype,
-        functools.partial(t5_preprocessors.rekey, key_map=BC2Gpt13B.KEY_MAP),
+        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
     ]
-    feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
+    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
     for mode in ["train", "test"]:
-        shuffle_buffer_size = 100000
+        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
         source = seqio.TFExampleDataSource(
-            split_to_filepattern={mode: BC2Gpt13B1001.DATA_PATH[mode]},
+            split_to_filepattern={mode: task.DATA_PATH[mode]},
             feature_description=feature_desc,
         )
         seqio.TaskRegistry.add(
-            f"{BC2Gpt13B.DATASET_NAME}.{mode}",
+            f"{task.TASK_NAME}.{mode}",
             source,
             preprocessors=preprocessors,
             output_features=output_features,
-            shuffle_buffer_size=shuffle_buffer_size
+            shuffle_buffer_size=shuffle_buffer_size,
         )
 
 
-def c4_registry():
+def c4_registry(task):
     preprocessors = [
-        functools.partial(t5_preprocessors.rekey, key_map=BC2Gpt13B.KEY_MAP),
+        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
         seqio.preprocessors.tokenize,
         functools.partial(t5_preprocessors.reduce_concat_tokens, batch_size=4096),
         t5_preprocessors.split_tokens_to_targets_length,
     ]
-    feature_desc, output_features = get_feature(BC2Gpt13B.KEY_MAP, BC2Gpt13B.VOCABULARY)
+    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
     for mode in ["train", "test"]:
-        shuffle_buffer_size = 10000 if mode == "train" else None
-        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=BC2Gpt13B1001.DATA_PATH)
+        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
+        data_path = 'gs://common_datasets'
+        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
         t5.data.TaskRegistry.add(
-            f"{BC2Gpt13B.DATASET_NAME}.{mode}",
+            f"c4.{mode}",
             seqio.Task,
             source=source,
             preprocessors=preprocessors,
@@ -1653,12 +1714,8 @@ def c4_registry():
             shuffle_buffer_size=shuffle_buffer_size,
         )
 
-
-def dataset_registry():
-    if BC2Gpt13B.DATASET_NAME == 'tfids':
-        tfids_registry()
-    elif BC2Gpt13B.DATASET_NAME == 'c4':
-        c4_registry()
+tfids_registry(BC2Gpt13B1001)
+tfids_registry(BC2Gpt13BVsTorch)
+# c4_registry(BC2Gpt13B)
 
         
-dataset_registry()

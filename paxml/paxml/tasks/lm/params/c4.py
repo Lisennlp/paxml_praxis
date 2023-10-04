@@ -154,7 +154,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             ),
             is_training=is_training,
             input_random_seed=(seed if is_training else 4321),
-            batch_size=batch_size_per_process,
+            batch_size=int(batch_size_per_process * self.TEST_BATCH_RATIO), # lsp
             drop_remainder=True if is_training else False,
             num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
             num_infeed_hosts=num_infeed_hosts,
@@ -1458,6 +1458,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TASK_NAME = 'BC2Gpt13B'
     SHUFFLE = {'train': True, 'test': True}
     SHUFFLE_SIZE = 100000
+    TEST_BATCH_RATIO = 1
 
     # baichuan1指令数据集
     # DATA_PATH = {
@@ -1543,7 +1544,7 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     PERCORE_BATCH_SIZE = 2
     ICI_MESH_SHAPE = [1, 16, 4]
 
-    MAX_SEQ_LEN = 4096
+    MAX_SEQ_LEN = 4064
     VOCAB_SIZE = 125696
 
     LAYERNORM_EPSILON = 1e-06
@@ -1590,7 +1591,7 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     TASK_NAME = 'BC2Gpt13BVsTorch'
     SHUFFLE = {'train': False, 'test': False}
     SHUFFLE_SIZE = None
-
+    TEST_BATCH_RATIO = 1
 
 @experiment_registry.register
 class BC2Gpt13B1001(BC2Gpt13B):

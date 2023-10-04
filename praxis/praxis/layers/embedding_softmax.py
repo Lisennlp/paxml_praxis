@@ -353,8 +353,8 @@ class FullSoftmax(base_layer.BaseLayer):
             per_example_xent=per_example_xent.astype(jnp.float32),
             total_xent=total_xent,
             total_weight=total_weight,
-            # avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
-            avg_xent=avg_xent  # mesh
+            avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
+            # avg_xent=avg_xent  # mesh
             # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
         )
         if self.z_loss_weight > 0.0:

@@ -727,19 +727,23 @@ class SeqIOInput(base_input.BaseInput):
             self.batch_size,
             self.input_random_seed,
         )
+        logging.info(f'Start shard......')
         ds = self._get_backing_ds(
             shuffle=self.should_shuffle,
             num_epochs=-1 if self.should_repeat else 1,
             shard_info=self._shard_info,
         )
+        logging.info(f'Start pad......')
         # pad
         ds = self._pad_to_batch_size(ds)
         # lsp：<ParallelBatchDataset element_spec={'ids': TensorSpec(shape=(bsz, 2048), dtype=
+        logging.info(f'Start batch......')
         ds = ds.batch(
             self.batch_size,
             drop_remainder=self.drop_remainder,
             num_parallel_calls=tf.data.AUTOTUNE,
         )
+        logging.info(f'Start skip......')
         # lsp： 跳过的数据step
         if self.num_batches_to_skip:
             # lsp
@@ -754,7 +758,7 @@ class SeqIOInput(base_input.BaseInput):
             #         ),
             #         self.num_batches_to_skip,
             #     )
-
+        logging.info(f'Finished skip......')
         return ds
 
     def _gen_targets_dataset(self):

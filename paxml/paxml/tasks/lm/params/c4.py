@@ -51,7 +51,6 @@ from praxis import py_utils
 from google.cloud import storage
 
 
-
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 GPT_EOS_ID = 1
@@ -66,9 +65,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     TRAINING_SEED = 9876
     TRAINING_NUM_BATCHES_TO_SKIP = None
 
-    def _dataset_common(
-        self, is_training, num_batches_to_skip=0
-    ) -> pax_fiddle.Config[base_input.BaseInput]:
+    def _dataset_common(self, is_training, num_batches_to_skip=0) -> pax_fiddle.Config[base_input.BaseInput]:
         if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
             logging.info(
                 "TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to:"
@@ -76,10 +73,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             )
             num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
         else:
-            logging.info(
-                "TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to:"
-                f" {num_batches_to_skip}"
-            )
+            logging.info(f"TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}")
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
         else:
@@ -114,11 +108,12 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             # seed = jnp.int32(multihost_utils.broadcast_one_to_all(seed))
             logging.info("Train input seed: %s", "None" if seed is None else seed)
 
-        if self.LOAD_TF_ID:
+        if self.LOAD_SEQIO_ID:
+            logging.info(f'Load seqio id data......')
             DataFeature = seqio_input.MyLanguageModelFeatures
             DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
             # train test shuffle flag
-            shuffle = self.SHUFFLE['train'] if is_training else self.SHUFFLE['test']
+            shuffle = self.SHUFFLE["train"] if is_training else self.SHUFFLE["test"]
             mixture_name = f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test"
             name = "sft_train" if is_training else "sft_test"
             split_name = "train" if is_training else "test"
@@ -126,9 +121,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 "targets": self.MAX_SEQ_LEN,
                 "masks": self.MAX_SEQ_LEN,
             }
-            print(f'is_training: {is_training} shuffle: {shuffle}')
+            print(f"is_training: {is_training} shuffle: {shuffle}")
 
-        else:
+        elif self.LOAD_SEQIO_TEXT:
+            logging.info(f'Load seqio text data......')
             DataFeature = seqio_input.LanguageModelFeatures
             mixture_name = "c4.train" if is_training else "c4.test"
             name = "C4Train" if is_training else "C4Validation"
@@ -136,37 +132,59 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             task_feature_lengths = {"targets": self.MAX_SEQ_LEN}
             shuffle = None
 
-        p = pax_fiddle.Config(
-            seqio_input.SeqIOInput,
-            name=name,
-            mixture_name=mixture_name,
-            split_name=split_name,
-            task_feature_lengths=task_feature_lengths,
-            use_cached=False,
-            shuffle=shuffle,
-            repeat=True if is_training else False,
-            feature_converter=DataFeature(
-                pack=True if is_training else False,
-                use_custom_packing_ops=False,
-                bos_id=0,
-                reverse_bos_padding=True,
-                eos_id=GPT_EOS_ID,
-            ),
-            is_training=is_training,
-            input_random_seed=(seed if is_training else 4321),
-            batch_size=int(batch_size_per_process * self.TEST_BATCH_RATIO), # lsp
-            drop_remainder=True if is_training else False,
-            num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
-            num_infeed_hosts=num_infeed_hosts,
-            # reset_for_eval=False if is_training else True, # eval的时候为True
-            reset_for_eval=False,  # eval的时候为True -> False
-            annotate_padding_fields=True,
-            eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
-        )
-        return p
+        else:
+            logging.info(f'Load mesh id data......')
+            shuffle_key = "train" if is_training else "test"
+            shuffle_buffer_size = self.SHUFFLE_SIZE if self.SHUFFLE[shuffle_key] else None
+
+        if self.LOAD_SEQIO_ID or self.LOAD_SEQIO_TEXT:
+            p = pax_fiddle.Config(
+                seqio_input.SeqIOInput,
+                name=name,
+                mixture_name=mixture_name,
+                split_name=split_name,
+                task_feature_lengths=task_feature_lengths,
+                use_cached=False,
+                shuffle=shuffle,
+                repeat=True if is_training else False,
+                feature_converter=DataFeature(
+                    pack=True if is_training else False,
+                    use_custom_packing_ops=False,
+                    bos_id=0,
+                    reverse_bos_padding=True,
+                    eos_id=GPT_EOS_ID,
+                ),
+                is_training=is_training,
+                input_random_seed=(seed if is_training else 4321),
+                batch_size=int(batch_size_per_process * self.TEST_BATCH_RATIO),  # lsp
+                drop_remainder=True if is_training else False,
+                num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
+                num_infeed_hosts=num_infeed_hosts,
+                # reset_for_eval=False if is_training else True, # eval的时候为True
+                reset_for_eval=False,  # eval的时候为True -> False
+                annotate_padding_fields=True,
+                eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
+            )
+            return p
+        else:
+            p = pax_fiddle.Config(
+                MyDatasets,
+                name=f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test",
+                path=self.DATA_PATH['train'] if is_training else self.DATA_PATH['test'],
+                is_training=is_training,
+                num_batches_to_skip=num_batches_to_skip,
+                batch_size=int(self.PERCORE_BATCH_SIZE * 8),
+                seq_len=self.MAX_SEQ_LEN,
+                reset_for_eval=False,
+                repeat=3 if is_training else 3 * 30,
+                eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
+                train_seed=self.TRAINING_SEED,
+                task_features=list(self.KEY_MAP.values()),
+                shuffle_buffer_size=shuffle_buffer_size,
+            )
+            return p
 
     # lsp: 数据
-
     def datasets(self, num_batches_to_skip=0) -> List[pax_fiddle.Config[base_input.BaseInput]]:
         """Returns a list of dataset parameters."""
         return [
@@ -516,9 +534,7 @@ def configure_gpt3_task(
     # transformer_layer_p.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB # 会被stacked_p的atten_dropout_prob覆盖
     stacked_p.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB
 
-    transformer_layer_p.tr_fflayer_tpl.has_bias = (
-        not cls.USE_GATED_ACTIVATION or cls.USE_BIAS
-    )  # XD add
+    transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
     if cls.ACTIVATION_CLS == layers.GELU:
         transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
 
@@ -698,7 +714,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     # DIMS_PER_HEAD = 128
     COMBINE_QKV = False  # False 占用显存小于 True 1G+
     NUM_GROUPS = -1
-
+    NUM_TRAIN_STEPS = 1e7
     # ICI_MESH_SHAPE = [1, 4, 2]  # bs=1*8, 0.315 paxml 0.273 mesh
     # ICI_MESH_SHAPE = [1, 8, 1]  # bs=1*8, 0.311 paxml 0.272 mesh
     # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514
@@ -711,7 +727,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     # ICI_MESH_SHAPE = [1, 32, 4]  # seq: 4096 bs=2*32*4, 0.0349 paxml
 
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]
+    ICI_MESH_SHAPE = [1, 8, 4]
     DCN_MESH_SHAPE = [1, 1, 1]  # lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
     MAX_SEQ_LEN = 4096
@@ -750,50 +766,19 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
 
     TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
     VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-    TRAINING_SEED = 1234
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
-    LM_HEAD_NORM = True
+    DATA_PATH = {"train": TRAIN_FILE, "test": VALID_FILE}
 
-    LOAD_TF_ID = True
-    LOAD_MESH = False
+    TRAINING_SEED = 1234
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    LM_HEAD_NORM = False
+
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = True
     # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
     TARGET_LOG_PPLX = -1
-    SAVE_ON_STEPS = list(range(5000, 1000000, 5000))
-
-    if not LOAD_TF_ID and LOAD_MESH:
-        # lsp
-        def _dataset_common(
-            self, is_training, num_batches_to_skip=0
-        ) -> pax_fiddle.Config[base_input.BaseInput]:
-            path = self.TRAIN_FILE if is_training else self.VALID_FILE
-            if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
-                logging.info(
-                    "TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to:"
-                    f" {self.TRAINING_NUM_BATCHES_TO_SKIP}"
-                )
-                num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
-            else:
-                logging.info(
-                    "TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to:"
-                    f" {num_batches_to_skip}"
-                )
-
-            repeat = 3 if is_training else 3 * 30
-            p = pax_fiddle.Config(
-                MyDatasets,
-                name="baichuan-train-data" if is_training else "baichuan-eval-data",
-                path=path,
-                is_training=is_training,
-                num_batches_to_skip=num_batches_to_skip,
-                batch_size=int(self.PERCORE_BATCH_SIZE * 8),
-                seq_len=self.MAX_SEQ_LEN,
-                reset_for_eval=False,
-                repeat=repeat,
-                eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
-                train_seed=self.TRAINING_SEED,
-            )
-            return p
+    SAVE_ON_STEPS = list(range(2000, 1000000, 2000))
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
 
 
 @experiment_registry.register
@@ -1263,20 +1248,22 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 
 class MyDatasets(base_input.BaseInput):
-    # Required params.
+    # Required params. lsp - note: 参数一定要注明类型，不然在初始化的时候就不能传入，会报错没有这个参数
     path: Optional[str] = None
     num_batches_to_skip: Optional[int] = None
     num_infeed_hosts: int = 0
-    reset_for_eval: bool = False  # eval的时候为True -> False
+    reset_for_eval: bool = False
     is_training: bool = True
     batch_size: int = 8
     seq_len: int = 2048
     repeat: int = 1
-    train_seed = 1234
+    train_seed: int = 1234
+    task_features: dict = None
+    shuffle_buffer_size: int = None
+    pad_id: int = 0
+    drop_remainder: bool = True
 
     def __post_init__(self):
-        # valid_path = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-        # trainpath = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
         self.dataset = self.load_tfrecord_dataset(
@@ -1309,10 +1296,7 @@ class MyDatasets(base_input.BaseInput):
         return self.batch_size * self.num_infeed_hosts
 
     def _parse_function(self, example_proto):
-        feature_desc = {
-            "input_ids": tf.io.VarLenFeature(tf.int64),
-            "labels": tf.io.VarLenFeature(tf.int64),
-        }
+        feature_desc = {key: tf.io.VarLenFeature(tf.int64) for key in self.task_features}
         example = tf.io.parse_single_example(example_proto, feature_desc)
         for name in list(example.keys()):
             t = example[name]
@@ -1326,40 +1310,40 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs = NestedMap()
         model_needed_inputs.ids = data["input_ids"][:, : self.seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1 : self.seq_len]
-        weights = data["labels"] > 0
+        if "labels" in data:
+            weights = data["labels"] > 0
+        else:
+            weights = data["input_ids"] > 0
         # padding_weights = np.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.weights = weights[:, 1 : self.seq_len]
         # 错误，因为labels是计算loss的位置，只会在计算loss的时候进行mask，而paddings不一样，是对hidden_states进行mask
         # model_needed_inputs.paddings = 1 - weights[:, 1:self.seq_len]
-        # logging.info(f'model_needed_inputs.paddings: {model_needed_inputs.paddings[0]} || sum: {model_needed_inputs.paddings[0].sum()} || shape: {model_needed_inputs.paddings[0].shape}')
+        # logging.info(f'model_needed_inputs.paddings: {model_needed_inputs.paddings[0]} || sum: {model_needed_inputs
+        # .paddings[0].sum()} || shape: {model_needed_inputs.paddings[0].shape}')
         model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
-        model_needed_inputs.segment_pos = jnp.broadcast_to(
-            jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape
-        )
-        # logging.info(f'input_ids：{model_needed_inputs.ids[0][100:200].tolist()}')
+        model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
         return model_needed_inputs
 
     def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
-        # tf.random.set_seed(42)
         tf.random.set_seed(self.train_seed)
-        fnames = (
-            [index_fname]
-            if index_fname.endswith(".tfrecords")
-            else open(index_fname).read().splitlines()
-        )
-        ds = tf.data.Dataset.from_tensor_slices(fnames)
+        ds = tf.data.Dataset.from_tensor_slices(index_fname)
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
         logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")
         ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.shuffle(buffer_size=10000)  # 从文件中取buffer_size数据，然后打乱
+
+        if self.shuffle_buffer_size is not None:
+            ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
+
+        padded_shapes = {key: seq_len for key in self.task_features}
+        padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
             batch_size=np.prod(batch_size),
-            padded_shapes={"input_ids": [seq_len], "labels": [seq_len]},
-            padding_values={"input_ids": 0, "labels": 0},
+            padded_shapes=padded_shapes,
+            padding_values=padding_values,
             drop_remainder=True,
         )
         ds = ds.prefetch(10)
@@ -1376,11 +1360,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    COMBINE_QKV = False
-    NUM_GROUPS = -1
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 16, 4]
-    DCN_MESH_SHAPE = [1, 1, 1]
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 4] # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
 
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
@@ -1388,7 +1369,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     LAYERNORM_EPSILON = 1e-06
 
     LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
     LR_LRED_WARMUP = 2000
     LR_LRED_DECAY_START = 2001
     LR_LRED_DECAY_END = 200000
@@ -1398,142 +1379,81 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
 
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8 # baichuan2 use default 1e-8
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005 # baichuan2 finetune: 0.005  pretrain: 0.1
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
 
-    NUM_TRAIN_STEPS = 1e7 # 训练最大步数
     TRAINING_NUM_BATCHES_TO_SKIP = None
-
-    EMBED_DROPOUT_PROB = 0.0
-    ATTEN_DROPOUT_PROB = 0.0
     TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = True
 
     CHECKPOINT_EVERY_N_STEPS = 100
     EVAL_LOOP_NUM_BATCHES = 102
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
-    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5_vs_torch"
+    WANDB_PROJECT = "debug"
 
-    TRAINING_SEED = 1234
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
     LM_HEAD_NORM = True
 
-    TARGET_LOG_PPLX = -1
-    SAVE_ON_STEPS = list(range(2000, 50000, 2000))
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = True
 
+    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    # KEY_MAP = {"inputs": None, "targets": "text"}
+    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    # LOAD_SEQIO_ID:
     # tfids datasets
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    TEST_RATIO = 0.02
 
-    def extract_datapath(test_ratio, seed):
+    TARGET_LOG_PPLX = -1
+
+    TEST_RATIO = 0.02
+    TRAINING_SEED = 1234
+    SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
+
+    def extract_datapath(test_ratio, seed, split_batch):
         random.seed(seed)
         dataset = defaultdict(list)
         client = storage.Client()
-        bucket_name = 'jax_llm_data'
-        # splits = ['split0', 'split1', 'split2']
-        splits = ['split0', 'split2']
-        start_files, median_files, end_files = [], [], []
-        for lang in ['zh', 'en']:
-            directory_path = f'xiaomeng/processed_{lang}_data_split'
+        bucket_name = "jax_llm_data"
+        for lang in ["zh", "en"]:
+            # directory_path = f'xiaomeng/processed_{lang}_data_split'
+            directory_path = f"xiaomeng/processed_{lang}_data_1001"
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                for split in splits:
-                    if split in blob.name:
-                        path = os.path.join(f'gs://{bucket_name}', blob.name)
-                        dataset[split].append(path)
-                        break
-        train_test_dataset = defaultdict(list)
-        for k, v in dataset.items():
-            random.shuffle(v)
-            test = v[:int(len(v) * test_ratio)]
-            train = v[int(len(v) * test_ratio): ]
-            train_test_dataset['train'].extend(train)
-            train_test_dataset['test'].extend(test)
-            logging.info(f'dataset: {k}, file nums: {len(v)}')
-        return train_test_dataset
-    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
-    TASK_NAME = 'BC2Gpt13B'
-    SHUFFLE = {'train': True, 'test': True}
-    SHUFFLE_SIZE = 100000
-    TEST_BATCH_RATIO = 1
+                logging.info(f"filename: {blob.name}=====")
+                if not blob.name or "_R" not in blob.name:
+                    continue
+                if len(dataset[lang]) > 5:
+                    break
+                index = int(blob.name.rsplit("_", maxsplit=1)[-1])
+                # 每本书的前多少个4096
+                if index < split_batch[lang]:
+                    path = os.path.join(f"gs://{bucket_name}", blob.name)
+                    dataset[lang].append(path)
+        total = dataset["zh"] + dataset["en"]
+        random.shuffle(total)
+        test_num = int(len(total) * test_ratio)
+        test_num = max(test_num, 1)
 
+        train_test_dataset = {"test": total[:test_num], "train": total[test_num:]}
+        logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+        return train_test_dataset
+
+    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
+
+    TASK_NAME = "BC2Gpt13B"
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+    TEST_BATCH_RATIO = 1
     # baichuan1指令数据集
     # DATA_PATH = {
     #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
     #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
     # }
-    # c4 text datasets
-    # KEY_MAP = {"inputs": None, "targets": "text"}
-    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-
-@experiment_registry.register
-class BC2Gpt1BTest(BC2Gpt13B):
-    NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 16, 4]
-    MAX_SEQ_LEN = 4096
-    VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 102
-    EVAL_INTERVAL_STEPS = 100
-    CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_compare_to_torch"
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-
-    LAYERNORM_EPSILON = 1e-06
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 2000
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 20000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.1
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    # CLIP_GRADIENT_NORM_TO_VALUE = 0.5
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0 # kf torch
-    TASK_NAME = 'BC2Gpt1BTest'
-
-    def extract_datapath(test_ratio, seed):
-        random.seed(seed)
-        dataset = defaultdict(list)
-        client = storage.Client()
-        bucket_name = 'jax_llm_data'
-        # splits = ['split0', 'split1', 'split2']
-        splits = ['split0', 'split2']
-        start_files, median_files, end_files = [], [], []
-        for lang in ['zh', 'en']:
-            directory_path = f'xiaomeng/processed_{lang}_data_split'
-            for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                for split in splits:
-                    if split in blob.name:
-                        path = os.path.join(f'gs://{bucket_name}', blob.name)
-                        dataset[split].append(path)
-                        break
-        train_test_dataset = defaultdict(list)
-        for k, v in dataset.items():
-            random.shuffle(v)
-            # v = v[:10]
-            test = v[:int(len(v) * test_ratio)]
-            train = v[int(len(v) * test_ratio): ]
-            train_test_dataset['train'].extend(train)
-            train_test_dataset['test'].extend(test)
-            logging.info(f'dataset: {k}, file nums: {len(v)}')
-        return train_test_dataset
-    # DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
-
-    Z_LOSS_WEIGHT = 0.0
-
 
 @experiment_registry.register
 class BC2Gpt13BVsTorch(BC2Gpt13B):
@@ -1549,7 +1469,7 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_exponential_decay" # constant_with_warmup
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
     LR_LRED_WARMUP = 2000
     LR_LRED_DECAY_START = 2001
     LR_LRED_DECAY_END = 200000
@@ -1559,11 +1479,11 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
 
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8 # baichuan2 use default 1e-8
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005 # baichuan2 finetune: 0.005  pretrain: 0.1
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
 
-    NUM_TRAIN_STEPS = 1e7 # 训练最大步数
+    NUM_TRAIN_STEPS = 1e7  # 训练最大步数
     TRAINING_NUM_BATCHES_TO_SKIP = None
 
     TRAINABLE_POSITION_EMB = False
@@ -1584,29 +1504,28 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     DATA_PATH = {
-        "test": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord", 
-        "train": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord"
+        "test": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord",
+        "train": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord",
     }
     Z_LOSS_WEIGHT = 0.0
-    TASK_NAME = 'BC2Gpt13BVsTorch'
-    SHUFFLE = {'train': False, 'test': False}
+    TASK_NAME = "BC2Gpt13BVsTorch"
+    SHUFFLE = {"train": False, "test": False}
     SHUFFLE_SIZE = None
     TEST_BATCH_RATIO = 1
+
 
 @experiment_registry.register
 class BC2Gpt13B1001(BC2Gpt13B):
     NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 32, 4]
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 4]
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
     CHECKPOINT_EVERY_N_STEPS = 100
     EVAL_LOOP_NUM_BATCHES = 100
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_1001"
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
+    WANDB_PROJECT = "baichuan2_13b_1001test"
 
     LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule
@@ -1624,35 +1543,42 @@ class BC2Gpt13B1001(BC2Gpt13B):
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 0.5
-    TASK_NAME = 'BC2Gpt13B1001'
-    SHUFFLE = {'train': True, 'test': True}
-    SHUFFLE_SIZE = 100000
+    TASK_NAME = "BC2Gpt13B1001"
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
 
-    SPLIT_BSZ = {'zh': 7, 'en': 20}
+    TEST_RATIO = 0.02
+    TRAINING_SEED = 1234
+    SPLIT_BSZ = {"zh": 7, "en": 20}
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+
     def extract_datapath(test_ratio, seed, split_batch):
         random.seed(seed)
         dataset = defaultdict(list)
         client = storage.Client()
-        bucket_name = 'jax_llm_data'
-        for lang in ['zh', 'en']:
-            # directory_path = f'xiaomeng/processed_{lang}_data_split'
-            directory_path = f'xiaomeng/processed_{lang}_data_1001'
+        bucket_name = "jax_llm_data"
+        for lang in ["zh", "en"]:
+            directory_path = f"xiaomeng/processed_{lang}_data_1001"
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                logging.info(f'filename: {blob.name}=====')
-                if not blob.name or '_R' not in blob.name: continue
+                logging.info(f"filename: {blob.name}=====")
+                if not blob.name or "_R" not in blob.name:
+                    continue
                 if len(dataset[lang]) > 2000:
                     break
-                index = int(blob.name.rsplit('_', maxsplit=1)[-1])
+                index = int(blob.name.rsplit("_", maxsplit=1)[-1])
                 # 每本书的前多少个4096
                 if index < split_batch[lang]:
-                    path = os.path.join(f'gs://{bucket_name}', blob.name)
+                    path = os.path.join(f"gs://{bucket_name}", blob.name)
                     dataset[lang].append(path)
-        total = dataset['zh'] + dataset['en']
+        total = dataset["zh"] + dataset["en"]
         random.shuffle(total)
         test_num = int(len(total) * test_ratio)
-        train_test_dataset = {'test': total[ :test_num], 'train': total[test_num:]}
+        test_num = max(test_num, 1)
+        train_test_dataset = {"test": total[:test_num], "train": total[test_num:]}
         logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
         return train_test_dataset
+
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
     Z_LOSS_WEIGHT = 0.0
 
@@ -1670,10 +1596,8 @@ def get_feature(key_map, vocabulary):
 def tfids_registry(task):
     @seqio.map_over_dataset
     def convert_datatype(ex):
-        return {
-            k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32)
-            for k, v in ex.items()
-        }
+        return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
+
     preprocessors = [
         convert_datatype,
         functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
@@ -1685,7 +1609,7 @@ def tfids_registry(task):
             split_to_filepattern={mode: task.DATA_PATH[mode]},
             feature_description=feature_desc,
         )
-        print(f'mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}')
+        print(f"mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}")
         seqio.TaskRegistry.add(
             f"{task.TASK_NAME}.{mode}",
             source,
@@ -1705,7 +1629,7 @@ def c4_registry(task):
     feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
     for mode in ["train", "test"]:
         shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-        data_path = 'gs://common_datasets'
+        data_path = "gs://common_datasets"
         source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
         t5.data.TaskRegistry.add(
             f"c4.{mode}",
@@ -1717,8 +1641,7 @@ def c4_registry(task):
             shuffle_buffer_size=shuffle_buffer_size,
         )
 
+c4_registry(BC2Gpt13B)
+tfids_registry(BC2Gpt13B)
 tfids_registry(BC2Gpt13B1001)
 tfids_registry(BC2Gpt13BVsTorch)
-# c4_registry(BC2Gpt13B)
-
-        

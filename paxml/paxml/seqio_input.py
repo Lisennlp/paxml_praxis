@@ -931,8 +931,9 @@ class SeqIOInput(base_input.BaseInput):
             try_in_mem_cache=self.try_in_mem_cache,
         )
         # lsp：经过preprocessors里面的函数出来。 -> key_map, tokenizer, reduce_concat, split set length....
+        logging.info(f'Start get_dataset......')
         ds = self.mixture_or_task_inst.get_dataset(**kwargs)
-
+        logging.info(f'Start feature_converter......')
         ds = self.feature_converter(ds, task_feature_lengths=self.task_feature_lengths)
 
         if self.use_enumeration:  # default: True
@@ -940,7 +941,7 @@ class SeqIOInput(base_input.BaseInput):
             # feature converters since feature converters don't pass through
             # unrecognized fields by default
             ds = _enumerate_dataset(ds, self.is_training, shard_info)
-
+        logging.info(f'Finished feature_converter......')
         return ds
 
     def _get_global_ds(self) -> tf.data.Dataset:

@@ -1525,7 +1525,7 @@ class BC2Gpt13B1001(BC2Gpt13B):
     EVAL_LOOP_NUM_BATCHES = 100
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_1001test"
+    WANDB_PROJECT = "baichuan2_13b_1001"
 
     LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule

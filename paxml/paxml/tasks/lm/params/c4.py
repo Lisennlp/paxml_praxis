@@ -1517,8 +1517,8 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
 @experiment_registry.register
 class BC2Gpt13B1001(BC2Gpt13B):
     NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 32, 4]
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
     CHECKPOINT_EVERY_N_STEPS = 100

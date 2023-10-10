@@ -12,3 +12,4 @@ __pycache__
 commit.sh
 wandb
 .vscode
+paxml/my_scripts/command_log.txt

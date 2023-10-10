@@ -1272,6 +1272,7 @@ class MyDatasets(base_input.BaseInput):
             seq_len=self.seq_len,
             repeat=self.repeat,
         )
+        self.dataset = self.dataset.as_numpy_iterator()
 
     def peek_padded(self):
         return self.get_next_padded()
@@ -1305,28 +1306,25 @@ class MyDatasets(base_input.BaseInput):
             example[name] = tf.sparse.to_dense(t, default_value=0)
         return example
 
-    def format(self, data):
-        data = jax.tree_map(lambda x: x.numpy(), data)
+    def convert(self, data):
+        seq_len = self.seq_len
         model_needed_inputs = NestedMap()
-        model_needed_inputs.ids = data["input_ids"][:, : self.seq_len - 1]
-        model_needed_inputs.labels = data["input_ids"][:, 1 : self.seq_len]
+        model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
+        model_needed_inputs.labels = data["input_ids"][:, 1 : seq_len]
         if "labels" in data:
             weights = data["labels"] > 0
         else:
             weights = data["input_ids"] > 0
-        # padding_weights = np.zeros_like(model_needed_inputs.ids)
-        model_needed_inputs.weights = weights[:, 1 : self.seq_len]
-        # 错误，因为labels是计算loss的位置，只会在计算loss的时候进行mask，而paddings不一样，是对hidden_states进行mask
-        # model_needed_inputs.paddings = 1 - weights[:, 1:self.seq_len]
-        # logging.info(f'model_needed_inputs.paddings: {model_needed_inputs.paddings[0]} || sum: {model_needed_inputs
-        # .paddings[0].sum()} || shape: {model_needed_inputs.paddings[0].shape}')
-        model_needed_inputs.paddings = np.zeros_like(model_needed_inputs.ids)
-        model_needed_inputs.segment_ids = jnp.ones_like(model_needed_inputs.ids)
-        model_needed_inputs.segment_pos = jnp.broadcast_to(jnp.arange(self.seq_len - 1), model_needed_inputs.ids.shape)
+        model_needed_inputs.weights = weights[:, 1: seq_len]
+        model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
+        model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)
+        pos = tf.range(seq_len - 1)
+        model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
     def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
         tf.random.set_seed(self.train_seed)
+        assert isinstance(index_fname, list)
         ds = tf.data.Dataset.from_tensor_slices(index_fname)
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
@@ -1334,7 +1332,6 @@ class MyDatasets(base_input.BaseInput):
         logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")
         ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
-
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
 
@@ -1346,12 +1343,14 @@ class MyDatasets(base_input.BaseInput):
             padding_values=padding_values,
             drop_remainder=True,
         )
-        ds = ds.prefetch(10)
+        ds = ds.map(self.convert)
         ds = ds.repeat(repeat)
+
         logging.info(f"self.num_batches_to_skip: {self.num_batches_to_skip}")
         if self.num_batches_to_skip:
             ds = ds.skip(self.num_batches_to_skip)
-        return map(lambda x: self.format(x), iter(ds))
+        ds = ds.prefetch(10)
+        return ds
 
 
 @experiment_registry.register
@@ -1461,10 +1460,10 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 16, 4]
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 4]
 
-    MAX_SEQ_LEN = 4064
+    MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
 
     LAYERNORM_EPSILON = 1e-06
@@ -1498,14 +1497,17 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
     USE_ALIBI_POSITION_EMB = True
     LM_HEAD_NORM = True
 
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+
     TARGET_LOG_PPLX = -1
     SAVE_ON_STEPS = list(range(1000, 50000, 1000))
     # tfids datasets
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     DATA_PATH = {
-        "test": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord",
-        "train": "gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord",
+        "test": ["gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord"],
+        "train": ["gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord"],
     }
     Z_LOSS_WEIGHT = 0.0
     TASK_NAME = "BC2Gpt13BVsTorch"

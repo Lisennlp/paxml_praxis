@@ -308,7 +308,6 @@ class FullSoftmax(base_layer.BaseLayer):
 
         if self.bi_tempered_loss_tpl is None:
             # per_example_xent: bsz * len
-           
             per_example_xent = -jnp.sum(log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
         else:
             per_example_xent = self.bi_tempered_loss(logits, class_probabilities)
@@ -321,7 +320,7 @@ class FullSoftmax(base_layer.BaseLayer):
             dtype=jnp.float32,
         )
         total_weight = jnp.sum(class_weights, dtype=jnp.float32)
-        # self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=3)
+        self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=self.user_summary_level)
         # lsp
         total_xent_batch = jnp.sum(
             jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
@@ -353,8 +352,8 @@ class FullSoftmax(base_layer.BaseLayer):
             per_example_xent=per_example_xent.astype(jnp.float32),
             total_xent=total_xent,
             total_weight=total_weight,
-            # avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
-            avg_xent=avg_xent  # mesh
+            avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
+            # avg_xent=avg_xent  # mesh
             # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
         )
         if self.z_loss_weight > 0.0:
@@ -996,13 +995,20 @@ class AlibiPositionalEmbedding(base_layer.BaseLayer):
         # 1 * 1 * position_len
         #         position = jnp.arange(max_pos, dtype=self.dtype)[jnp.newaxis, jnp.newaxis, ...]
         position_point = jnp.arange(max_pos) - max_pos + 1
+        # error
+        # position_point = jnp.broadcast_to(
+        #     position_point[jnp.newaxis, jnp.newaxis, ...], (n_head, 1, max_pos)
+        # )
+        # change
         position_point = jnp.broadcast_to(
-            position_point[jnp.newaxis, jnp.newaxis, ...], (n_head, 1, max_pos)
+            position_point[jnp.newaxis, jnp.newaxis, ...], (n_head, max_pos, max_pos)
         )
         diag = jnp.diag(position_point[0])
         position_point = position_point - diag[jnp.newaxis, jnp.newaxis, ...].transpose(0, -1, -2)
-
-        alibi = jnp.broadcast_to(slopes * position_point, (n_head, 1, max_pos))
+        # error
+        # alibi = jnp.broadcast_to(slopes * position_point, (n_head, 1, max_pos))
+        # change
+        alibi = slopes * position_point
         alibi_mask = jnp.triu(self._fill_with_neg_inf(jnp.zeros([max_pos, max_pos])), 1)
         alibi_mask = jnp.expand_dims(alibi_mask, axis=(0,)) + alibi
         return alibi_mask

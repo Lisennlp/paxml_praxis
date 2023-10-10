@@ -295,4 +295,4 @@ with jax.default_device(jax.devices("cpu")[0]):
 print(f"Save orbax format finished, take time: {time.time() - start}")
 
 # usage:
-# python paxml_to_hf_BC.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml/orbax/xm_model_step8000/ --step 8000 --model_size 13b --version v2
+# python paxml_to_orbax.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml/orbax/xm_model_step12300/ --step 12300 --model_size 13b --version v2

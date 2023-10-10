@@ -4,6 +4,8 @@ import random
 import multiprocessing
 from multiprocessing import set_start_method
 
+os.environ["JAX_PLATFORMS"] = "cpu"
+
 import tensorflow as tf
 from transformers import AutoTokenizer
 from smart_open import open

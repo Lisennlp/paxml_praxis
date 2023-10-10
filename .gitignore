@@ -13,3 +13,4 @@ commit.sh
 wandb
 .vscode
 command_log.txt
+*.txt

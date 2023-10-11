@@ -195,16 +195,11 @@ def shift_1d(inputs: JTensor, offset: int, axis: int):
     Returns:
       The shifted input.
     """
-    paddings = [
-        ((max(offset, 0), -min(offset, 0)) if i == axis else (0, 0))
-        for i in range(len(inputs.shape))
-    ]
+    paddings = [((max(offset, 0), -min(offset, 0)) if i == axis else (0, 0)) for i in range(len(inputs.shape))]
     input_length = jnp.shape(inputs)[axis]
     padded_inputs = jnp.pad(inputs, paddings)
     if offset > 0:
-        output = jax.lax.slice_in_dim(
-            padded_inputs, start_index=0, limit_index=input_length, axis=axis
-        )
+        output = jax.lax.slice_in_dim(padded_inputs, start_index=0, limit_index=input_length, axis=axis)
     else:
         output = jax.lax.slice_in_dim(
             padded_inputs,
@@ -275,9 +270,7 @@ def extract_block_context(
         )
     if right_context < 0 or right_context > block_size:
         raise ValueError(
-            "right_context must be at least 0 and at most block_size = {}, got {}".format(
-                block_size, right_context
-            )
+            "right_context must be at least 0 and at most block_size = {}, got {}".format(block_size, right_context)
         )
 
     block = convert_to_block(x, block_size, padding_val)
@@ -298,9 +291,7 @@ def extract_block_context(
     return jnp.concatenate(concat_list, axis=2)
 
 
-def _make_local_mask(
-    seq_len: int, block_size: int, left_context: int, right_context: int
-) -> JTensor:
+def _make_local_mask(seq_len: int, block_size: int, left_context: int, right_context: int) -> JTensor:
     """Makes the mask tensor for a full sequence.
 
     The returned mask reflects the given context sizes, where position i
@@ -338,9 +329,7 @@ def _make_local_mask(
     relative_context_positions = jnp.arange(context_size) - (left_context - 1)
 
     # [num_blocks, context_size]: target positions in the original sequence.
-    tgt_positions = (
-        block_start_positions[:, jnp.newaxis] + relative_context_positions[jnp.newaxis, :]
-    )
+    tgt_positions = block_start_positions[:, jnp.newaxis] + relative_context_positions[jnp.newaxis, :]
     # [num_blocks, block_size, context_size]: position differences between source-
     # target pairs.
     position_diff = src_positions[:, :, jnp.newaxis] - tgt_positions[:, jnp.newaxis, :]
@@ -463,9 +452,7 @@ class RelativeBias(base_layer.BaseLayer):
         max_exact = num_buckets // 2
         is_small = jnp.less(n, max_exact)
         val_if_large = max_exact + (
-            jnp.log(n.astype(self.dtype) / max_exact)
-            / jnp.log(max_distance / max_exact)
-            * (num_buckets - max_exact)
+            jnp.log(n.astype(self.dtype) / max_exact) / jnp.log(max_distance / max_exact) * (num_buckets - max_exact)
         ).astype(jnp.int32)
         val_if_large = jnp.minimum(val_if_large, num_buckets - 1)
         ret += jnp.where(is_small, n, val_if_large)
@@ -510,9 +497,7 @@ class RelativeBias(base_layer.BaseLayer):
             query_pos = np.arange(qlen, dtype=jnp.int32)[None, :, None]
             relative_position = key_pos - query_pos
         else:
-            relative_position = jnp.expand_dims(key_segment_pos, -2) - jnp.expand_dims(
-                query_segment_pos, -1
-            )
+            relative_position = jnp.expand_dims(key_segment_pos, -2) - jnp.expand_dims(query_segment_pos, -1)
         relative_bucket = self._relative_position_bucket(relative_position)
 
         relative_bucket_one_hot = jax.nn.one_hot(
@@ -535,9 +520,7 @@ class RelativeBias(base_layer.BaseLayer):
         # p.use_length_as_position is True.
         return relative_bias
 
-    def extend_step(
-        self, seq_length: int, time_step: Optional[Union[int, JTensor]] = None
-    ) -> JTensor:
+    def extend_step(self, seq_length: int, time_step: Optional[Union[int, JTensor]] = None) -> JTensor:
         """Generates a JTensor for a step in greedy search.
 
         B = batch size
@@ -700,6 +683,9 @@ class AttentionProjection(base_layer.BaseLayer):
             w = theta.w
 
         if self.is_output_projection:
+            logging.info(f"self.num_heads: {self.num_heads}")
+            logging.info(f"self.dim_per_head: {self.dim_per_head}")
+            logging.info(f"shape: {shape}")
             assert shape[-2:] == (self.num_heads, self.dim_per_head)
             batch_eqn = eqn_sym[: (rank - 2)]
             if self.use_nhd_shape:
@@ -707,9 +693,7 @@ class AttentionProjection(base_layer.BaseLayer):
             else:
                 eqn = f"{batch_eqn}NH,DNH->{batch_eqn}D"
         else:
-            assert (
-                shape[-1] == self.input_dim
-            ), f"Expecting shape[-1] == p.input_dim, {shape[-1]} != {self.input_dim}"
+            assert shape[-1] == self.input_dim, f"Expecting shape[-1] == p.input_dim, {shape[-1]} != {self.input_dim}"
             batch_eqn = eqn_sym[: (rank - 1)] if rank else "..."
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
         ret = self.einsum(eqn, inputs, w)
@@ -767,9 +751,7 @@ class CombinedQKVProjectionLayer(base_layer.BaseLayer):
                     assert len(wt) == 2
             else:
                 # Replicate the concat axis.
-                assert (
-                    len(wt) == 3
-                ), "wp.wt only specifies the sharding for the last three dims of the weight tensor."
+                assert len(wt) == 3, "wp.wt only specifies the sharding for the last three dims of the weight tensor."
             weight_split_dims_mapping = [None] + list(wt)
             if self.attention_combine_dims:
                 bias_split_dims_mapping = [None, wt[1]]
@@ -911,9 +893,7 @@ class CausalDepthwiseConv1D(base_layer.BaseLayer):
                 ),
             )
 
-    def __call__(
-        self, inputs: JTensor, axis: int, segment_pos: Optional[JTensor] = None
-    ) -> JTensor:
+    def __call__(self, inputs: JTensor, axis: int, segment_pos: Optional[JTensor] = None) -> JTensor:
         """FProp applying depth-wise convolution on 1D sequence.
 
         Args:
@@ -961,9 +941,7 @@ class CausalDepthwiseConv1D(base_layer.BaseLayer):
           Output sequence at the step after applying the depth-wise convolution
           on the sequence.
         """
-        get_single_slice_at_index = functools.partial(
-            jax.lax.dynamic_slice_in_dim, inputs, slice_size=1, axis=axis
-        )
+        get_single_slice_at_index = functools.partial(jax.lax.dynamic_slice_in_dim, inputs, slice_size=1, axis=axis)
         outputs = get_single_slice_at_index(start_index=step)
         outputs *= self.theta.dconv_0
         if segment_pos is None:
@@ -1097,9 +1075,7 @@ class DotProductAttention(base_layer.BaseLayer):
     # TODO(pax-dev): merge use_rotary_position_emb and rotary_position_emb_tpl
     # by initializing rotary_position_emb_tpl = None.
     use_rotary_position_emb: bool = False
-    rotary_position_emb_tpl: Optional[LayerTpl] = template_field(
-        embedding_softmax.RotaryPositionalEmbedding
-    )
+    rotary_position_emb_tpl: Optional[LayerTpl] = template_field(embedding_softmax.RotaryPositionalEmbedding)
     cast_rotary_position_emb: bool = True
     relative_bias_tpl: Optional[LayerTpl] = template_field(None)
     attention_extra_logit: Optional[float] = None
@@ -1111,6 +1087,7 @@ class DotProductAttention(base_layer.BaseLayer):
     pv_einsum_tpl: LayerTpl = template_field(base_ops.EinsumOp)
     per_dim_scale_tpl: LayerTpl = template_field(PerDimScale)
     causal_depthwise_conv1d_tpl: LayerTpl = template_field(CausalDepthwiseConv1D)
+    query_chunk_size: Optional[int] = None
 
     # SPMD partition related params.
     #
@@ -1268,11 +1245,7 @@ class DotProductAttention(base_layer.BaseLayer):
         )
         if post_std is not None:
             post_proj_p.params_init = WeightInit.Gaussian(post_std)
-        if (
-            self.output_proj_use_nhd_shape
-            and isinstance(wp.proj, (list, tuple))
-            and len(wp.proj) == 3
-        ):
+        if self.output_proj_use_nhd_shape and isinstance(wp.proj, (list, tuple)) and len(wp.proj) == 3:
             permutation = [1, 2, 0]
             post_proj_p.weight_split_dims_mapping.wt = [wp.proj[i] for i in permutation]
         else:
@@ -1381,6 +1354,36 @@ class DotProductAttention(base_layer.BaseLayer):
         logits = self.qk_einsum("BTNH,BSNH->BNTS", query, key)
         return logits
 
+    def _atten_context(
+        self,
+        query: JTensor,
+        key: JTensor,
+        value: JTensor,
+        atten_mask: JTensor,
+        alibi_mask: Optional[JTensor] = None,
+    ) -> Tuple[JTensor, JTensor]:
+        # logits = self._atten_logits(query, key)
+        logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
+
+        if self.scale_logits_by_head_dims:
+            logits = jnp.multiply(logits, 1.0 / np.sqrt(query.shape[-1]))
+
+        logits = self._cap_logits(logits)
+        logits = logits.astype(jnp.float32)
+        padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
+        # lsp
+        if alibi_mask is not None:
+            padded_logits += alibi_mask
+
+        if self.attention_extra_logit is None:
+            probs = jax.nn.softmax(padded_logits, axis=-1).astype(value.dtype)
+        else:
+            probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(value.dtype)
+
+        probs = self.atten_dropout(probs)
+        encoded = self.pv_einsum(f"BNTS,BNSH->BNTH", probs, value)
+        return encoded, probs
+
     # lsp attn
     def _dot_atten(
         self,
@@ -1430,68 +1433,74 @@ class DotProductAttention(base_layer.BaseLayer):
         self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
 
         query = self._scale_query(query)  # scale query,  internal_enable_query_scale为True生效
-        self.add_summary("[lsp]scale_query", query[1], verbosity=self.user_summary_level)
-        # logging.info(f'querydtype: {query.dtype}')
-        # logging.info(f'keydtype: {key.dtype}')
-        logits = self._atten_logits(query, key)  # q * k
-        self.add_summary("[lsp]qk_logits", logits[1], verbosity=self.user_summary_level)
-        if relative_bias is not None:
-            # The relative_bias has shape [1, n, t, s] or [b, n, t, s].
-            base_layer.assert_has_shape(relative_bias, [-1, n, t, s])
-            logits += relative_bias
-        logits = checkpoint_name(logits, "logits")
 
-        if self.scale_logits_by_head_dims:  # 根号h
-            logits = jnp.multiply(logits, 1.0 / np.sqrt(h))
-
-        self.add_summary(
-            "max_logit_precap",
-            jnp.max(py_utils.apply_mask_to_logits(logits, atten_mask)),
-            verbosity=4,
-        )
-        self.add_summary(
-            "rms_logits_precap",
-            ((logits**2.0).mean().astype(jnp.float32) ** 0.5),
-            verbosity=4,
-        )
-        # lsp
-        # logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
-
-        # Attention softmax is always carried out in fp32.
-        logits = logits.astype(jnp.float32)
-        # Apply attention masking
-        padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)  # attention mask
-        logging.info(f"padded_logits: {padded_logits.shape}")
+        # alibi mask: n * qlen * klen
         if alibi_mask is not None:
             logging.info(f"alibi_mask: {alibi_mask.shape}")
-            padded_logits += alibi_mask
-
-        # lsp: alibi -> 在attn logits基础上加一个位置分数
-        self.add_summary("[lsp]padded_logits", padded_logits[1], verbosity=self.user_summary_level)
-        if self.attention_mask_summary:
-            self.add_summary("attention_mask", atten_mask)
-        if self.attention_extra_logit is None:
-            probs = jax.nn.softmax(padded_logits, axis=-1).astype(key.dtype)  # softmax -> score
+        # attn mask: bsz * 1 * qlen * klen
+        if atten_mask is not None:
+            logging.info(f"atten_mask: {atten_mask.shape}")
+        # =====================================xd: block attention====================================================
+        query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]]  # btnh->bnth
+        if self.query_chunk_size is None:
+            encoded, probs = self._atten_context(query, key, value, atten_mask, alibi_mask)
         else:
-            probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(key.dtype)
-        self.add_summary("[lsp]probs", probs[1], verbosity=self.user_summary_level)
-        # Apply attention dropout. lsp:
-        # probs = self.atten_dropout(probs)
-        # Compute the attention context. # lsp: 其实就是einsum
-        encoded = self.pv_einsum("BNTS,BSNH->BTNH", probs, value)  # w
-        self.add_summary("[lsp]encoded", encoded[1], verbosity=self.user_summary_level)
+            w = self.query_chunk_size
+            # assert t % w == 0, f"{t} % {w} != 0"
+            encoded = jnp.zeros((b, n, t, h), dtype=value.dtype)
+            for i in range(t // w):
+                start, stop = i * w, (i + 1) * w
+                _query = query[:, :, start:stop, :]
+                _key, _value = key[:, :, :stop, :], value[:, :, :stop, :]
+               
+                _atten_mask = atten_mask[:, :, start:stop, :stop]
+                if alibi_mask is not None:
+                    # n * qlen * klen
+                    _alibi_mask = alibi_mask[:, start:stop, :stop]
+                else:
+                    _alibi_mask = None
 
-        if self.zero_fully_masked:
-            # Return zeros for tokens which don't attend anything.
-            fully_masked = jnp.all(
-                atten_mask < py_utils.get_large_negative_number(jnp.float32) / 2,
-                axis=-1,
-            )[:, 0, :, jnp.newaxis, jnp.newaxis]
-            encoded *= 1 - fully_masked
+                _encoded, _ = self._atten_context(_query, _key, _value, _atten_mask, _alibi_mask)
+                encoded = encoded.at[:, :, start:stop, :].set(_encoded)
+        encoded = encoded.transpose(0, 2, 1, 3)  # bnth->btnh
+        # =========================================================================================
 
-        encoded = checkpoint_name(encoded, "context")
-        encoded = self._shard_blnh(encoded)
-        return encoded, probs
+        # logits = self._atten_logits(query, key)  # q * k
+        # if relative_bias is not None:
+        #     # The relative_bias has shape [1, n, t, s] or [b, n, t, s].
+        #     base_layer.assert_has_shape(relative_bias, [-1, n, t, s])
+        #     logits += relative_bias
+        # logits = checkpoint_name(logits, "logits")
+        # if self.scale_logits_by_head_dims:  # 根号h
+        #     logits = jnp.multiply(logits, 1.0 / np.sqrt(h))
+        # # lsp
+        # logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
+        # # Attention softmax is always carried out in fp32.
+        # logits = logits.astype(jnp.float32)
+        # # Apply attention masking
+        # padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)  # attention mask
+        # logging.info(f"padded_logits: {padded_logits.shape}")
+        # if alibi_mask is not None:
+        #     logging.info(f"alibi_mask: {alibi_mask.shape}")
+        #     padded_logits += alibi_mask
+        # # lsp: alibi -> 在attn logits基础上加一个位置分数
+        # if self.attention_extra_logit is None:
+        #     probs = jax.nn.softmax(padded_logits, axis=-1).astype(key.dtype)  # softmax -> score
+        # else:
+        #     probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(key.dtype)
+        # # Apply attention dropout. lsp:
+        # # Compute the attention context. # lsp: 其实就是einsum
+        # encoded = self.pv_einsum("BNTS,BSNH->BTNH", probs, value)  # w
+        # if self.zero_fully_masked:
+        #     # Return zeros for tokens which don't attend anything.
+        #     fully_masked = jnp.all(
+        #         atten_mask < py_utils.get_large_negative_number(jnp.float32) / 2,
+        #         axis=-1,
+        #     )[:, 0, :, jnp.newaxis, jnp.newaxis]
+        #     encoded *= 1 - fully_masked
+        # encoded = checkpoint_name(encoded, "context")
+        # encoded = self._shard_blnh(encoded)
+        return encoded, probs if self.query_chunk_size is None else None
 
     def decoding_state_sequence_length(self):
         """Returns the length of full decoding sequences."""
@@ -1545,6 +1554,7 @@ class DotProductAttention(base_layer.BaseLayer):
         base_layer.assert_has_shape(query, [b, n, h])
         base_layer.assert_has_shape(atten_mask, [-1, 1, s])
         asserts.in_set(atten_mask.shape[0], [b, 1])
+
         query = self._scale_query(query)
         logits = self.qk_einsum("BNH,BSNH->BNS", query, key)
         if relative_bias is not None:
@@ -1715,9 +1725,7 @@ class DotProductAttention(base_layer.BaseLayer):
         self.update_decode_state(name, value)
 
     @nn.nowrap
-    def extend_decode_state(
-        self, name: str, value: JTensor, time_step: JTensor, time_dim: int
-    ) -> JTensor:
+    def extend_decode_state(self, name: str, value: JTensor, time_step: JTensor, time_dim: int) -> JTensor:
         """Extends decode state at time_step.
 
         The decode state is batch major with shape [B, T, N, H].
@@ -1794,9 +1802,7 @@ class DotProductAttention(base_layer.BaseLayer):
         if self.combine_qkv:
             # Project inputs to key, value and query using a combined weight for
             # faster performance on TPU.
-            query_proj, key_proj, value_proj = self.combined_qkv.extend_step(
-                query_vec, time_step=time_step
-            )
+            query_proj, key_proj, value_proj = self.combined_qkv.extend_step(query_vec, time_step=time_step)
         else:
             # Project inputs to key, value and query. Each has shape [B, N, H].
             query_proj = self.query.extend_step(query_vec, time_step=time_step)
@@ -1805,9 +1811,7 @@ class DotProductAttention(base_layer.BaseLayer):
                 value_proj = self.value.extend_step(query_vec, time_step=time_step)
 
         def _extend_decode_state_and_shard(name: str, extend_value: JTensor) -> JTensor:
-            extended_state = self.extend_decode_state(
-                name, extend_value, time_step, time_dim=time_dim
-            )
+            extended_state = self.extend_decode_state(name, extend_value, time_step, time_dim=time_dim)
             return self._shard_blnh(extended_state)
 
         key_state_name = "key_state"
@@ -1825,13 +1829,9 @@ class DotProductAttention(base_layer.BaseLayer):
             query_state = _extend_decode_state_and_shard("query_state", query_proj)
 
             # Aggregate depth-wise convolution for keys and values at time step.
-            query_proj = self.dconv_q.extend_step(
-                query_state, axis=time_dim, step=time_step, segment_pos=segment_pos
-            )
+            query_proj = self.dconv_q.extend_step(query_state, axis=time_dim, step=time_step, segment_pos=segment_pos)
             if not is_cross_attention:
-                key_proj = self.dconv_k.extend_step(
-                    key_state, axis=time_dim, step=time_step, segment_pos=segment_pos
-                )
+                key_proj = self.dconv_k.extend_step(key_state, axis=time_dim, step=time_step, segment_pos=segment_pos)
                 value_proj = self.dconv_v.extend_step(
                     value_state, axis=time_dim, step=time_step, segment_pos=segment_pos
                 )
@@ -1908,9 +1908,7 @@ class DotProductAttention(base_layer.BaseLayer):
 
     def lazy_broadcast_prefix(self, num_suffix_samples: int, suffix_length: int) -> None:
         """Performs lazy prefix broadcast on the decoding states."""
-        raise NotImplementedError(
-            "lazy_broadcast_prefix not implemented, use DotProductAttentionWithLPB instead."
-        )
+        raise NotImplementedError("lazy_broadcast_prefix not implemented, use DotProductAttentionWithLPB instead.")
 
     def right_align_decode_state_with_prefix(
         self,
@@ -1919,8 +1917,7 @@ class DotProductAttention(base_layer.BaseLayer):
     ) -> None:
         """Right aligns decode state with prefix decode states."""
         raise NotImplementedError(
-            "right_align_decode_state_with_prefix not implemented, use"
-            " DotProductAttentionWithLPB instead."
+            "right_align_decode_state_with_prefix not implemented, use DotProductAttentionWithLPB instead."
         )
 
 
@@ -2094,16 +2091,12 @@ class DotProductAttentionWithLPB(DotProductAttention):
         """Returns the sum of lengths of all lazy broadcast prefixes."""
         prefix_length = 0
         for i in range(self._broadcast_prefixes_count):
-            prefix_length += self.get_variable(PREFIX_DECODE_CACHE, f"key_state_{i}_pfx").shape[
-                i + 1
-            ]
+            prefix_length += self.get_variable(PREFIX_DECODE_CACHE, f"key_state_{i}_pfx").shape[i + 1]
         return prefix_length
 
     def decoding_state_sequence_length(self):
         """Returns the length of full decoding sequences including prefixes."""
-        key_state_length = self.get_decode_state("key_state").shape[
-            1 + self._broadcast_prefixes_count
-        ]
+        key_state_length = self.get_decode_state("key_state").shape[1 + self._broadcast_prefixes_count]
         return key_state_length + self._broadcast_prefix_length()
 
     def _vmap_on_broadcast_prefixes(
@@ -2129,9 +2122,7 @@ class DotProductAttentionWithLPB(DotProductAttention):
             )
             return fn(layer, args, sliced, broadcast_sliced, states)
 
-        broadcast_dim_sizes = self.get_decode_state("key_state").shape[
-            1 : 1 + self._broadcast_prefixes_count
-        ]
+        broadcast_dim_sizes = self.get_decode_state("key_state").shape[1 : 1 + self._broadcast_prefixes_count]
         # There can be multiple lazy-broadcast sample dimensions, and we vmap one
         # dimension at a time. `args` and `args_to_slice` have shape
         # [b, num_samples0, num_samples1, ..., inner_dims]; after each vmap, one
@@ -2189,9 +2180,7 @@ class DotProductAttentionWithLPB(DotProductAttention):
             if i == pfx_count:
                 states = [self.get_decode_state(s) for s in state_names]
             else:
-                states = [
-                    self.get_variable(PREFIX_DECODE_CACHE, f"{s}_{i}_pfx") for s in state_names
-                ]
+                states = [self.get_variable(PREFIX_DECODE_CACHE, f"{s}_{i}_pfx") for s in state_names]
             # Run one chunk with vmaps.
             results.append(
                 self._vmap_on_broadcast_prefixes(fn, i, args_time_dims, broadcast_args_time_dims)(
@@ -2414,9 +2403,7 @@ class DotProductAttentionWithLPB(DotProductAttention):
                 axis=-1,
             )
             if not am_batched:
-                fully_masked = jnp.reshape(
-                    fully_masked, (1,) * len(batch_dims) + fully_masked.shape[1:]
-                )
+                fully_masked = jnp.reshape(fully_masked, (1,) * len(batch_dims) + fully_masked.shape[1:])
             fully_masked = jnp.squeeze(fully_masked, axis=len(batch_dims))
             fully_masked = jnp.reshape(
                 fully_masked,
@@ -2527,9 +2514,7 @@ class DotProductAttentionWithLPB(DotProductAttention):
         # Paper: https://arxiv.org/abs/2109.08668.
         if self.dconv_qkv:
             if not extend_one_step:
-                raise NotImplementedError(
-                    "DotProductAttentionWithLPB does not support extend n steps with dconv."
-                )
+                raise NotImplementedError("DotProductAttentionWithLPB does not support extend n steps with dconv.")
             # Update query in cache.
             _extend_decode_state_and_shard("query_state", query_proj)
 
@@ -3045,14 +3030,12 @@ class LocalSelfAttention(DotProductAttention):
             # For example, generated by convert_paddings_to_mask
 
             mask = atten_mask[:, 0, 0, :]
-            mask_block_context = (
-                extract_block_context(  # pytype: disable=wrong-arg-types  # jax-ndarray
-                    mask,
-                    block_size=block_size,
-                    left_context=self.left_context,
-                    right_context=self.right_context,
-                    padding_val=minus_inf,
-                )
+            mask_block_context = extract_block_context(  # pytype: disable=wrong-arg-types  # jax-ndarray
+                mask,
+                block_size=block_size,
+                left_context=self.left_context,
+                right_context=self.right_context,
+                padding_val=minus_inf,
             )
 
             # -> [B, N, U, W, C]
@@ -3068,14 +3051,12 @@ class LocalSelfAttention(DotProductAttention):
             )
             mask_block_context = jnp.reshape(mask_block_context, [b * u * w, t])
             # -> [B, U, W, U, C]
-            mask_block_context = (
-                extract_block_context(  # pytype: disable=wrong-arg-types  # jax-ndarray
-                    mask_block_context,
-                    block_size=block_size,
-                    left_context=self.left_context,
-                    right_context=self.right_context,
-                    padding_val=minus_inf,
-                )
+            mask_block_context = extract_block_context(  # pytype: disable=wrong-arg-types  # jax-ndarray
+                mask_block_context,
+                block_size=block_size,
+                left_context=self.left_context,
+                right_context=self.right_context,
+                padding_val=minus_inf,
             )
             mask_block_context = jnp.reshape(mask_block_context, [b, u, w, u, c])
             mask_block_context = jnp.einsum("buwuc->buwc", mask_block_context)
@@ -3123,9 +3104,7 @@ class LocalSelfAttention(DotProductAttention):
 
         if self.zero_fully_masked:
             # Return zeros for tokens which don't attend anything.
-            fully_masked = jnp.all(mask < minus_inf / 2, axis=-1)[
-                :, 0, :, :, jnp.newaxis, jnp.newaxis
-            ]
+            fully_masked = jnp.all(mask < minus_inf / 2, axis=-1)[:, 0, :, :, jnp.newaxis, jnp.newaxis]
             encoded *= 1 - fully_masked
 
         encoded = jnp.reshape(encoded, [b, u * w, n, h])

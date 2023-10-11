@@ -653,6 +653,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         if self.USE_ALIBI_POSITION_EMB:
             model_p.lm_tpl.use_alibi_position_emb = True
 
+        transformer_layer_p.tr_atten_tpl.query_chunk_size = self.QUERY_CHUNK_SIZE
+
         # USE_REPEATED_LAYER: True, in C4SpmdGpt3AdamOrgHP
         if self.USE_REPEATED_LAYER:
             # 每层进行repeat -> NUM_LAYERS

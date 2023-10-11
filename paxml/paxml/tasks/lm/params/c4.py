@@ -1519,15 +1519,15 @@ class BC2Gpt13BVsTorch(BC2Gpt13B):
 @experiment_registry.register
 class BC2Gpt13B1001(BC2Gpt13B):
     NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 3
+    ICI_MESH_SHAPE = [1, 32, 4]
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 100
-    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_EVERY_N_STEPS = 80
+    EVAL_LOOP_NUM_BATCHES = 60
+    EVAL_INTERVAL_STEPS = 80
     CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_1001"
+    WANDB_PROJECT = "baichuan2_13b_1011"
 
     LAYERNORM_EPSILON = 1e-06
     # Learning rate schedule
@@ -1537,14 +1537,14 @@ class BC2Gpt13B1001(BC2Gpt13B):
     LR_COS_MIN_RATIO = 0.1
     LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
     # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 300
+    LR_COS_WARMUP = 200
     LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 15000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.1
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 0.5
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0 # 0.5 -> 1.0
     TASK_NAME = "BC2Gpt13B1001"
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000
@@ -1554,7 +1554,7 @@ class BC2Gpt13B1001(BC2Gpt13B):
     SPLIT_BSZ = {"zh": 7, "en": 20}
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = False
-    QUERY_CHUNK_SIZE = 128
+    QUERY_CHUNK_SIZE = 512
 
     def extract_datapath(test_ratio, seed, split_batch):
         random.seed(seed)

@@ -1448,7 +1448,9 @@ class DotProductAttention(base_layer.BaseLayer):
             w = self.query_chunk_size
             # assert t % w == 0, f"{t} % {w} != 0"
             encoded = jnp.zeros((b, n, t, h), dtype=value.dtype)
-            for i in range(t // w):
+            # for i in range(t // w):
+            N = math.ceil(t / w)
+            for i in range(N):
                 start, stop = i * w, (i + 1) * w
                 _query = query[:, :, start:stop, :]
                 _key, _value = key[:, :, :stop, :], value[:, :, :stop, :]

@@ -20,13 +20,9 @@ try:
     import torch
 except Exception as e:
     print(f"Error: {e}")
-    command = (
-        "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url"
-        "https://download.pytorch.org/whl/cpu"
-    )
+    command = 'conda install -y pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 cpuonly -c pytorch'
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import torch
-
 
 TrainState = train_states.TrainState
 CheckpointType = checkpoints.CheckpointType
@@ -232,7 +228,7 @@ def save_model(state_dict, save_path, mode="torch"):
         np.save(open(save_path, "wb"), state_dict)
     else:
         torch.save(
-            {k: torch.from_numpy(v).to(torch.float32) for k, v in state_dict.items()},
+            {k: torch.from_numpy(v).to(torch.bfloat16) for k, v in state_dict.items()},
             save_path,
         )
 
@@ -323,3 +319,6 @@ subprocess.run(command, stdout=subprocess.PIPE, shell=True)
 write_json(index_dict, os.path.join(save_dir, "pytorch_model.bin.index.json"))
 
 print(f"Convert finished, take time: {time.time() - start}s...")
+
+# usage:
+#  python paxml_to_hf.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml_1011/checkpoints --save_dir ./bc2_13b_step7040/ --version v2 --model_size 13b --step 7040

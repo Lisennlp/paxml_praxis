@@ -241,9 +241,9 @@ def build_global_shape():
     for k, v in paxml_to_mesh_key_and_shape.items():
         k = tuple(k.split("."))
         if "repeat" in k:
-            unpadded_global_shapes[k] = jax.ShapeDtypeStruct(shape=(x_times,) + v["shape"], dtype=jnp.float32)
+            unpadded_global_shapes[k] = jax.ShapeDtypeStruct(shape=(x_times,) + v["shape"], dtype=jnp.bfloat16)
         else:
-            unpadded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v["shape"], dtype=jnp.float32)
+            unpadded_global_shapes[k] = jax.ShapeDtypeStruct(shape=v["shape"], dtype=jnp.bfloat16)
     return {"mdl_vars": unflatten_dict(unpadded_global_shapes)}
 # build global shape
 unpadded_global_shapes = build_global_shape()
@@ -296,3 +296,4 @@ print(f"Save orbax format finished, take time: {time.time() - start}")
 
 # usage:
 # python paxml_to_orbax.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml/orbax/xm_model_step12300/ --step 12300 --model_size 13b --version v2
+# python paxml_to_orbax.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml_1011/checkpoints --save_dir gs://llm_base_models/baichuan_models/13b/2/paxml_1011/orbax/xm_model_norm_step7680/ --step 7680 --model_size 13b --version v2 --norm

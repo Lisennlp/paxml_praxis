@@ -253,6 +253,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             train_input_pipeline=train_input_pipeline,  # 输入数据的shape和dtype
         )
         self.checkpoint_manager.check_for_errors()
+        return True
 
     # TODO(laigd): merge this with _SpmdEvalCheckpointer.get_model_states().
     # lsp restore model, 这个函数出来之后的参数已经经过shard了

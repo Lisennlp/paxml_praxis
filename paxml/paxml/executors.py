@@ -18,6 +18,8 @@
 import contextlib
 import functools
 import gc
+import os
+import json
 import time
 from collections import deque
 from typing import Any, Callable, Optional, Sequence, Tuple
@@ -45,6 +47,8 @@ import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
 import wandb
+import smart_open
+from paxml import checkpoint_paths
 
 
 instantiate = base_hyperparams.instantiate
@@ -299,6 +303,18 @@ class DefaultExecutor(base_executor.BaseExecutor):
         logging.info("[PAX STATUS]: Executor shutdown complete.")
 
 
+def record_file_and_step(step, save_dir, train_input):
+    fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
+    save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
+    meta_dict = train_input.meta_dict
+    with smart_open.open(save_path, 'w') as f1, smart_open.open(save_newest_path, 'w') as f2:
+        json.dump(meta_dict, f1)
+        json.dump(meta_dict, f2)
+    logging.info(f'Save skip_file_and_step successful......')
+    logging.info(f'file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]} ')
+
+
 def _train_and_evaluate_common(
     *,
     task: tasks_lib.SingleTask,
@@ -375,16 +391,22 @@ def _train_and_evaluate_common(
     gc.collect()
     gc.freeze()
     step_time_deque = deque(maxlen=5)
+    # 初始化skip file and step
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)
         step_start = time.time()
-        checkpointer.save_if_needed(
+        # 在这传入训练的文件和step节点信息
+        save_or_pass = checkpointer.save_if_needed(
             step_i,
             partitioned_train_state,
             train_state_metadata.unpadded_global_shapes,
             train_state_metadata.partition_specs,
             train_input_for_checkpoint,
         )
+        # # lsp
+        if save_or_pass:
+            record_file_and_step(step=step_i, save_dir=job_log_dir, train_input=train_program._train_input)
+
         if exit_after_ondemand_checkpoint and checkpointer.reached_preemption(step_i):
             checkpointer.wait_until_finished()
             exit(1)

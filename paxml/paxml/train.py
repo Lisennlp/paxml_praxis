@@ -21,6 +21,7 @@ from typing import Type
 import os
 import re
 import subprocess
+import json
 
 from absl import logging
 from etils import epath
@@ -41,8 +42,9 @@ from praxis import pax_fiddle
 from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
+import smart_open
 from paxml import checkpoints  # mapped to internal
-
+from paxml import checkpoint_paths
 
 try:
     import wandb
@@ -101,33 +103,7 @@ def write_experiment_class_vars_file(
         cls_vars_summary = experiment_utils.get_cls_vars_summary(exp_cls)
         # epath对象
         exp_summary_fpath.write_text(cls_vars_summary)
-
-
-def extract_train_skip_step(job_log_dir):
-    from paxml import checkpoint_paths
-
-    if checkpoint_paths._CHECKPOINT_PREFIX:
-        prefix = f"{checkpoint_paths._CHECKPOINT_PREFIX}_"
-    else:
-        prefix = ""
-    model_dir = os.path.join(job_log_dir, "checkpoints")
-    logging.info(f"model_dir: {model_dir}")
-    command = f"gsutil ls {model_dir}"
-    response = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
-    step_map_path = {}
-    for path in response.stdout.decode("utf-8").split("\n"):
-        if not path.strip():
-            continue
-        logging.info(f"path: {path}")
-        step = re.findall(f"{prefix}(\d+)/", path)
-        if step:
-            step_map_path[int(step[0])] = os.path.split(path)[0]
-    step_map_path = sorted(step_map_path.items())
-    logging.info(f"Load model step map path: {step_map_path}")
-    if not step_map_path:
-        return 0
-    return step_map_path[-1][0]
-
+        
 
 @py_utils.benchmark("[PAX STATUS]: ")
 def train_and_evaluate(
@@ -196,8 +172,8 @@ def train_and_evaluate(
     logging.info("[PAX STATUS]: Getting dataset configurations.")
 
     # [train_p datasets, notrain_p datasets]的pax_fiddle.Config对象
-    num_batches_to_skip = extract_train_skip_step(job_log_dir=job_log_dir)
-    input_p = experiment_config.datasets(num_batches_to_skip=num_batches_to_skip)
+    # num_batches_to_skip = extract_train_skip_step(job_log_dir=job_log_dir)
+    input_p = experiment_config.datasets(job_log_dir=job_log_dir)
     for inp in input_p:
         if not isinstance(
             inp,

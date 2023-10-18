@@ -31,7 +31,7 @@ from praxis import pytypes
 # _CHECKPOINT_PREFIX = ''
 # CHECKPOINT_PREFIX = ''
 # _STEP_FORMAT_FIXED_LENGTH = None
-
+SKIP_STEP_NAME = 'skip_file_and_step.json'
 _CHECKPOINT_PREFIX = 'checkpoint'
 CHECKPOINT_PREFIX = f'{_CHECKPOINT_PREFIX}_'
 _STEP_FORMAT_FIXED_LENGTH = 8

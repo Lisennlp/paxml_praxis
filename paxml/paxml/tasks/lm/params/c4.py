@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 from collections import defaultdict
 import os
 import random
+import json
 
 from absl import logging
 import fiddle as fdl
@@ -50,10 +51,32 @@ import numpy as np
 from praxis import py_utils
 from google.cloud import storage
 
+import smart_open
+from paxml import checkpoint_paths
+
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 GPT_EOS_ID = 1
+
+
+# lsp
+def extract_train_skip_step(job_log_dir, step):
+    if job_log_dir is None:
+        return
+    model_dir = os.path.join(job_log_dir, "checkpoints")
+    if step is not None:
+        fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
+        skip_file_and_step_path = os.path.join(model_dir, fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    else:
+        skip_file_and_step_path = os.path.join(model_dir, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    logging.info(f"model_dir: {model_dir}")
+    try:
+        with smart_open.open(skip_file_and_step_path, 'r') as f:
+            skip_file_and_step = json.load(f)
+    except:
+        skip_file_and_step = None
+    return skip_file_and_step
 
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
@@ -65,15 +88,18 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     TRAINING_SEED = 9876
     TRAINING_NUM_BATCHES_TO_SKIP = None
 
-    def _dataset_common(self, is_training, num_batches_to_skip=0) -> pax_fiddle.Config[base_input.BaseInput]:
+    def _dataset_common(
+        self, is_training: bool, job_log_dir=None
+    ) -> pax_fiddle.Config[base_input.BaseInput]:
+        meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
         if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
-            logging.info(
-                "TRAINING_NUM_BATCHES_TO_SKIP is not None,num_batches_to_skip is set to:"
-                f" {self.TRAINING_NUM_BATCHES_TO_SKIP}"
-            )
             num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
         else:
-            logging.info(f"TRAINING_NUM_BATCHES_TO_SKIP is None,num_batches_to_skip is set to: {num_batches_to_skip}")
+            if meta_dict is not None:
+                num_batches_to_skip = meta_dict['step_in_file']
+            else:
+                num_batches_to_skip = None
+
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
         else:
@@ -109,7 +135,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             logging.info("Train input seed: %s", "None" if seed is None else seed)
 
         if self.LOAD_SEQIO_ID:
-            logging.info(f'Load seqio id data......')
+            logging.info(f"Load seqio id data......")
             DataFeature = seqio_input.MyLanguageModelFeatures
             DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
             # train test shuffle flag
@@ -124,7 +150,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             print(f"is_training: {is_training} shuffle: {shuffle}")
 
         elif self.LOAD_SEQIO_TEXT:
-            logging.info(f'Load seqio text data......')
+            logging.info(f"Load seqio text data......")
             DataFeature = seqio_input.LanguageModelFeatures
             mixture_name = "c4.train" if is_training else "c4.test"
             name = "C4Train" if is_training else "C4Validation"
@@ -133,7 +159,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             shuffle = None
 
         else:
-            logging.info(f'Load mesh id data......')
+            logging.info(f"Load mesh id data......")
             shuffle_key = "train" if is_training else "test"
             shuffle_buffer_size = self.SHUFFLE_SIZE if self.SHUFFLE[shuffle_key] else None
 
@@ -170,9 +196,9 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             p = pax_fiddle.Config(
                 MyDatasets,
                 name=f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test",
-                path=self.DATA_PATH['train'] if is_training else self.DATA_PATH['test'],
+                path=self.DATA_PATH["train"] if is_training else self.DATA_PATH["test"],
                 is_training=is_training,
-                num_batches_to_skip=num_batches_to_skip,
+                meta_dict=meta_dict,
                 batch_size=int(self.PERCORE_BATCH_SIZE * 8),
                 seq_len=self.MAX_SEQ_LEN,
                 reset_for_eval=False,
@@ -185,10 +211,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             return p
 
     # lsp: 数据
-    def datasets(self, num_batches_to_skip=0) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+    def datasets(self, job_log_dir=None) -> List[pax_fiddle.Config[base_input.BaseInput]]:
         """Returns a list of dataset parameters."""
         return [
-            self._dataset_common(is_training=True, num_batches_to_skip=num_batches_to_skip),
+            self._dataset_common(is_training=True, job_log_dir=job_log_dir),
             self._dataset_common(is_training=False),
         ]
 
@@ -1250,7 +1276,6 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 class MyDatasets(base_input.BaseInput):
     # Required params. lsp - note: 参数一定要注明类型，不然在初始化的时候就不能传入，会报错没有这个参数
     path: Optional[str] = None
-    num_batches_to_skip: Optional[int] = None
     num_infeed_hosts: int = 0
     reset_for_eval: bool = False
     is_training: bool = True
@@ -1262,26 +1287,36 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: int = None
     pad_id: int = 0
     drop_remainder: bool = True
+    iter_file_nums: int = 100
+    meta_dict: dict = None
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
-        self.dataset = self.load_tfrecord_dataset(
-            index_fname=self.path,
-            batch_size=self.batch_size,
-            seq_len=self.seq_len,
-            repeat=self.repeat,
-        )
-        self.dataset = self.dataset.as_numpy_iterator()
+
+        if self.meta_dict is None:
+            self.meta_dict = {
+                "seed": self.train_seed,
+                "cur_files": [],
+                "file_in_data": 0,
+                "step_in_file": 0,
+                "iter_file_nums": self.iter_file_nums,
+            }
+        else:
+            if self.meta_dict["file_in_data"] != 0:
+                assert self.meta_dict["iter_file_nums"] == self.iter_file_nums, print(
+                    f'iter_file_nums in meta_dict is not equal to cur args. => {self.meta_dict["iter_file_nums"]}≠'
+                    f" {self.iter_file_nums}"
+                )
+        logging.info(f'meta_dict: {self.meta_dict}')
+        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def peek_padded(self):
         return self.get_next_padded()
 
     def get_next_padded(self):
         unpadded = next(self.dataset)
-        # logging.info(f'unpadded input_ids: {unpadded["input_ids"][:, 20: 30]}')
         pad_size = int(self.batch_padding_size)
-        # logging.info(f'pad_size: {pad_size}======== type: {type(pad_size)}')
         if pad_size == 0:
             return unpadded
         return jax.tree_util.tree_map(
@@ -1310,22 +1345,20 @@ class MyDatasets(base_input.BaseInput):
         seq_len = self.seq_len
         model_needed_inputs = NestedMap()
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
-        model_needed_inputs.labels = data["input_ids"][:, 1 : seq_len]
+        model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
             weights = data["labels"] > 0
         else:
             weights = data["input_ids"] > 0
-        model_needed_inputs.weights = weights[:, 1: seq_len]
+        model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)
         pos = tf.range(seq_len - 1)
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
-    def load_tfrecord_dataset(self, index_fname, batch_size, seq_len, restore_state=None, repeat=3):
-        tf.random.set_seed(self.train_seed)
-        assert isinstance(index_fname, list)
-        ds = tf.data.Dataset.from_tensor_slices(index_fname)
+    def _load_file_dataset(self, fname):
+        ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
@@ -1334,23 +1367,36 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-
-        padded_shapes = {key: seq_len for key in self.task_features}
+        padded_shapes = {key: self.seq_len for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
-            batch_size=np.prod(batch_size),
+            batch_size=np.prod(self.batch_size),
             padded_shapes=padded_shapes,
             padding_values=padding_values,
             drop_remainder=True,
         )
         ds = ds.map(self.convert)
-        ds = ds.repeat(repeat)
-
-        logging.info(f"self.num_batches_to_skip: {self.num_batches_to_skip}")
-        if self.num_batches_to_skip:
-            ds = ds.skip(self.num_batches_to_skip)
-        ds = ds.prefetch(10)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
+        if self.meta_dict["step_in_file"]:
+            ds = ds.skip(self.meta_dict["step_in_file"])
         return ds
+
+    def load_tfrecord_dataset(self, fnames):
+        tf.random.set_seed(self.train_seed)
+        assert isinstance(fnames, list)
+        repeat_fnames = fnames * self.repeat
+        N = math.ceil(len(repeat_fnames) / self.iter_file_nums)
+        file_in_data = self.meta_dict["file_in_data"]
+        for n in range(file_in_data, N, 1):
+            fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
+            self.meta_dict["cur_files"] = fname
+            ds = self._load_file_dataset(fname)
+            ds = ds.as_numpy_iterator()
+            for batch in ds:
+                self.meta_dict["step_in_file"] += 1
+                yield batch
+            self.meta_dict["file_in_data"] += 1
+            self.meta_dict["step_in_file"] = 0
 
 
 @experiment_registry.register
@@ -1360,7 +1406,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4] # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 8, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
 
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
@@ -1421,7 +1467,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
         bucket_name = "jax_llm_data"
         for lang in ["zh", "en"]:
             # directory_path = f'xiaomeng/processed_{lang}_data_split'
-            directory_path = f"xiaomeng/processed_{lang}_data_1001"
+            directory_path = f"xiaomeng/processed_{lang}_data_1001/"
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
                 logging.info(f"filename: {blob.name}=====")
                 if not blob.name or "_R" not in blob.name:
@@ -1454,78 +1500,17 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
     # }
 
-@experiment_registry.register
-class BC2Gpt13BVsTorch(BC2Gpt13B):
-    NUM_LAYERS = 40
-    MODEL_DIMS = 5120
-    HIDDEN_DIMS = 13696
-    NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]
-
-    MAX_SEQ_LEN = 4096
-    VOCAB_SIZE = 125696
-
-    LAYERNORM_EPSILON = 1e-06
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
-    LR_LRED_WARMUP = 2000
-    LR_LRED_DECAY_START = 2001
-    LR_LRED_DECAY_END = 200000
-    LR_LRED_MIN_RATIO = 1.0
-    LR_LRED_MAX = 1.0
-    Z_LOSS_WEIGHT = 0.0
-
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
-
-    NUM_TRAIN_STEPS = 1e7  # 训练最大步数
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-
-    TRAINABLE_POSITION_EMB = False
-    CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 102
-    EVAL_INTERVAL_STEPS = 100
-    CHECKPOINT_MAX_TO_KEEP = 2
-
-    WANDB_PROJECT = "baichuan2_13b_constant_lr1e-5_vs_torch"
-    TRAINING_SEED = 1234
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
-    LM_HEAD_NORM = True
-
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-
-    TARGET_LOG_PPLX = -1
-    SAVE_ON_STEPS = list(range(1000, 50000, 1000))
-    # tfids datasets
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    DATA_PATH = {
-        "test": ["gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_12.8k_data_test.tfrecord"],
-        "train": ["gs://jax_llm_data/xiaomeng/compare_torch_data/tfrecord/sample_0.9M_data_train.tfrecord"],
-    }
-    Z_LOSS_WEIGHT = 0.0
-    TASK_NAME = "BC2Gpt13BVsTorch"
-    SHUFFLE = {"train": False, "test": False}
-    SHUFFLE_SIZE = None
-    TEST_BATCH_RATIO = 1
-
 
 @experiment_registry.register
 class BC2Gpt13B1001(BC2Gpt13B):
-    NUM_LAYERS = 40
-    PERCORE_BATCH_SIZE = 3
-    ICI_MESH_SHAPE = [1, 32, 4]
+    NUM_LAYERS = 2
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 80
-    EVAL_LOOP_NUM_BATCHES = 60
-    EVAL_INTERVAL_STEPS = 80
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 10
+    EVAL_INTERVAL_STEPS = 20
     CHECKPOINT_MAX_TO_KEEP = 2
     WANDB_PROJECT = "baichuan2_13b_1011"
 
@@ -1544,7 +1529,7 @@ class BC2Gpt13B1001(BC2Gpt13B):
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0 # 0.5 -> 1.0
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
     TASK_NAME = "BC2Gpt13B1001"
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000
@@ -1562,7 +1547,7 @@ class BC2Gpt13B1001(BC2Gpt13B):
         client = storage.Client()
         bucket_name = "jax_llm_data"
         for lang in ["zh", "en"]:
-            directory_path = f"xiaomeng/processed_{lang}_data_1001"
+            directory_path = f"xiaomeng/processed_{lang}_data_1001/"
             for blob in client.list_blobs(bucket_name, prefix=directory_path):
                 logging.info(f"filename: {blob.name}=====")
                 if not blob.name or "_R" not in blob.name:
@@ -1644,7 +1629,7 @@ def c4_registry(task):
             shuffle_buffer_size=shuffle_buffer_size,
         )
 
+
 c4_registry(BC2Gpt13B)
 tfids_registry(BC2Gpt13B)
 tfids_registry(BC2Gpt13B1001)
-tfids_registry(BC2Gpt13BVsTorch)

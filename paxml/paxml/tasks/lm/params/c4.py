@@ -1309,6 +1309,7 @@ class MyDatasets(base_input.BaseInput):
                     f" {self.iter_file_nums}"
                 )
         logging.info(f'meta_dict: {self.meta_dict}')
+        self.train_seed = self.meta_dict['seed']
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def peek_padded(self):
@@ -1358,6 +1359,7 @@ class MyDatasets(base_input.BaseInput):
         return model_needed_inputs
 
     def _load_file_dataset(self, fname):
+        tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data

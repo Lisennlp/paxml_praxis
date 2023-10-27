@@ -69,7 +69,6 @@ class DataProcessor:
         self.write_line = 0
         self.writer = None
         self.clear_threshold_length = 200
-        self.file_count = 0
         self.book_input_ids = []
         self.read_bucket = read_bucket
         self.read_data_dir = read_data_dir
@@ -129,7 +128,7 @@ class DataProcessor:
         start = 0
         while start < length - 1:
             if self.write_line == 0:
-                path = f"{save_path}F{self.file_count}"
+                path = f"{save_path}{self.file_suffix}"
                 self.writer = tf.io.TFRecordWriter(path)
             input_ids = self.book_input_ids[start : start + self.max_seq_len - 2]
             start += self.max_seq_len - 2
@@ -143,8 +142,8 @@ class DataProcessor:
                 example = tf.train.Example(features=tf.train.Features(feature=feature))
                 self.writer.write(example.SerializeToString())
                 self.write_line += 1
-                if self.write_line == self.line_num_perfile:
-                    self.file_count += 1
+                if self.write_line == self.line_num_perfile and not self.save_book_unit:
+                    self.file_suffix += 1
                     self.writer.close()
                     self.write_line = 0
                 flag = 0
@@ -165,6 +164,11 @@ class DataProcessor:
                 if len(self.book_input_ids) >= self.max_seq_len - 2:
                     self.write_file(save_path)
         self.book_index += 1
+
+        if self.save_book_unit:
+            self.writer.close()
+            self.write_line = 0
+            self.book_input_ids = []
 
     def __len__(self):
         return self.size
@@ -190,7 +194,7 @@ class DataProcessor:
 
 
 def process_book_wrapper(args):
-    rank, workers, max_seq_len, read_bucket, read_data_dir, host_id, host_num, tokenizer_path, save_dir, seed, line_num_perfile = args
+    rank, workers, max_seq_len, read_bucket, read_data_dir, host_id, host_num, tokenizer_path, save_dir, seed, line_num_perfile, save_book_unit = args
     processor = DataProcessor(
         read_bucket, read_data_dir, tokenizer_path, save_dir, max_seq_len=max_seq_len, seed=seed
     )
@@ -198,6 +202,9 @@ def process_book_wrapper(args):
     processor.host_id = host_id
     processor.host_num = host_num
     processor.line_num_perfile = line_num_perfile
+    processor.save_book_unit = save_book_unit
+    
+    processor.file_suffix = '' if save_book_unit else 0
 
     every_host_nums = math.ceil(len(processor.file_pathlist) / host_num)
     processor.file_pathlist = processor.file_pathlist[host_id * every_host_nums : (host_id + 1) * every_host_nums]
@@ -225,7 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_seq_len", type=int, default=1024, help="Tokenizer max sequence length")
     parser.add_argument("--workers", type=int, default=10, help="Processed program numbers at same time")
     parser.add_argument("--line_num_perfile", type=int, default=10000, help="Save data numbers per file when length is max_seq_len")
-
+    parser.add_argument("--save_book_unit", action="store_true", default=False, help="whether to save single book unit")
 
     hostname = socket.gethostname()
     args = parser.parse_args()
@@ -251,6 +258,7 @@ if __name__ == "__main__":
 
     max_seq_len = args.max_seq_len
     line_num_perfile = args.line_num_perfile
+    save_book_unit = args.save_book_unit
     workers = args.workers
 
     set_start_method("spawn")  # tpu-vm
@@ -260,7 +268,7 @@ if __name__ == "__main__":
     logger.info(f"num_processes: {num_processes}")
     pool = multiprocessing.Pool(processes=workers)
     args = (
-        [rank, workers, max_seq_len, read_bucket, read_data_dir, host_id, host_num, tokenizer_path, save_dir, seed, line_num_perfile]
+        [rank, workers, max_seq_len, read_bucket, read_data_dir, host_id, host_num, tokenizer_path, save_dir, seed, line_num_perfile, save_book_unit]
         for rank in range(workers)
     )
     logger.info(f'args: {args}')
@@ -270,8 +278,14 @@ if __name__ == "__main__":
     pool.join()
 
 # https://huggingface.co/datasets/ArmelR/the-pile-splitted
-
+# scp
 # gcloud compute tpus tpu-vm scp paxml/my_scripts/tokenizer_bucket_json.py llm-jax-v4-64-3:~/  --zone=us-central2-b  --worker=all  --project=llm-tpu
-# gcloud compute tpus tpu-vm ssh llm-jax-v4-64-3 --zone=us-central2-b --worker=all --command="pkill -f 'python tokenizer_bucket_json.py'; /home/lishengping/miniconda3/bin/python tokenizer_bucket_json.py --read_dir gs://common_datasets_us-central2/pile/ --save_dir pile_seq4096_tokenized/ --tokenizer_path EleutherAI/pythia-70m-deduped --max_seq_len 4096 --host_num 8 --workers 4"
+# kill pkill -f multiprocessing.spawn
 # gcloud compute tpus tpu-vm ssh llm-jax-v4-64-3 --zone=us-central2-b --worker=all --command="pkill -f 'python tokenizer_bucket_json.py'"
+# 用这个才能彻底kill掉
+# gcloud compute tpus tpu-vm ssh llm-jax-v4-64-3 --zone=us-central2-b --worker=all --command="pkill -f 'multiprocessing.spawn'"
+
+# run
+# gcloud compute tpus tpu-vm ssh llm-jax-v4-64-3 --zone=us-central2-b --worker=all --command="/home/lishengping/miniconda3/bin/python tokenizer_bucket_json.py --read_dir gs://common_datasets_us-central2/pile/ --save_dir pile_seq4096_tokenized/ --tokenizer_path EleutherAI/pythia-70m-deduped --max_seq_len 4096 --host_num 8 --workers 4"
+# vm run
 # python processed.py --read_dir gs://common_datasets_us-central2/pile/  --save_dir pile_seq4096_tokenized/ --host_num 4  --tokenizer_path EleutherAI/pythia-70m-deduped --max_seq_len 4096 --workers 4

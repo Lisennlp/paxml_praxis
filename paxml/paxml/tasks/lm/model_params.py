@@ -632,9 +632,11 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         # transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = True # not self.USE_ROTARY_POSITION_EMB  # XD
         # transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = True  # XD: True
         # transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
+        # lsp: pythia
         transformer_layer_p.tr_atten_tpl.use_bias = False
         transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
-        transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD
+        # 不使用ff1 gate时，使用bias
+        transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION
         transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(self.ACTIVATION_CLS)
         transformer_layer_p.tr_fflayer_tpl.use_gated_activation = self.USE_GATED_ACTIVATION
         transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD

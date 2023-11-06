@@ -1534,6 +1534,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     TASK_NAME = "Pythia7B"
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
 
     TEST_RATIO = 0.02
     TRAINING_SEED = 1234
@@ -1550,7 +1551,8 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     USE_ALIBI_POSITION_EMB = True
     NORMALIZATION_CLS = normalizations.LayerNorm
     USE_BIAS = True
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
 
     def extract_datapath():
         client = storage.Client()

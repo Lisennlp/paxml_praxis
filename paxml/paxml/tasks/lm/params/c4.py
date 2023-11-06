@@ -1507,7 +1507,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 24
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2048
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
     VOCAB_SIZE = 50304
     CHECKPOINT_EVERY_N_STEPS = 20
     EVAL_LOOP_NUM_BATCHES = 10
@@ -1550,12 +1550,11 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     USE_ALIBI_POSITION_EMB = True
     NORMALIZATION_CLS = normalizations.LayerNorm
     USE_BIAS = True
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
 
-
-    def extract_datapath(test_ratio, seed):
-        random.seed(seed)
-        dataset = defaultdict(list)
+    def extract_datapath():
         client = storage.Client()
+        #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
         bucket_name = "common_datasets"
         directory_path = "pythia_pile_idxmaps_tfrecored"
         step_map_path = {}
@@ -1566,10 +1565,11 @@ class Pythia7B(C4SpmdGpt37BRoPE):
             step_map_path[step] = path
         sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
         steps, pathes = zip(*sorted_step_path)
-        train_test_dataset = {"test": pathes[:0], "train": pathes}
+        # 目前只是为了测试，训练的时候可以选择是否需要test
+        train_test_dataset = {"test": pathes[:1], "train": pathes}
         logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
         return train_test_dataset
-    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED)
+    DATA_PATH = extract_datapath()
 
     
 @experiment_registry.register
@@ -1704,3 +1704,4 @@ def c4_registry(task):
 c4_registry(BC2Gpt13B)
 tfids_registry(BC2Gpt13B)
 tfids_registry(BC2Gpt13B1001)
+tfids_registry(Pythia7B)

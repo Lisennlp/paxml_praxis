@@ -1235,6 +1235,7 @@ class DotProductAttention(base_layer.BaseLayer):
         )
         # Setting is_output_projection=True to set the projection direction
         # from hidden dim to input dim. Output projection follows query_input_dim.
+        # lsp: attn post params set
         post_proj_p = self.proj_tpl.clone().set(
             input_dim=query_input_dim,
             num_heads=self.num_heads,

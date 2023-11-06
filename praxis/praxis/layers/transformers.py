@@ -1369,7 +1369,7 @@ class Transformer(base_layer.BaseLayer):
         self.add_summary("attention_output_rel_cos", _rel_cos(inputs, atten_output), verbosity=4)
 
         # Apply cross attention if applicable
-        # lsp 注释掉
+        # lsp 注释掉, 因为未False
         if self.use_cross_attention and (
             not self.allow_skip_cross_attention or cross_inputs is not None
         ):
@@ -1406,6 +1406,8 @@ class Transformer(base_layer.BaseLayer):
         # Apply FFN layer
         output = self.ff_layer(atten_output, paddings=paddings)
         self.add_summary("[lsp]ffn_out", output[1], verbosity=self.user_summary_level)
+
+        #  lsp: (x + attn(ln(x)) + mlp(ln(x))
         return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
 
     def extend_step(

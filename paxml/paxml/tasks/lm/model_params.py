@@ -559,6 +559,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
 
     USE_ALIBI_POSITION_EMB = False
     ROTARY_TYPE = 'paxml'
+    LM_HEAD_NORM = False
 
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         """Returns the task parameters."""

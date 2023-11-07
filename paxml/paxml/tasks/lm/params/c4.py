@@ -22,6 +22,7 @@ from collections import defaultdict
 import os
 import random
 import json
+from functools import partial
 
 from absl import logging
 import fiddle as fdl
@@ -54,96 +55,12 @@ from google.cloud import storage
 import smart_open
 from paxml import checkpoint_paths
 
+from paxml.utils import *
+
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 GPT_EOS_ID = 1
-
-
-
-
-def get_feature(key_map, vocabulary):
-    feature_desc, output_features = {}, {}
-    for k, v in key_map.items():
-        if v is None:
-            continue
-        feature_desc[v] = tf.io.VarLenFeature(tf.int64)
-        output_features[k] = seqio.Feature(vocabulary=vocabulary, dtype=tf.int32)
-    return feature_desc, output_features
-
-
-def tfids_registry(task):
-    @seqio.map_over_dataset
-    def convert_datatype(ex):
-        return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
-
-    preprocessors = [
-        convert_datatype,
-        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
-    ]
-    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
-    for mode in ["train", "test"]:
-        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-        source = seqio.TFExampleDataSource(
-            split_to_filepattern={mode: task.DATA_PATH[mode]},
-            feature_description=feature_desc,
-        )
-        print(f"mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}")
-        seqio.TaskRegistry.add(
-            f"{task.TASK_NAME}.{mode}",
-            source,
-            preprocessors=preprocessors,
-            output_features=output_features,
-            shuffle_buffer_size=shuffle_buffer_size,
-        )
-
-
-def c4_registry(task):
-    preprocessors = [
-        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
-        seqio.preprocessors.tokenize,
-        functools.partial(t5_preprocessors.reduce_concat_tokens, batch_size=4096),
-        t5_preprocessors.split_tokens_to_targets_length,
-    ]
-    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
-    for mode in ["train", "test"]:
-        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-        data_path = "gs://common_datasets"
-        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
-        t5.data.TaskRegistry.add(
-            f"c4.{mode}",
-            seqio.Task,
-            source=source,
-            preprocessors=preprocessors,
-            output_features=output_features,
-            metric_fns=[],
-            shuffle_buffer_size=shuffle_buffer_size,
-        )
-
-
-# c4_registry(BC2Gpt13B)
-# tfids_registry(BC2Gpt13B)
-# tfids_registry(BC2Gpt13B1001)
-tfids_registry(Pythia7B)
-
-
-# lsp
-def extract_train_skip_step(job_log_dir, step):
-    if job_log_dir is None:
-        return
-    model_dir = os.path.join(job_log_dir, "checkpoints")
-    if step is not None:
-        fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
-        skip_file_and_step_path = os.path.join(model_dir, fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
-    else:
-        skip_file_and_step_path = os.path.join(model_dir, f'{checkpoint_paths.SKIP_STEP_NAME}')
-    logging.info(f"model_dir: {model_dir}")
-    try:
-        with smart_open.open(skip_file_and_step_path, 'r') as f:
-            skip_file_and_step = json.load(f)
-    except:
-        skip_file_and_step = None
-    return skip_file_and_step
 
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
@@ -230,7 +147,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             shuffle_key = "train" if is_training else "test"
             shuffle_buffer_size = self.SHUFFLE_SIZE if self.SHUFFLE[shuffle_key] else None
 
+        print(f'is_training: {is_training}')
+        DATA_PATH = self.DATA_FUNC(mode='train' if is_training else 'test')
         if self.LOAD_SEQIO_ID or self.LOAD_SEQIO_TEXT:
+            assert DATA_PATH is None
             p = pax_fiddle.Config(
                 seqio_input.SeqIOInput,
                 name=name,
@@ -249,7 +169,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 ),
                 is_training=is_training,
                 input_random_seed=(seed if is_training else 4321),
-                batch_size=int(batch_size_per_process * self.TEST_BATCH_RATIO),  # lsp
+                batch_size=int(batch_size_per_process),  # lsp
                 drop_remainder=True if is_training else False,
                 num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
                 num_infeed_hosts=num_infeed_hosts,
@@ -260,10 +180,11 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             )
             return p
         else:
+            assert isinstance(DATA_PATH, dict)
             p = pax_fiddle.Config(
                 MyDatasets,
                 name=f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test",
-                path=self.DATA_PATH["train"] if is_training else self.DATA_PATH["test"],
+                path=DATA_PATH["train"] if is_training else DATA_PATH["test"],
                 is_training=is_training,
                 meta_dict=meta_dict,
                 batch_size=int(self.PERCORE_BATCH_SIZE * 8),
@@ -855,23 +776,22 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     EVAL_INTERVAL_STEPS = 100  # 每隔多少step评测一次
     CHECKPOINT_MAX_TO_KEEP = 2  # 保留n个checkpoint
 
-    WANDB_PROJECT = "lr8e_6_decoupled_base32_0913_fix_lr_bug_drop0_baichuan2_13b"
-
-    TRAIN_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"
-    VALID_FILE = "gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"
-    DATA_PATH = {"train": TRAIN_FILE, "test": VALID_FILE}
+    WANDB_PROJECT = "debug"
 
     TRAINING_SEED = 1234
     USE_ROTARY_POSITION_EMB = True
     USE_ALIBI_POSITION_EMB = False
-    LM_HEAD_NORM = False
 
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = True
     # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
     TARGET_LOG_PPLX = -1
     SAVE_ON_STEPS = list(range(2000, 1000000, 2000))
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    # default
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_FUNC = c4_registry
 
 
 @experiment_registry.register
@@ -1340,6 +1260,157 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
     CHECKPOINT_EVERY_N_STEPS = 200
 
 
+@experiment_registry.register
+class BC2Gpt13B(C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 2
+    MODEL_DIMS = 5120
+    HIDDEN_DIMS = 13696
+    NUM_HEADS = 40
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 4096
+    VOCAB_SIZE = 125696
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
+    Z_LOSS_WEIGHT = 0.0
+
+    # LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    # LR_COS_MIN_RATIO = 0.1
+    # LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    # LR_COS_WARMUP = 200
+    # LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    # LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = True
+
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 102
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "debug"
+    LM_HEAD_NORM = True
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+
+    # tfids datasets
+    TARGET_LOG_PPLX = -1
+    TEST_RATIO = 0.02
+    TASK_NAME = "BC2Gpt13B"
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+    TRAINING_SEED = 1234
+    QUERY_CHUNK_SIZE = 512
+
+    # novel xiaomeng zh en
+    LOAD_SEQIO_TEXT = False
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
+    TEST_BATCH_RATIO = 0.02
+    DATA_FUNC = extract_zh_en_novel_datapath
+
+    # # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    # LOAD_SEQIO_TEXT = True
+    # KEY_MAP = {"inputs": None, "targets": "text"}
+    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    # DATA_FUNC = c4_registry
+
+    # # baichuan1指令数据集
+    # LOAD_SEQIO_ID = True
+    # LOAD_SEQIO_TEXT = False
+    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    # DATA_PATH = {
+    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
+    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
+    # }
+    # DATA_FUNC = tfids_registry
+
+
+@experiment_registry.register
+class Pythia7B(C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 24
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    VOCAB_SIZE = 50304
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 10
+    EVAL_INTERVAL_STEPS = 20
+    CHECKPOINT_MAX_TO_KEEP = 2
+    WANDB_PROJECT = "pythia_7b"
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 4096
+    NUM_HEADS = 16
+
+    LAYERNORM_EPSILON = 1e-05
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_WARMUP = 200
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
+    TASK_NAME = "Pythia7B"
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+
+    TEST_RATIO = 0.02
+    TRAINING_SEED = 1234
+    QUERY_CHUNK_SIZE = 512
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+    Z_LOSS_WEIGHT = 0.0
+    LM_HEAD_NORM = False
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = True
+    NORMALIZATION_CLS = normalizations.LayerNorm
+    USE_BIAS = True
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
+    ROTARY_TYPE = 'pythia'
+
+    # novel xiaomeng zh en
+    LOAD_SEQIO_TEXT = False
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    TEST_BATCH_RATIO = 0.02
+    DATA_FUNC = extract_pythia_datapath
+
+
+
 class MyDatasets(base_input.BaseInput):
     # Required params. lsp - note: 参数一定要注明类型，不然在初始化的时候就不能传入，会报错没有这个参数
     path: Optional[str] = None
@@ -1468,252 +1539,3 @@ class MyDatasets(base_input.BaseInput):
             self.meta_dict["step_in_file"] = 0
 
 
-@experiment_registry.register
-class BC2Gpt13B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 40
-    MODEL_DIMS = 5120
-    HIDDEN_DIMS = 13696
-    NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-
-    MAX_SEQ_LEN = 4096
-    VOCAB_SIZE = 125696
-
-    LAYERNORM_EPSILON = 1e-06
-
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
-    LR_LRED_WARMUP = 2000
-    LR_LRED_DECAY_START = 2001
-    LR_LRED_DECAY_END = 200000
-    LR_LRED_MIN_RATIO = 1.0
-    LR_LRED_MAX = 1.0
-    Z_LOSS_WEIGHT = 0.0
-
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
-
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
-
-    CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 102
-    EVAL_INTERVAL_STEPS = 100
-    CHECKPOINT_MAX_TO_KEEP = 2
-
-    WANDB_PROJECT = "debug"
-
-    LM_HEAD_NORM = True
-
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = True
-
-    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
-    # KEY_MAP = {"inputs": None, "targets": "text"}
-    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    # LOAD_SEQIO_ID:
-    # tfids datasets
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-
-    TARGET_LOG_PPLX = -1
-
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-    SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
-
-    def extract_datapath(test_ratio, seed, split_batch):
-        random.seed(seed)
-        dataset = defaultdict(list)
-        client = storage.Client()
-        bucket_name = "jax_llm_data"
-        for lang in ["zh", "en"]:
-            # directory_path = f'xiaomeng/processed_{lang}_data_split'
-            directory_path = f"xiaomeng/processed_{lang}_data_1001/"
-            for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                logging.info(f"filename: {blob.name}=====")
-                if not blob.name or "_R" not in blob.name:
-                    continue
-                if len(dataset[lang]) > 5:
-                    break
-                index = int(blob.name.rsplit("_", maxsplit=1)[-1])
-                # 每本书的前多少个4096
-                if index < split_batch[lang]:
-                    path = os.path.join(f"gs://{bucket_name}", blob.name)
-                    dataset[lang].append(path)
-        total = dataset["zh"] + dataset["en"]
-        random.shuffle(total)
-        test_num = int(len(total) * test_ratio)
-        test_num = max(test_num, 1)
-
-        train_test_dataset = {"test": total[:test_num], "train": total[test_num:]}
-        logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-        return train_test_dataset
-
-    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
-
-    TASK_NAME = "BC2Gpt13B"
-    SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
-    TEST_BATCH_RATIO = 1
-    # baichuan1指令数据集
-    # DATA_PATH = {
-    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
-    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
-    # }
-
-@experiment_registry.register
-class Pythia7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 24
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
-    VOCAB_SIZE = 50304
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 10
-    EVAL_INTERVAL_STEPS = 20
-    CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "pythia_7b"
-    MODEL_DIMS = 1024
-    HIDDEN_DIMS = 4096
-    NUM_HEADS = 16
-    # DIMS_PER_HEAD = 
-
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
-    TASK_NAME = "Pythia7B"
-    SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = 512
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    def extract_datapath():
-        client = storage.Client()
-        #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-        bucket_name = "common_datasets"
-        directory_path = "pythia_pile_idxmaps_tfrecored"
-        step_map_path = {}
-        for blob in client.list_blobs(bucket_name, prefix=directory_path):
-            logging.info(f"filename: {blob.name}=====")
-            step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
-            path = f'gs://{os.path.join(bucket_name, blob.name)}'
-            step_map_path[step] = path
-        sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
-        steps, pathes = zip(*sorted_step_path)
-        if not isinstance(pathes, list):
-            pathes = list(pathes)
-        # 目前只是为了测试，训练的时候可以选择是否需要test
-        train_test_dataset = {"test": pathes[:1], "train": pathes}
-        logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-        return train_test_dataset
-    DATA_PATH = extract_datapath()
-
-    
-@experiment_registry.register
-class BC2Gpt13B1001(BC2Gpt13B):
-    NUM_LAYERS = 2
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 4096
-    VOCAB_SIZE = 125696
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 10
-    EVAL_INTERVAL_STEPS = 20
-    CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "baichuan2_13b_1011"
-
-    LAYERNORM_EPSILON = 1e-06
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
-    TASK_NAME = "BC2Gpt13B1001"
-    SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
-
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-    SPLIT_BSZ = {"zh": 7, "en": 20}
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    QUERY_CHUNK_SIZE = 512
-
-    def extract_datapath(test_ratio, seed, split_batch):
-        random.seed(seed)
-        dataset = defaultdict(list)
-        client = storage.Client()
-        bucket_name = "jax_llm_data"
-        for lang in ["zh", "en"]:
-            directory_path = f"xiaomeng/processed_{lang}_data_1001/"
-            for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                logging.info(f"filename: {blob.name}=====")
-                if not blob.name or "_R" not in blob.name:
-                    continue
-                if len(dataset[lang]) > 2000:
-                    break
-                index = int(blob.name.rsplit("_", maxsplit=1)[-1])
-                # 每本书的前多少个4096
-                if index < split_batch[lang]:
-                    path = os.path.join(f"gs://{bucket_name}", blob.name)
-                    dataset[lang].append(path)
-        total = dataset["zh"] + dataset["en"]
-        random.shuffle(total)
-        test_num = int(len(total) * test_ratio)
-        test_num = max(test_num, 1)
-        train_test_dataset = {"test": total[:test_num], "train": total[test_num:]}
-        logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-        return train_test_dataset
-
-    DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
-    Z_LOSS_WEIGHT = 0.0

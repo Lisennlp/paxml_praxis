@@ -244,7 +244,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     ):
         # lsp: 保存不需要
         del train_state_pspecs
-        if not self.checkpoint_manager.should_save(step_i):
+        # lsp
+        if not self.checkpoint_manager.should_save(step_i) or not self._enable_checkpoint_saving:
             return
         self._save_with_args(
             step_i,

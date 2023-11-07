@@ -60,6 +60,73 @@ WeightInit = base_layer.WeightInit
 GPT_EOS_ID = 1
 
 
+
+
+def get_feature(key_map, vocabulary):
+    feature_desc, output_features = {}, {}
+    for k, v in key_map.items():
+        if v is None:
+            continue
+        feature_desc[v] = tf.io.VarLenFeature(tf.int64)
+        output_features[k] = seqio.Feature(vocabulary=vocabulary, dtype=tf.int32)
+    return feature_desc, output_features
+
+
+def tfids_registry(task):
+    @seqio.map_over_dataset
+    def convert_datatype(ex):
+        return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
+
+    preprocessors = [
+        convert_datatype,
+        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
+    ]
+    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
+    for mode in ["train", "test"]:
+        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
+        source = seqio.TFExampleDataSource(
+            split_to_filepattern={mode: task.DATA_PATH[mode]},
+            feature_description=feature_desc,
+        )
+        print(f"mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}")
+        seqio.TaskRegistry.add(
+            f"{task.TASK_NAME}.{mode}",
+            source,
+            preprocessors=preprocessors,
+            output_features=output_features,
+            shuffle_buffer_size=shuffle_buffer_size,
+        )
+
+
+def c4_registry(task):
+    preprocessors = [
+        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
+        seqio.preprocessors.tokenize,
+        functools.partial(t5_preprocessors.reduce_concat_tokens, batch_size=4096),
+        t5_preprocessors.split_tokens_to_targets_length,
+    ]
+    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
+    for mode in ["train", "test"]:
+        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
+        data_path = "gs://common_datasets"
+        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
+        t5.data.TaskRegistry.add(
+            f"c4.{mode}",
+            seqio.Task,
+            source=source,
+            preprocessors=preprocessors,
+            output_features=output_features,
+            metric_fns=[],
+            shuffle_buffer_size=shuffle_buffer_size,
+        )
+
+
+# c4_registry(BC2Gpt13B)
+# tfids_registry(BC2Gpt13B)
+# tfids_registry(BC2Gpt13B1001)
+tfids_registry(Pythia7B)
+
+
 # lsp
 def extract_train_skip_step(job_log_dir, step):
     if job_log_dir is None:
@@ -1514,8 +1581,12 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     EVAL_INTERVAL_STEPS = 20
     CHECKPOINT_MAX_TO_KEEP = 2
     WANDB_PROJECT = "pythia_7b"
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 4096
+    NUM_HEADS = 16
+    # DIMS_PER_HEAD = 
 
-    LAYERNORM_EPSILON = 1e-06
+    LAYERNORM_EPSILON = 1e-05
     # Learning rate schedule
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_cosine_decay"
@@ -1535,6 +1606,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
 
     TEST_RATIO = 0.02
     TRAINING_SEED = 1234
@@ -1553,6 +1625,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     USE_BIAS = True
     USE_GATED_ACTIVATION = False # no ff1_layer_gate
     ACTIVATION_CLS = layers.GELU
+    ROTARY_TYPE = 'pythia'
 
     def extract_datapath():
         client = storage.Client()
@@ -1567,6 +1640,8 @@ class Pythia7B(C4SpmdGpt37BRoPE):
             step_map_path[step] = path
         sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
         steps, pathes = zip(*sorted_step_path)
+        if not isinstance(pathes, list):
+            pathes = list(pathes)
         # 目前只是为了测试，训练的时候可以选择是否需要test
         train_test_dataset = {"test": pathes[:1], "train": pathes}
         logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
@@ -1642,68 +1717,3 @@ class BC2Gpt13B1001(BC2Gpt13B):
 
     DATA_PATH = extract_datapath(TEST_RATIO, TRAINING_SEED, SPLIT_BSZ)
     Z_LOSS_WEIGHT = 0.0
-
-
-def get_feature(key_map, vocabulary):
-    feature_desc, output_features = {}, {}
-    for k, v in key_map.items():
-        if v is None:
-            continue
-        feature_desc[v] = tf.io.VarLenFeature(tf.int64)
-        output_features[k] = seqio.Feature(vocabulary=vocabulary, dtype=tf.int32)
-    return feature_desc, output_features
-
-
-def tfids_registry(task):
-    @seqio.map_over_dataset
-    def convert_datatype(ex):
-        return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
-
-    preprocessors = [
-        convert_datatype,
-        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
-    ]
-    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
-    for mode in ["train", "test"]:
-        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-        source = seqio.TFExampleDataSource(
-            split_to_filepattern={mode: task.DATA_PATH[mode]},
-            feature_description=feature_desc,
-        )
-        print(f"mode: {mode} shuffle_size: {shuffle_buffer_size} task.SHUFFLE[mode]: {task.SHUFFLE[mode]}")
-        seqio.TaskRegistry.add(
-            f"{task.TASK_NAME}.{mode}",
-            source,
-            preprocessors=preprocessors,
-            output_features=output_features,
-            shuffle_buffer_size=shuffle_buffer_size,
-        )
-
-
-def c4_registry(task):
-    preprocessors = [
-        functools.partial(t5_preprocessors.rekey, key_map=task.KEY_MAP),
-        seqio.preprocessors.tokenize,
-        functools.partial(t5_preprocessors.reduce_concat_tokens, batch_size=4096),
-        t5_preprocessors.split_tokens_to_targets_length,
-    ]
-    feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
-    for mode in ["train", "test"]:
-        shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-        data_path = "gs://common_datasets"
-        source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
-        t5.data.TaskRegistry.add(
-            f"c4.{mode}",
-            seqio.Task,
-            source=source,
-            preprocessors=preprocessors,
-            output_features=output_features,
-            metric_fns=[],
-            shuffle_buffer_size=shuffle_buffer_size,
-        )
-
-
-c4_registry(BC2Gpt13B)
-tfids_registry(BC2Gpt13B)
-tfids_registry(BC2Gpt13B1001)
-tfids_registry(Pythia7B)

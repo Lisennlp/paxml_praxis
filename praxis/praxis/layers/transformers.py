@@ -1404,7 +1404,10 @@ class Transformer(base_layer.BaseLayer):
                 atten_output = self.cross_layer_norm(atten_output)
         self.add_summary("[lsp]ffn_input", atten_output[1], verbosity=self.user_summary_level)
         # Apply FFN layer
-        output = self.ff_layer(atten_output, paddings=paddings)
+        # lsp: 
+        output = self.ff_layer(inputs, paddings=paddings)
+        output += atten_output
+
         self.add_summary("[lsp]ffn_out", output[1], verbosity=self.user_summary_level)
 
         #  lsp: (x + attn(ln(x)) + mlp(ln(x))

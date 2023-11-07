@@ -557,6 +557,9 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     DCN_MESH_SHAPE = [1, 1, 1]  # lsp：node 数量？
     TRAINING_OPTIMIZED_SHARDING = True
 
+    USE_ALIBI_POSITION_EMB = False
+    ROTARY_TYPE = 'paxml'
+
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         """Returns the task parameters."""
         if self.DIMS_PER_HEAD is not None:
@@ -651,11 +654,15 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
             )
         if self.USE_ROTARY_POSITION_EMB:
             transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
+            # lsp
+            if self.ROTARY_TYPE == 'pythia':
+                transformer_layer_p.tr_atten_tpl.rotary_position_emb_tpl = pax_fiddle.Config(embedding_softmax.RotaryPythiaPositionalEmbedding)
 
         if self.USE_ALIBI_POSITION_EMB:
             model_p.lm_tpl.use_alibi_position_emb = True
 
         transformer_layer_p.tr_atten_tpl.query_chunk_size = self.QUERY_CHUNK_SIZE
+
 
         # USE_REPEATED_LAYER: True, in C4SpmdGpt3AdamOrgHP
         if self.USE_REPEATED_LAYER:

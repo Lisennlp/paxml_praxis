@@ -1622,6 +1622,10 @@ class DotProductAttention(base_layer.BaseLayer):
           encoded: JTensor of shape [B, T, D].
           atten_probs: JTensor of shape [B, N, T, S].
         """
+        self.add_summary("[lsp]query_proj0", query_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]key_proj0", key_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]value_proj0", value_proj[1], verbosity=self.user_summary_level)
+
         if self.combine_qkv:
             # Only supports self attention.
             assert query_vec is key_vec

@@ -370,7 +370,10 @@ class LayerNorm(BaseNormalization):
     if self.reductions_in_fp32:
       normed_inputs = normed_inputs.astype(inputs_dtype)
     if self.use_scale:
-      normed_inputs *= (1 + self.theta.scale)
+      # normed_inputs *= (1 + self.theta.scale)
+      # lsp
+      normed_inputs *= self.theta.scale
+
     if self.use_bias:
       normed_inputs += self.theta.bias
     return normed_inputs

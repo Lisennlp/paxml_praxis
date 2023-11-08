@@ -1352,7 +1352,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 24
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    MAX_SEQ_LEN = 200  # ps：pythia读取的数据长度为2049
     VOCAB_SIZE = 50304
     CHECKPOINT_EVERY_N_STEPS = 20
     EVAL_LOOP_NUM_BATCHES = 10
@@ -1394,8 +1394,8 @@ class Pythia7B(C4SpmdGpt37BRoPE):
     LOAD_SEQIO_TEXT = False
     TRAINING_NUM_BATCHES_TO_SKIP = None
     TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = False
-    USE_ALIBI_POSITION_EMB = True
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
     NORMALIZATION_CLS = normalizations.LayerNorm
     USE_BIAS = True
     USE_GATED_ACTIVATION = False # no ff1_layer_gate
@@ -1477,7 +1477,7 @@ class MyDatasets(base_input.BaseInput):
             t = example[name]
             if t.dtype == tf.int64:
                 t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)
+            example[name] = tf.sparse.to_dense(t, default_value=0)[:200]
         return example
 
     def convert(self, data):
@@ -1495,6 +1495,9 @@ class MyDatasets(base_input.BaseInput):
         pos = tf.range(seq_len - 1)
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
+
+    def split(self):
+        return 
 
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)

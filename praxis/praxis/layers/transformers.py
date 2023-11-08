@@ -501,8 +501,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
         outputs = self.residual_dropout(outputs)
         self.add_summary("[lsp]ffn2_output_drop", outputs[1], verbosity=self.user_summary_level)
         # Apply skip connection lsp: True
+        # 这里面都是加了残差之后的结果
         if self.add_skip_connection:
-            logging.info(f"self.add_skip_connection: {self.add_skip_connection}")
+            logging.info(f"self.add_skip_connection: {self.add_skip_connection} residual_droppath_prob: {self.residual_droppath_prob}")
             if self.residual_droppath_prob:
                 outputs = self.residual_droppath(residual, outputs)
             else:
@@ -1360,8 +1361,9 @@ class Transformer(base_layer.BaseLayer):
         if self.residual_droppath_prob > 0.0:  # 0
             atten_output = self.residual_droppath(inputs, atten_output)
         else:
-            # lsp:
-            atten_output += inputs
+            # lsp: 只保留残差
+            # atten_output += inputs
+            pass
 
         if self.norm_policy == "post_skip":
             atten_output = self.layer_norm(atten_output)
@@ -1405,6 +1407,8 @@ class Transformer(base_layer.BaseLayer):
         self.add_summary("[lsp]ffn_input", atten_output[1], verbosity=self.user_summary_level)
         # Apply FFN layer
         # lsp: 
+        self.add_summary("[lsp]mlp_inputs", inputs[1], verbosity=self.user_summary_level)
+        # 这里面是加了残差之后的结果： 即：inputs + residual
         output = self.ff_layer(inputs, paddings=paddings)
         output += atten_output
 

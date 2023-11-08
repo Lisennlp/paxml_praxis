@@ -369,13 +369,17 @@ class LayerNorm(BaseNormalization):
     normed_inputs = (inputs - mean) * jax.lax.rsqrt(var + self.epsilon)
     if self.reductions_in_fp32:
       normed_inputs = normed_inputs.astype(inputs_dtype)
+    # print(f'self.use_scale: {self.use_scale:}')
+    # self.add_summary('[lsp]normed_inputs', normed_inputs[1], verbosity=self.user_summary_level)
     if self.use_scale:
       # normed_inputs *= (1 + self.theta.scale)
       # lsp
       normed_inputs *= self.theta.scale
-
+      # self.add_summary('[lsp]norm_theta.scale', self.theta.scale, verbosity=self.user_summary_level)
     if self.use_bias:
       normed_inputs += self.theta.bias
+      # self.add_summary('[lsp]norm_theta.bias', self.theta.bias, verbosity=self.user_summary_level)
+
     return normed_inputs
 
 

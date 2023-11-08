@@ -1133,10 +1133,10 @@ def rotate_half(x):
 
 
 def apply_rotary_pos_emb(inputs, cos, sin, offset: int = 0):
-    cos, sin = (
-        cos[offset : inputs.shape[0] + offset, ...],
-        sin[offset : inputs.shape[0] + offset, ...],
-    )
+    # cos, sin = (
+    #     cos[offset : inputs.shape[0] + offset, ...],
+    #     sin[offset : inputs.shape[0] + offset, ...],
+    # )
     return (inputs * cos) + (rotate_half(inputs) * sin)
 
 
@@ -1153,8 +1153,12 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
         self,  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
         inputs: JTensor,
         position: Optional[JTensor] = None,
-        offset: int = 0
+        offset: int = 0,
+        name: str = '',
     ) -> JTensor:
+        logging.info(f'inputs: {inputs.shape} position: {position.shape}')
+
+        self.add_summary("[lsp]rotary_inputs", inputs, verbosity=self.user_summary_level)
         if len(inputs.shape) != 4:
             raise ValueError(
                 "Input is assumed to be a rank 4 tensor of shape[batch, sequence, heads, dims]."
@@ -1173,6 +1177,12 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
             seq_length = inputs.shape[1]
             # 调换了length维度顺序
             position = jnp.arange(seq_length, dtype=jnp.float32)[:, jnp.newaxis]
+        else:
+            if len(position.shape) == 2:
+                assert position.shape[1] == inputs.shape[1]
+                position = position[0]
+            position = position[jnp.newaxis, :]
+
         position = position[:, :, jnp.newaxis, jnp.newaxis]
         timescale = timescale[jnp.newaxis, jnp.newaxis, jnp.newaxis, :]
         sinusoid_inp = position / timescale
@@ -1183,15 +1193,18 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
             
         sin = jnp.sin(sinusoid_inp)
         cos = jnp.cos(sinusoid_inp)
-        
+        self.add_summary("[lsp]cos", cos, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]sin", sin, verbosity=self.user_summary_level)
+        self.add_summary(f"[lsp]rotary_inputs_{name}", inputs, verbosity=self.user_summary_level)
         inputs_rot, inputs_pass = (inputs[..., :rotary_ndims], inputs[..., rotary_ndims :], )
-        
+        self.add_summary(f"[lsp]inputs_rot_{name}", inputs_rot, verbosity=self.user_summary_level)
         inputs_layer = apply_rotary_pos_emb(inputs_rot, cos, sin, offset=offset)
         inputs_layer = jnp.concatenate((inputs_layer, inputs_pass), axis=-1)
 
         if self.cast_as_fprop_dtype:
             inputs_layer = inputs_layer.astype(self.fprop_dtype)
-            
+
+        self.add_summary(f"[lsp]rotary_inputs_layer_{name}", inputs_layer, verbosity=self.user_summary_level)
         return inputs_layer
 
 

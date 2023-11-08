@@ -696,9 +696,17 @@ class AttentionProjection(base_layer.BaseLayer):
             assert shape[-1] == self.input_dim, f"Expecting shape[-1] == p.input_dim, {shape[-1]} != {self.input_dim}"
             batch_eqn = eqn_sym[: (rank - 1)] if rank else "..."
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
+
+        logging.info(f"[lsp]eqn: {eqn}")
+        self.add_summary("[lsp]inputs_qkv", inputs[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]inputs_w", w, verbosity=self.user_summary_level)
+
         ret = self.einsum(eqn, inputs, w)
         if self.use_bias:
+            self.add_summary("[lsp]inputs_bias", theta.b, verbosity=self.user_summary_level)
             ret += theta.b
+            self.add_summary("[lsp]inputs_ret", ret, verbosity=self.user_summary_level)
+        logging.info(f"[lsp]qkvout--------------")
         return ret
 
     def extend_step(self, inputs: JTensor, *, time_step: JTensor) -> JTensor:
@@ -1622,9 +1630,9 @@ class DotProductAttention(base_layer.BaseLayer):
           encoded: JTensor of shape [B, T, D].
           atten_probs: JTensor of shape [B, N, T, S].
         """
-        self.add_summary("[lsp]query_proj0", query_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_proj0", key_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]value_proj0", value_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]query_proj0", query_vec[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]key_proj0", key_vec[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]value_proj0", value_vec[1], verbosity=self.user_summary_level)
 
         if self.combine_qkv:
             # Only supports self attention.
@@ -1641,12 +1649,24 @@ class DotProductAttention(base_layer.BaseLayer):
             key_proj = self.key(key_vec)
             value_proj = self.value(value_vec)
 
-        self.add_summary("[lsp]query_proj", query_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_proj", key_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]value_proj", value_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]query_proj", query_proj, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]key_proj", key_proj, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]value_proj", value_proj, verbosity=self.user_summary_level)
 
         self._fprop_update_decode_state("key_state", key_proj)
         self._fprop_update_decode_state("value_state", value_proj)
+
+        bsz, length, n_head, head_dim = query_proj.shape
+        query_proj = query_proj.reshape(bsz, length, -1)
+        key_proj = key_proj.reshape(bsz, length, -1)
+        value_proj = value_proj.reshape(bsz, length, -1)
+
+        qkv = jnp.concatenate([query_proj, key_proj, value_proj], axis=-1)
+        qkv = qkv.reshape(bsz, length, n_head, -1)
+        
+        query_proj = qkv[..., :head_dim] # bsz * length * n_head * head_dim
+        key_proj = qkv[..., head_dim: 2 * head_dim]
+        value_proj = qkv[..., 2 * head_dim: ]
 
         # Apply depth-wise convolution as in Primer.
         # Paper: https://arxiv.org/abs/2109.08668.
@@ -1658,20 +1678,19 @@ class DotProductAttention(base_layer.BaseLayer):
             value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
             self._fprop_update_decode_state("value_post_dconv", value_proj)
 
-        self.add_summary("[lsp]query_segment_pos", query_segment_pos, verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_segment_pos", key_segment_pos, verbosity=self.user_summary_level)
-
         # Apply rotary position embeddings.
         # Paper: https://arxiv.org/abs/2104.09864.
         if self.use_rotary_position_emb:
-            query_proj = self.rotary_position_emb(query_proj, query_segment_pos)
-            key_proj = self.rotary_position_emb(key_proj, key_segment_pos)
+            query_proj = self.rotary_position_emb(query_proj, query_segment_pos, name='query')
+            key_proj = self.rotary_position_emb(key_proj, key_segment_pos, name='key')
             # query_proj, key_proj = query_proj.astype(jnp.float32), key_proj.astype(jnp.float32)  # XD
             self._fprop_update_decode_state("key_post_rotary_pos_emb", key_proj)
             assert alibi_mask is None
 
         self.add_summary("[lsp]query_proj_rotary", query_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_proj", key_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]key_proj_rotary", key_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]value_proj_rotary", value_proj[1], verbosity=self.user_summary_level)
+        
         # # Apply relative bias.
         # Paper: https://aclanthology.org/N18-2074.pdf.
         if self.relative_bias_tpl:
@@ -1682,6 +1701,10 @@ class DotProductAttention(base_layer.BaseLayer):
         encoded, atten_probs = self._dot_atten(
             query_proj, key_proj, value_proj, atten_mask, relative_bias, alibi_mask=alibi_mask
         )
+        self.add_summary("[lsp]encoded00", encoded[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]atten_probs", atten_probs[1], verbosity=self.user_summary_level)
+
+
         # Apply NGrammer to the output of the attention layer.
         # Paper: https://openreview.net/forum?id=GxjCYmQAody.
         if self.ngrammer_tpl is not None:

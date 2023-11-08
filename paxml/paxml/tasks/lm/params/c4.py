@@ -1385,7 +1385,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
 
     TEST_RATIO = 0.02
     TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = 512
+    QUERY_CHUNK_SIZE = None
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = False
     Z_LOSS_WEIGHT = 0.0

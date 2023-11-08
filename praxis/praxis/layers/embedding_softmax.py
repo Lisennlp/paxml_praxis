@@ -1181,7 +1181,7 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
             if len(position.shape) == 2:
                 assert position.shape[1] == inputs.shape[1]
                 position = position[0]
-            position = position[jnp.newaxis, :]
+            position = position[jnp.newaxis, :].astype(jnp.float32)
 
         position = position[:, :, jnp.newaxis, jnp.newaxis]
         timescale = timescale[jnp.newaxis, jnp.newaxis, jnp.newaxis, :]

@@ -1349,19 +1349,20 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
 
 @experiment_registry.register
 class Pythia7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 24
-    PERCORE_BATCH_SIZE = 1
+    NUM_LAYERS = 32
+    NUM_HEADS = 32
+
+    PERCORE_BATCH_SIZE = 2
     ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 200  # ps：pythia读取的数据长度为2049
-    VOCAB_SIZE = 50304
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 10
-    EVAL_INTERVAL_STEPS = 20
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    VOCAB_SIZE = 50432 # 50432, 50304
+    CHECKPOINT_EVERY_N_STEPS = 500
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
     CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "pythia_7b"
-    MODEL_DIMS = 1024
-    HIDDEN_DIMS = 4096
-    NUM_HEADS = 16
+    WANDB_PROJECT = "pythia_7b_test"
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 16384
 
     LAYERNORM_EPSILON = 1e-05
     # Learning rate schedule
@@ -1385,7 +1386,7 @@ class Pythia7B(C4SpmdGpt37BRoPE):
 
     TEST_RATIO = 0.02
     TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = None
+    QUERY_CHUNK_SIZE = 512
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = False
     Z_LOSS_WEIGHT = 0.0
@@ -1477,7 +1478,7 @@ class MyDatasets(base_input.BaseInput):
             t = example[name]
             if t.dtype == tf.int64:
                 t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)[:200]
+            example[name] = tf.sparse.to_dense(t, default_value=0)
         return example
 
     def convert(self, data):

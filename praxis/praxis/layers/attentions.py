@@ -1701,8 +1701,9 @@ class DotProductAttention(base_layer.BaseLayer):
         encoded, atten_probs = self._dot_atten(
             query_proj, key_proj, value_proj, atten_mask, relative_bias, alibi_mask=alibi_mask
         )
-        self.add_summary("[lsp]encoded00", encoded[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]atten_probs", atten_probs[1], verbosity=self.user_summary_level)
+        
+        # self.add_summary("[lsp]encoded00", encoded[1], verbosity=self.user_summary_level)
+        # self.add_summary("[lsp]atten_probs", atten_probs[1], verbosity=self.user_summary_level)
 
 
         # Apply NGrammer to the output of the attention layer.

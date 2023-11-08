@@ -359,6 +359,7 @@ class BaseTrainProgram(Program):
             eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
         # if jax.process_index() == 0:
         #     pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
+        #     exit(0)
         return TrainProgramOutput(
             new_state,
             loss=train_outputs.loss,

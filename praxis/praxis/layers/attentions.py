@@ -1658,6 +1658,9 @@ class DotProductAttention(base_layer.BaseLayer):
             value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
             self._fprop_update_decode_state("value_post_dconv", value_proj)
 
+        self.add_summary("[lsp]query_segment_pos", query_segment_pos, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]key_segment_pos", key_segment_pos, verbosity=self.user_summary_level)
+
         # Apply rotary position embeddings.
         # Paper: https://arxiv.org/abs/2104.09864.
         if self.use_rotary_position_emb:

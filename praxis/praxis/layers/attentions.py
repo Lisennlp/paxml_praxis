@@ -1656,17 +1656,15 @@ class DotProductAttention(base_layer.BaseLayer):
         self._fprop_update_decode_state("key_state", key_proj)
         self._fprop_update_decode_state("value_state", value_proj)
 
-        bsz, length, n_head, head_dim = query_proj.shape
-        query_proj = query_proj.reshape(bsz, length, -1)
-        key_proj = key_proj.reshape(bsz, length, -1)
-        value_proj = value_proj.reshape(bsz, length, -1)
-
-        qkv = jnp.concatenate([query_proj, key_proj, value_proj], axis=-1)
-        qkv = qkv.reshape(bsz, length, n_head, -1)
-        
-        query_proj = qkv[..., :head_dim] # bsz * length * n_head * head_dim
-        key_proj = qkv[..., head_dim: 2 * head_dim]
-        value_proj = qkv[..., 2 * head_dim: ]
+        # bsz, length, n_head, head_dim = query_proj.shape
+        # query_proj = query_proj.reshape(bsz, length, -1)
+        # key_proj = key_proj.reshape(bsz, length, -1)
+        # value_proj = value_proj.reshape(bsz, length, -1)
+        # qkv = jnp.concatenate([query_proj, key_proj, value_proj], axis=-1)
+        # qkv = qkv.reshape(bsz, length, n_head, -1)
+        # query_proj = qkv[..., :head_dim] # bsz * length * n_head * head_dim
+        # key_proj = qkv[..., head_dim: 2 * head_dim]
+        # value_proj = qkv[..., 2 * head_dim: ]
 
         # Apply depth-wise convolution as in Primer.
         # Paper: https://arxiv.org/abs/2109.08668.
@@ -1701,7 +1699,7 @@ class DotProductAttention(base_layer.BaseLayer):
         encoded, atten_probs = self._dot_atten(
             query_proj, key_proj, value_proj, atten_mask, relative_bias, alibi_mask=alibi_mask
         )
-        
+
         # self.add_summary("[lsp]encoded00", encoded[1], verbosity=self.user_summary_level)
         # self.add_summary("[lsp]atten_probs", atten_probs[1], verbosity=self.user_summary_level)
 

@@ -15,7 +15,7 @@ from google.cloud import storage
 
 from absl import logging
 from paxml import checkpoint_paths
-
+import smart_open
 
 
 def get_feature(key_map, vocabulary):
@@ -134,7 +134,7 @@ def extract_zh_en_novel_datapath(task, mode):
 
 def extract_train_skip_step(job_log_dir, step):
     if job_log_dir is None:
-        return
+        return {}
     model_dir = os.path.join(job_log_dir, "checkpoints")
     if step is not None:
         fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
@@ -144,7 +144,9 @@ def extract_train_skip_step(job_log_dir, step):
     logging.info(f"model_dir: {model_dir}")
     try:
         with smart_open.open(skip_file_and_step_path, 'r') as f:
-            skip_file_and_step = json.load(f)
+            meta_dict = json.load(f)
+        logging.info(f"Load skip_file_and_step_path: ’{skip_file_and_step_path}‘ Finished.......")
     except:
-        skip_file_and_step = None
-    return skip_file_and_step
+        logging.info(f"skip_file_and_step_path: ’{skip_file_and_step_path}‘ is not existed.......")
+        meta_dict = {}
+    return meta_dict

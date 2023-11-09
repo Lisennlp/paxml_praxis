@@ -308,6 +308,7 @@ def record_file_and_step(step, save_dir, train_input):
     save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
     save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
     meta_dict = train_input.meta_dict
+    meta_dict['checkpoint_step'] = step
     with smart_open.open(save_path, 'w') as f1, smart_open.open(save_newest_path, 'w') as f2:
         json.dump(meta_dict, f1)
         json.dump(meta_dict, f2)

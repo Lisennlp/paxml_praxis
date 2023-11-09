@@ -76,13 +76,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         self, is_training: bool, job_log_dir=None
     ) -> pax_fiddle.Config[base_input.BaseInput]:
         meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
-        if self.TRAINING_NUM_BATCHES_TO_SKIP is not None:
-            num_batches_to_skip = self.TRAINING_NUM_BATCHES_TO_SKIP
-        else:
-            if meta_dict is not None:
-                num_batches_to_skip = meta_dict['step_in_file']
-            else:
-                num_batches_to_skip = None
+        num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
 
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
@@ -195,6 +189,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 train_seed=self.TRAINING_SEED,
                 task_features=list(self.KEY_MAP.values()),
                 shuffle_buffer_size=shuffle_buffer_size,
+                num_batches_to_skip=num_batches_to_skip,
             )
             return p
 
@@ -1346,6 +1341,71 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # }
     # DATA_FUNC = tfids_registry
 
+@experiment_registry.register
+class Pythia410M(C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 24
+    NUM_HEADS = 16
+
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 8, 1]
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    VOCAB_SIZE = 50304
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
+    CHECKPOINT_MAX_TO_KEEP = 5
+    WANDB_PROJECT = "pythia_410m_test"
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 4096
+
+    LAYERNORM_EPSILON = 1e-05
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_WARMUP = 200
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
+    TASK_NAME = "Pythia410M"
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+
+    TEST_RATIO = 0.02
+    TRAINING_SEED = 1234
+    QUERY_CHUNK_SIZE = 512
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+    Z_LOSS_WEIGHT = 0.0
+    LM_HEAD_NORM = False
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = False
+
+    TRAINING_NUM_BATCHES_TO_SKIP = 0
+
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    NORMALIZATION_CLS = normalizations.LayerNorm
+    USE_BIAS = True
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
+    ROTARY_TYPE = 'pythia'
+
+    # novel xiaomeng zh en
+    LOAD_SEQIO_TEXT = False
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    TEST_BATCH_RATIO = 0.02
+    DATA_FUNC = extract_pythia_datapath
+
 
 @experiment_registry.register
 class Pythia7B(C4SpmdGpt37BRoPE):
@@ -1428,18 +1488,20 @@ class MyDatasets(base_input.BaseInput):
     drop_remainder: bool = True
     iter_file_nums: int = 100
     meta_dict: dict = None
+    num_batches_to_skip: Optional[int] = None
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
 
-        if self.meta_dict is None:
+        if not self.meta_dict:
             self.meta_dict = {
                 "seed": self.train_seed,
                 "cur_files": [],
                 "file_in_data": 0,
                 "step_in_file": 0,
                 "iter_file_nums": self.iter_file_nums,
+                "checkpoint_step": None,
             }
         else:
             if self.meta_dict["file_in_data"] != 0:

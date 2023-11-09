@@ -63,6 +63,27 @@ WeightInit = base_layer.WeightInit
 GPT_EOS_ID = 1
 
 
+@experiment_registry.register
+class DataParams():
+    LOAD_SEQIO_ID = False
+    LOAD_SEQIO_TEXT = True
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TEST_BATCH_RATIO = 0.02
+    SHUFFLE = {"train": True, "test": False}
+    SHUFFLE_SIZE = 10000
+    MAX_SEQ_LEN = 2048
+    # default
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_PATH = {
+                'train': 'gs://common_datasets/', 
+                'test':  'gs://common_datasets/', 
+                }
+    DATA_FUNC = c4_registry
+    TASK_NAME = 'DataParams'
+
+
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     """Used for training Baseline ULM."""
 
@@ -144,7 +165,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         print(f'is_training: {is_training}')
         DATA_PATH = self.DATA_FUNC(mode='train' if is_training else 'test')
         if self.LOAD_SEQIO_ID or self.LOAD_SEQIO_TEXT:
-            assert DATA_PATH is None
+            assert DATA_PATH is None, print(f'Please check data params: “LOAD_SEQIO_TEXT“ or “LOAD_SEQIO_ID ” set...')
             p = pax_fiddle.Config(
                 seqio_input.SeqIOInput,
                 name=name,
@@ -782,11 +803,6 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     # eval loss小于等于这个值会自动停止，paxml默认2.69，设置-1让它一直训练
     TARGET_LOG_PPLX = -1
     SAVE_ON_STEPS = list(range(2000, 1000000, 2000))
-    # default
-    KEY_MAP = {"inputs": None, "targets": "text"}
-    VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    DATA_FUNC = c4_registry
 
 
 @experiment_registry.register
@@ -1342,13 +1358,77 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # DATA_FUNC = tfids_registry
 
 @experiment_registry.register
-class Pythia410M(C4SpmdGpt37BRoPE):
+class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 32
+    NUM_HEADS = 32
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 16384
+    VOCAB_SIZE = 50432
+
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 8, 1]
+
+    CHECKPOINT_EVERY_N_STEPS = 500
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
+    CHECKPOINT_MAX_TO_KEEP = 2
+   
+    LAYERNORM_EPSILON = 1e-05
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_WARMUP = 200
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+
+    TASK_NAME = "Pythia7B"
+    WANDB_PROJECT = "pythia_7b_test"
+
+    TRAINING_SEED = 1234
+
+    QUERY_CHUNK_SIZE = 512
+    Z_LOSS_WEIGHT = 0.0
+    LM_HEAD_NORM = False
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    NORMALIZATION_CLS = normalizations.LayerNorm
+    USE_BIAS = True
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
+    ROTARY_TYPE = 'pythia'
+
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+
+    LOAD_SEQIO_TEXT = False
+    LOAD_SEQIO_ID = False
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
+                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
+                }
+    DATA_FUNC = extract_pythia_datapath
+
+
+
+@experiment_registry.register
+class Pythia410M(Pythia7B):
     NUM_LAYERS = 24
     NUM_HEADS = 16
 
     PERCORE_BATCH_SIZE = 2
     ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    MAX_SEQ_LEN = 2049
     VOCAB_SIZE = 50304
     CHECKPOINT_EVERY_N_STEPS = 20
     EVAL_LOOP_NUM_BATCHES = 50
@@ -1358,118 +1438,27 @@ class Pythia410M(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 1024
     HIDDEN_DIMS = 4096
 
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
-    TASK_NAME = "Pythia410M"
-    SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
-
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = 512
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-
     TRAINING_NUM_BATCHES_TO_SKIP = 0
 
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = True
-    USE_ALIBI_POSITION_EMB = False
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    # novel xiaomeng zh en
-    LOAD_SEQIO_TEXT = False
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    TEST_BATCH_RATIO = 0.02
-    DATA_FUNC = extract_pythia_datapath
-
-
-@experiment_registry.register
-class Pythia7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 32
-    NUM_HEADS = 32
-
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
-    VOCAB_SIZE = 50432 # 50432, 50304
-    CHECKPOINT_EVERY_N_STEPS = 500
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 2
-    WANDB_PROJECT = "pythia_7b_test"
-    MODEL_DIMS = 4096
-    HIDDEN_DIMS = 16384
-
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # 0.5 -> 1.0
-    TASK_NAME = "Pythia7B"
-    SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
-
-    TEST_RATIO = 0.02
-    TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = 512
+    # c4 data
+    LOAD_SEQIO_TEXT = True
     LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = False
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = True
-    USE_ALIBI_POSITION_EMB = False
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    # novel xiaomeng zh en
-    LOAD_SEQIO_TEXT = False
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    TEST_BATCH_RATIO = 0.02
-    DATA_FUNC = extract_pythia_datapath
-
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
+    DATA_FUNC = c4_registry
+    
+    # # baichuan1使用指令数据集
+    # LOAD_SEQIO_ID = True
+    # LOAD_SEQIO_TEXT = False
+    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    # DATA_PATH = {
+    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
+    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
+    # }
+    # DATA_FUNC = tfids_registry
 
 
 class MyDatasets(base_input.BaseInput):
@@ -1482,12 +1471,12 @@ class MyDatasets(base_input.BaseInput):
     seq_len: int = 2048
     repeat: int = 1
     train_seed: int = 1234
-    task_features: dict = None
-    shuffle_buffer_size: int = None
+    task_features: Optional[dict] = None
+    shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
     iter_file_nums: int = 100
-    meta_dict: dict = None
+    meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
 
     def __post_init__(self):

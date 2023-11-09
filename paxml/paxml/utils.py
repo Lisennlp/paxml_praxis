@@ -68,8 +68,12 @@ def c4_registry(task, mode):
     ]
     feature_desc, output_features = get_feature(task.KEY_MAP, task.VOCABULARY)
     shuffle_buffer_size = task.SHUFFLE_SIZE if task.SHUFFLE[mode] else None
-    data_path = "gs://common_datasets"
-    source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=data_path)
+    # data_path = "gs://common_datasets"
+    bucket_name = task.DATA_PATH[mode]
+    if 'gs:' not in bucket_name:
+        bucket_name = 'gs://' + bucket_name
+    print(f'c4 bucket_name: {bucket_name}')
+    source = seqio.TfdsDataSource(tfds_name="c4/en:3.0.1", tfds_data_dir=bucket_name)
     name = f"c4.{mode}"
     if check_registry_name(name):
         t5.data.TaskRegistry.add(
@@ -85,8 +89,10 @@ def c4_registry(task, mode):
 def extract_pythia_datapath(task, mode):
     client = storage.Client()
     #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-    bucket_name = "common_datasets"
-    directory_path = "pythia_pile_idxmaps_tfrecored"
+    bucket_name = os.path.dirname(task.DATA_PATH[mode])
+    if 'gs:' in bucket_name:
+        bucket_name = bucket_name[5: ]
+    directory_path = os.path.basename(task.DATA_PATH[mode]) + '/'
     step_map_path = {}
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
         logging.info(f"filename: {blob.name}=====")
@@ -107,11 +113,14 @@ def extract_zh_en_novel_datapath(task, mode):
     random.seed(task.TRAINING_SEED)
     dataset = defaultdict(list)
     client = storage.Client()
-    bucket_name = "jax_llm_data"
+    bucket_name = os.path.dirname(task.DATA_PATH[mode])
+    if 'gs:' in bucket_name:
+        bucket_name = bucket_name[5: ]
+    directory_path = os.path.basename(task.DATA_PATH[mode]) + '/'
     for lang in ["zh", "en"]:
         # directory_path = f'xiaomeng/processed_{lang}_data_split'
-        directory_path = f"xiaomeng/processed_{lang}_data_1001/"
-        for blob in client.list_blobs(bucket_name, prefix=directory_path):
+        prefix = directory_path.format(lang=lang)
+        for blob in client.list_blobs(bucket_name, prefix=prefix):
             logging.info(f"filename: {blob.name}=====")
             if not blob.name or "_R" not in blob.name:
                 continue

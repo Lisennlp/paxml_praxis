@@ -372,7 +372,9 @@ def run_eval_programs(
     num_eval_steps = []
 
     with py_utils.timeit() as period:
+        # len(eval_programs) == 1
         for program in eval_programs:
+            # eval_metrics: dict
             program_out = program.run(train_state, step)
             eval_metrics.append(program_out.eval_metrics)
             eval_scoring_metrics.append(program_out.eval_scoring_metrics)

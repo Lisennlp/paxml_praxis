@@ -202,7 +202,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 path=DATA_PATH["train"] if is_training else DATA_PATH["test"],
                 is_training=is_training,
                 meta_dict=meta_dict,
-                batch_size=int(self.PERCORE_BATCH_SIZE * 8),
+                batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
                 seq_len=self.MAX_SEQ_LEN,
                 reset_for_eval=False,
                 repeat=3 if is_training else 3 * 30,
@@ -211,8 +211,9 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 task_features=list(self.KEY_MAP.values()),
                 shuffle_buffer_size=shuffle_buffer_size,
                 num_batches_to_skip=num_batches_to_skip,
+                mode=self.mode
             )
-            return p
+            return p  
 
     # lsp: 数据
     def datasets(self, job_log_dir=None) -> List[pax_fiddle.Config[base_input.BaseInput]]:
@@ -1437,17 +1438,17 @@ class Pythia410M(Pythia7B):
     WANDB_PROJECT = "pythia_410m_test"
     MODEL_DIMS = 1024
     HIDDEN_DIMS = 4096
-
+    MODE = 'eval'
     TRAINING_NUM_BATCHES_TO_SKIP = 0
 
-    # c4 data
-    LOAD_SEQIO_TEXT = True
-    LOAD_SEQIO_ID = False
-    KEY_MAP = {"inputs": None, "targets": "text"}
-    VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
-    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
-    DATA_FUNC = c4_registry
+    # # c4 data
+    # LOAD_SEQIO_TEXT = True
+    # LOAD_SEQIO_ID = False
+    # KEY_MAP = {"inputs": None, "targets": "text"}
+    # VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
+    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    # DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
+    # DATA_FUNC = c4_registry
     
     # # baichuan1使用指令数据集
     # LOAD_SEQIO_ID = True
@@ -1478,6 +1479,7 @@ class MyDatasets(base_input.BaseInput):
     iter_file_nums: int = 100
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
+    mode: Optional[str] = 'train'
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
@@ -1500,6 +1502,9 @@ class MyDatasets(base_input.BaseInput):
                 )
         logging.info(f'meta_dict: {self.meta_dict}')
         self.train_seed = self.meta_dict['seed']
+        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
+
+    def reset(self) -> None:
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def peek_padded(self):
@@ -1547,9 +1552,6 @@ class MyDatasets(base_input.BaseInput):
         pos = tf.range(seq_len - 1)
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
-
-    def split(self):
-        return 
 
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)

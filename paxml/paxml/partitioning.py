@@ -611,7 +611,7 @@ class PmapPartitioner(Partitioner):
 
         if not trees.is_subset(spec, nested_shape_dtype):
             _spec_mismatch_error(nested_shape_dtype, spec)
-
+    # lsp: here
     def initialize_prng_key_and_train_state(
         self,
         root_prng_key: PRNGKey,
@@ -640,7 +640,7 @@ class PmapPartitioner(Partitioner):
         logging.info(
             "train state shapes: %s", jax.tree_map(lambda x: x.shape, train_state)
         )
-        # 如果参数没有切分，则将其切分到本机的每个core上, jax.device_put_replicated(state, jax.local_devices())
+        # lsp: 如果参数没有切分，则将其切分到本机的每个core上, jax.device_put_replicated(state, jax.local_devices())
         replicated_train_state = trainer_lib.replicate_model_state(train_state)
         # Unreplicated model states are not needed anymore at that point.
         del train_state

@@ -392,6 +392,20 @@ def _train_and_evaluate_common(
     gc.collect()
     gc.freeze()
     step_time_deque = deque(maxlen=5)
+    if train_input.mode == 'eval':
+        # lsp: 仅仅获取模型参数,mdl_vars
+        eval_partitioned_train_state = programs.get_eval_train_state(
+                task, partitioned_train_state, task.train.eval_use_ema_states
+            )
+        assert eval_programs
+        logging.debug("[PAX STATUS]:  Running eval programs.")
+        eval_metrics, elapsed_secs, acc_and_losses = eval_lib.run_eval_programs(
+            eval_programs=eval_programs,
+            train_state=eval_partitioned_train_state,
+            step=step_i,
+        )
+        logging.info(f'eval_metrics: {eval_metrics}')
+        exit(0)
     # 初始化skip file and step
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)

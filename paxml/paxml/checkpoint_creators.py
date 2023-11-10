@@ -187,7 +187,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         # 记录时间
         monitoring.record_event_duration_secs(_WRITE_CHECKPOINT_EVENT, save_period.elapsed)
 
-    # pjit
+    # lsp: pjit
     def _restore_with_args(
         self,
         step_i,
@@ -198,6 +198,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         train_input_pipeline,  # 输入数据的shape和dtype
     ):
         restore_args = {}
+        # lsp: here
         if self._checkpoint_type == CheckpointType.GDA:
             restore_args = {
                 "specs": train_state_pspecs,  # shard

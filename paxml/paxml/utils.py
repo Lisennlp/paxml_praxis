@@ -11,11 +11,11 @@ from t5.data import preprocessors as t5_preprocessors
 import tensorflow as tf
 import numpy as np
 from praxis import py_utils
-from google.cloud import storage
+from google.cloud import storage # google-cloud-storage
 
 from absl import logging
 from paxml import checkpoint_paths
-import smart_open
+import smart_open # smart_open[gcs]
 
 
 def get_feature(key_map, vocabulary):

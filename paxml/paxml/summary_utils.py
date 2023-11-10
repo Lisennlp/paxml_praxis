@@ -330,7 +330,7 @@ def write_summary_tensor(
         # Force DeviceArray to NumPy array conversion before taking the mean.
         np_tensors = [np.array(t) for t in tensors_it]
         tensor = np.mean(np_tensors).item()
-        logging.info("summary tensor at step=%s %s %s", step_i, key, tensor)
+        # logging.info("summary tensor at step=%s %s %s", step_i, key, tensor)
         tf_summary.scalar(key, tensor, step_i)
     elif base_summary_type == SummaryType.IMAGE:
         remaining_max_images = MAX_IMAGES_PER_SUMMARY

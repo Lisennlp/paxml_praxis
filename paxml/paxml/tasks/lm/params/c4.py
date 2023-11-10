@@ -68,7 +68,7 @@ class DataParams():
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = True
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    TEST_BATCH_RATIO = 0.02
+    TEST_RATIO = 0.02
     SHUFFLE = {"train": True, "test": False}
     SHUFFLE_SIZE = 10000
     MAX_SEQ_LEN = 2048
@@ -211,18 +211,17 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 task_features=list(self.KEY_MAP.values()),
                 shuffle_buffer_size=shuffle_buffer_size,
                 num_batches_to_skip=num_batches_to_skip,
-                mode=self.mode
             )
             return p  
 
     # lsp: 数据
     def datasets(self, job_log_dir=None) -> List[pax_fiddle.Config[base_input.BaseInput]]:
         """Returns a list of dataset parameters."""
-        return [
-            self._dataset_common(is_training=True, job_log_dir=job_log_dir),
-            self._dataset_common(is_training=False),
-        ]
-
+        if not (hasattr(self, 'train_datasets') and hasattr(self, 'eval_datasets')):
+            self.train_datasets = self._dataset_common(is_training=True, job_log_dir=job_log_dir)
+            self.eval_datasets = self._dataset_common(is_training=False)
+        return [self.train_datasets, self.eval_datasets]
+        
 
 def set_adam_and_learning_rate_schedule(
     cls,
@@ -1337,7 +1336,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
-    TEST_BATCH_RATIO = 0.02
     DATA_FUNC = extract_zh_en_novel_datapath
 
     # # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
@@ -1438,8 +1436,9 @@ class Pythia410M(Pythia7B):
     WANDB_PROJECT = "pythia_410m_test"
     MODEL_DIMS = 1024
     HIDDEN_DIMS = 4096
-    MODE = 'eval'
-    TRAINING_NUM_BATCHES_TO_SKIP = 0
+    ONLY_EVAL = True
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TEST_RATIO = 1
 
     # # c4 data
     # LOAD_SEQIO_TEXT = True
@@ -1479,7 +1478,6 @@ class MyDatasets(base_input.BaseInput):
     iter_file_nums: int = 100
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
-    mode: Optional[str] = 'train'
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:

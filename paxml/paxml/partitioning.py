@@ -611,7 +611,7 @@ class PmapPartitioner(Partitioner):
 
         if not trees.is_subset(spec, nested_shape_dtype):
             _spec_mismatch_error(nested_shape_dtype, spec)
-    # lsp: here
+
     def initialize_prng_key_and_train_state(
         self,
         root_prng_key: PRNGKey,
@@ -824,6 +824,7 @@ class PjitPartitioner(Partitioner):
         if not trees.is_subset(spec, input_batch_spec):
             _spec_mismatch_error(input_batch_spec, spec)
 
+    # lsp: here
     def initialize_prng_key_and_train_state(
         self,
         root_prng_key: PRNGKey,
@@ -836,6 +837,7 @@ class PjitPartitioner(Partitioner):
         # train_state should already be partitioned.
         partitioned_train_state = train_state
         train_state_provenance = None
+        # lsp: 模型参数和优化器参数都会初始化
         if partitioned_train_state is None:
             # If no checkpoint was restored, initialize with random weights.
             # discard_opt_states: false, 在partition(的时候已经初始化过 self._train_state_metadata <=> metadata
@@ -860,6 +862,26 @@ class PjitPartitioner(Partitioner):
                 discard_opt_states=discard_opt_states,
                 var_weight_hparams=metadata.var_weight_hparams,
             )
+        # lsp：加载预训练模型参数，初始化优化器参数
+        elif (
+            partitioned_train_state.opt_states is None
+            and partitioned_train_state.mdl_vars is not None
+        ):
+            metadata = self.get_train_state_metadata(discard_opt_states)
+            if not metadata.var_weight_hparams:
+                var_weight_hparams = self._jax_task.model.abstract_init_with_metadata(
+                    metadata.inputs_shape_dtype, do_eval=False
+                )
+            else:
+                var_weight_hparams = metadata.var_weight_hparams
+
+            partitioned_train_state = self._jax_task.create_train_state(
+                partitioned_train_state.mdl_vars, var_weight_hparams, discard_opt_states
+            )
+        # lsp: 加载预训练参数和优化器
+        else:
+            pass
+
         logging.info(
             "partitioned train state shapes (global shape): %s",
             jax.tree_map(lambda x: x.shape, partitioned_train_state),

@@ -120,6 +120,7 @@ def train_and_evaluate(
     enforce_restore_shape_check: bool = False,
     tensorstore_use_ocdbt: bool = False,
     exit_after_ondemand_checkpoint: bool = False,
+    mode: str = 'train'
 ) -> None:
     """The shared path to run the training and evaluation loop.
 
@@ -191,7 +192,7 @@ def train_and_evaluate(
     train_input_p = train_input_p[0]
     logging.info("[PAX STATUS]: Done getting dataset configurations.")
     # 打印训练数据集参数
-    logging.info("train_input_p:")
+    # logging.info("train_input_p:")
     for line in base_hyperparams.nested_struct_to_text(
         train_input_p
     ).splitlines():  # pytype: disable=attribute-error
@@ -270,7 +271,7 @@ def train_and_evaluate(
         eval_on_test
         and task_p.train.eval_interval_steps is not None
         and task_p.train.eval_interval_steps > 0
-    ):
+    ):  # lsp: 这一步初始化了测试集和测试类
         eval_programs = experiment_config.eval_programs()
 
     logging.info("[PAX STATUS]: Initializing decode programs.")
@@ -296,6 +297,10 @@ def train_and_evaluate(
     if not executor:
         executor = executors.DefaultExecutor()
     logging.info("[PAX STATUS]: Setting up executor.")
+
+    # lsp
+    setattr(jax_task, 'only_eval', getattr(experiment_config, 'ONLY_EVAL', False))
+
     with partitioner.global_mesh or contextlib.nullcontext():
         executor.setup(
             jax_task,

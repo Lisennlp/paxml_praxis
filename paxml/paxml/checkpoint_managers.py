@@ -574,6 +574,7 @@ class OrbaxCheckpointManager:
         logging.info(f"items: {items}")
         logging.info(f"restore_kwargs: {restore_kwargs}")
         logging.info(f"step: {step}")
+        
         restored = self._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
 
         # Skip metadata checks if using transformations, since the TrainState may be

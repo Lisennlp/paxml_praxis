@@ -229,7 +229,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
         # Restore TrainState from checkpoint or initialize it.
         logging.info("[PAX STATUS]: Starting checkpoint load / variable init.")
         with py_utils.timeit() as checkpoint_load_timer:
-            # 获取模型参数
+            # lsp：获取模型参数
             (
                 partitioned_train_state,
                 train_state_provenance,
@@ -240,7 +240,9 @@ class DefaultExecutor(base_executor.BaseExecutor):
                 train_state_metadata,
                 root_prng_key,
                 train_input_for_checkpoint,
+                return_opt=False if jax_task.only_eval else True, # lsp
             )
+
         logging.info(
             "[PAX STATUS]: Checkpoint load / variable init took %d seconds",
             checkpoint_load_timer.elapsed,
@@ -272,6 +274,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
     def start(self):
         logging.info("Starting executor.")
+
         is_vars_replicated = self._task.model.ici_mesh_shape is None
         _train_and_evaluate_common(
             task=self._task,
@@ -336,8 +339,28 @@ def _train_and_evaluate_common(
     is_vars_replicated,
     train_prng_seed,
     exit_after_ondemand_checkpoint,
-):
-    """Training loop code common to both pmap and spmd."""
+):  
+    for program in eval_programs:
+        program.setup(task, partitioner, job_log_dir, eval_prng_seed)
+
+    for program in decode_programs:
+        program.setup(task, partitioner, job_log_dir, decode_prng_seed)
+
+    if task.only_eval:
+        # lsp: 仅仅获取模型参数,mdl_vars
+        eval_partitioned_train_state = programs.get_eval_train_state(
+                task, partitioned_train_state, task.train.eval_use_ema_states
+            )
+        assert eval_programs
+        logging.debug("[PAX STATUS]:  Running eval programs.")
+        eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
+            eval_programs=eval_programs,
+            train_state=eval_partitioned_train_state,
+            step=eval_partitioned_train_state.step,
+        )
+        logging.info(f'eval_metrics: {eval_metrics}')
+        exit(0)
+    
     train_p = task.train
     train_state_metadata = partitioner.get_train_state_metadata()
     train_input_for_checkpoint = train_input if train_p.enable_input_checkpointing else None
@@ -364,10 +387,7 @@ def _train_and_evaluate_common(
         eval_prng_seed,
         step_i,
     )
-    for program in eval_programs:
-        program.setup(task, partitioner, job_log_dir, eval_prng_seed)
-    for program in decode_programs:
-        program.setup(task, partitioner, job_log_dir, decode_prng_seed)
+   
     trainer_lib.check_unique_names([p.eval_input for p in eval_programs])
     trainer_lib.check_unique_names([p.decode_input for p in decode_programs])
 
@@ -392,20 +412,7 @@ def _train_and_evaluate_common(
     gc.collect()
     gc.freeze()
     step_time_deque = deque(maxlen=5)
-    if train_input.mode == 'eval':
-        # lsp: 仅仅获取模型参数,mdl_vars
-        eval_partitioned_train_state = programs.get_eval_train_state(
-                task, partitioned_train_state, task.train.eval_use_ema_states
-            )
-        assert eval_programs
-        logging.debug("[PAX STATUS]:  Running eval programs.")
-        eval_metrics, elapsed_secs, acc_and_losses = eval_lib.run_eval_programs(
-            eval_programs=eval_programs,
-            train_state=eval_partitioned_train_state,
-            step=step_i,
-        )
-        logging.info(f'eval_metrics: {eval_metrics}')
-        exit(0)
+  
     # 初始化skip file and step
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)

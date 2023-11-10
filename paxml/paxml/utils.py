@@ -86,7 +86,10 @@ def c4_registry(task, mode):
             shuffle_buffer_size=shuffle_buffer_size,
         )
 
+
 def extract_pythia_datapath(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
     client = storage.Client()
     #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
     bucket_name = os.path.dirname(task.DATA_PATH[mode])
@@ -103,13 +106,28 @@ def extract_pythia_datapath(task, mode):
     steps, pathes = zip(*sorted_step_path)
     if not isinstance(pathes, list):
         pathes = list(pathes)
-    # 目前只是为了测试，训练的时候可以选择是否需要test
-    train_test_dataset = {"test": pathes[:1], "train": pathes}
+
+    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
+        random.shuffle(pathes)
+
+    test_num = int(len(pathes) * task.TEST_RATIO)
+    test = pathes[ :test_num]
+    train = pathes[test_num: ]
+    if not len(test):
+        test = pathes[0]
+
+    if not len(train):
+        train = pathes[0]
+        
+    train_test_dataset = {"test": test, "train": train}
     logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+    task.train_test_dataset = train_test_dataset
     return train_test_dataset
 
 
 def extract_zh_en_novel_datapath(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
     random.seed(task.TRAINING_SEED)
     dataset = defaultdict(list)
     client = storage.Client()
@@ -132,12 +150,20 @@ def extract_zh_en_novel_datapath(task, mode):
                 path = os.path.join(f"gs://{bucket_name}", blob.name)
                 dataset[lang].append(path)
     total = dataset["zh"] + dataset["en"]
-    random.shuffle(total)
-    test_num = int(len(total) * task.TEST_RATIO)
-    test_num = max(test_num, 1)
+    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
+        random.shuffle(total)
 
-    train_test_dataset = {"test": total[:test_num], "train": total[test_num:]}
+    test_num = int(len(pathes) * task.TEST_RATIO)
+    test = pathes[ :test_num]
+    train = pathes[test_num: ]
+    if not len(test):
+        test = pathes[0]
+    if not len(train):
+        train = pathes[0]
+
+    train_test_dataset = {"test": test, "train": train}
     logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+    task.train_test_dataset = train_test_dataset
     return train_test_dataset
 
 

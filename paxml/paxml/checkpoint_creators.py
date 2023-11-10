@@ -198,6 +198,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         train_input_pipeline,  # 输入数据的shape和dtype
     ):
         restore_args = {}
+
         # lsp: here
         if self._checkpoint_type == CheckpointType.GDA:
             restore_args = {
@@ -271,10 +272,20 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         metadata: trainer_lib.TrainStateMetadata,
         root_prng_key: PRNGKey,
         train_input_pipeline: Optional[base_input.BaseInput] = None,
+        return_opt: bool = True, # lsp
     ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
-        logging.info(f"padded_global_shapes: {metadata.padded_global_shapes}")
-        logging.info(f"unpadded_global_shapes: {metadata.unpadded_global_shapes}")
-        logging.info(f"self._step_to_restore: {self._step_to_restore}")
+
+        logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
+        if self._step_to_restore == 0 or not return_opt:
+            padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
+            unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+        else:
+            padded_global_shapes = metadata.padded_global_shapes
+            unpadded_global_shapes = metadata.unpadded_global_shapes
+
+        logging.info(f"padded_global_shapes: {padded_global_shapes}\n\n")
+        logging.info(f"unpadded_global_shapes: {unpadded_global_shapes}\n\n")
+        
         with py_utils.timeit() as restore_period:
             if self._step_to_restore is None:
                 # 指定其他的加载模型路径
@@ -292,8 +303,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             else:
                 partitioned_train_state = self._restore_with_args(
                     self._step_to_restore,
-                    metadata.padded_global_shapes,
-                    metadata.unpadded_global_shapes,
+                    padded_global_shapes,
+                    unpadded_global_shapes,
                     partitioner.global_mesh,
                     metadata.partition_specs,
                     train_input_pipeline,
@@ -432,7 +443,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             replicated_train_state,
             train_state_provenance,
         ) = partitioner.initialize_prng_key_and_train_state(
-            root_prng_key, train_state, self.checkpoint_type
+            root_prng_key, train_state, self.checkpoint_type,
         )
 
         total_num_params = py_utils.total_num_vars(replicated_train_state.mdl_vars)
@@ -631,7 +642,6 @@ def _create_checkpointer(
     if task_p.train.enable_input_checkpointing:
         train_input_p.input_checkpointing_enabled = True
 
-    logging.info(f"options: {options}")
     checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
         checkpoint_dir,
         checkpointer,

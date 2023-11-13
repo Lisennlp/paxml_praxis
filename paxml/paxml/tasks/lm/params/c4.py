@@ -52,7 +52,7 @@ import numpy as np
 from praxis import py_utils
 from google.cloud import storage
 
-import smart_open
+import mlxu
 from paxml import checkpoint_paths
 
 from paxml.utils import *
@@ -1582,6 +1582,7 @@ class MyDatasets(base_input.BaseInput):
         repeat_fnames = fnames * self.repeat
         N = math.ceil(len(repeat_fnames) / self.iter_file_nums)
         file_in_data = self.meta_dict["file_in_data"]
+        flag = 0
         for n in range(file_in_data, N, 1):
             fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
             self.meta_dict["cur_files"] = fname
@@ -1589,8 +1590,10 @@ class MyDatasets(base_input.BaseInput):
             ds = ds.as_numpy_iterator()
             for batch in ds:
                 self.meta_dict["step_in_file"] += 1
+                flag = 1
                 yield batch
-            self.meta_dict["file_in_data"] += 1
-            self.meta_dict["step_in_file"] = 0
+            if flag:
+                self.meta_dict["file_in_data"] += 1
+                self.meta_dict["step_in_file"] = 0
 
 

@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from etils import epath
-import smart_open
+import mlxu
 from praxis import py_utils
 import orbax
 import orbax.checkpoint
@@ -207,7 +207,7 @@ def get_metafile():
     metadata_path = os.path.join(read_dir, checkpoint_name, "metadata/metadata")
     print(f"metadata_path: {metadata_path}")
     try:
-        with smart_open.open(metadata_path, "r") as f:
+        with mlxu.open_file(metadata_path, "r") as f:
             metadata = json.load(f)
     except Exception as error:
         print(f"Error: {error}")

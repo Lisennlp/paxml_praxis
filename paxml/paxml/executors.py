@@ -47,7 +47,7 @@ import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
 import wandb
-import smart_open
+import mlxu
 from paxml import checkpoint_paths
 
 
@@ -310,11 +310,14 @@ def record_file_and_step(step, save_dir, train_input):
     fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
     save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
     save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
+    if not hasattr(train_input, 'meta_dict'):
+        return
     meta_dict = train_input.meta_dict
     meta_dict['checkpoint_step'] = step
-    with smart_open.open(save_path, 'w') as f1, smart_open.open(save_newest_path, 'w') as f2:
-        json.dump(meta_dict, f1)
-        json.dump(meta_dict, f2)
+    if jax.process_index() == 0:
+        with mlxu.open_file(save_path, 'w') as f1, mlxu.open_file(save_newest_path, 'w') as f2:
+            json.dump(meta_dict, f1)
+            json.dump(meta_dict, f2)
     logging.info(f'Save skip_file_and_step successful......')
     logging.info(f'file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]} ')
 

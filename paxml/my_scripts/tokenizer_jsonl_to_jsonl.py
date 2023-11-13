@@ -24,12 +24,12 @@ logger = logging.getLogger('Data_processed')
 
 
 try:
-    import smart_open
+    import mlxu
     from google.cloud import storage
 except:
-    command = 'pip install google-cloud-storage && pip install smart_open[gcs]'
+    command = 'pip install google-cloud-storage && pip install mlxu[gcs]'
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
-    import smart_open
+    import mlxu
     from google.cloud import storage
 
     

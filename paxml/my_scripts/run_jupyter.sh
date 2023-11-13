@@ -37,3 +37,12 @@ EOT
 # Step 6: Start Jupyter Notebook
 # python3 -m notebook
 jupyter notebook
+
+
+# python pro.py --input_file /home/lishengping/common_datasets_us-central2/pythia_pile_idxmaps2/pile_20B_tokenizer_text_document-00000-of-00132.bin --num_shards 133 --output_dir /home/lishengping/jax_base_models_us-central2/pythia_pile_idxmaps/
+# PYTHONPATH=utils/gpt-neox/ python utils/batch_viewer.py \
+#   --start_iteration 0 \
+#   --end_iteration 1000 \
+#   --mode save \
+#   --save_path ~/test./  \
+#   --conf_dir utils/dummy_config.yml 

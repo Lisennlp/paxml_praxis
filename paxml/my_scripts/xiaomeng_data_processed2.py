@@ -8,7 +8,7 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import tensorflow as tf
 from transformers import AutoTokenizer
-from smart_open import open
+import mlxu
 import wandb
 
 
@@ -73,7 +73,7 @@ class DataProcessor:
     def extract_filepath(self):
         self.books_pathlist = [
             line.strip().replace(*self.path_map[self.data_type])
-            for line in open(self.data_pathfile).readlines()
+            for line in ml(self.data_pathfile).readlines()
         ]
         if self.shuffle:
             self.books_pathlist = random.sample(

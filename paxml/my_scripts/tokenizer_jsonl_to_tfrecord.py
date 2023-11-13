@@ -20,12 +20,12 @@ import tensorflow as tf
 from transformers import AutoTokenizer
 
 try:
-    import smart_open
+    import mlxu
     from google.cloud import storage
 except:
-    command = 'pip install google-cloud-storage && pip install smart_open[gcs]'
+    command = 'pip install google-cloud-storage && pip install mlxu[gcs]'
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
-    import smart_open
+    import mlxu
     from google.cloud import storage
 
 # def check_bucket_exist(filepath):
@@ -155,7 +155,7 @@ class DataProcessor:
     def process_book(self, path):
         save_path = path.replace(self.read_data_dir, self.save_dir).replace("jsonl", "tfrecord")
         logger.info(f"Start to process file path: {save_path}")
-        with smart_open.open(path) as fr:
+        with mlxu.open_file(path) as fr:
             for i, line in enumerate(fr):
                 line = json.loads(line)
                 text = line["text"]

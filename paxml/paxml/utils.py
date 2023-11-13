@@ -15,7 +15,8 @@ from google.cloud import storage # google-cloud-storage
 
 from absl import logging
 from paxml import checkpoint_paths
-import smart_open # smart_open[gcs]
+import mlxu # mlxu[gcs]
+import jax
 
 
 def get_feature(key_map, vocabulary):
@@ -99,6 +100,7 @@ def extract_pythia_datapath(task, mode):
     step_map_path = {}
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
         logging.info(f"filename: {blob.name}=====")
+        if 'pile.tfrecord.b' not in blob.name: continue
         step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
         path = f'gs://{os.path.join(bucket_name, blob.name)}'
         step_map_path[step] = path
@@ -114,10 +116,10 @@ def extract_pythia_datapath(task, mode):
     test = pathes[ :test_num]
     train = pathes[test_num: ]
     if not len(test):
-        test = pathes[0]
+        test = pathes[:1]
 
     if not len(train):
-        train = pathes[0]
+        train = pathes[:1]
         
     train_test_dataset = {"test": test, "train": train}
     logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
@@ -157,9 +159,9 @@ def extract_zh_en_novel_datapath(task, mode):
     test = pathes[ :test_num]
     train = pathes[test_num: ]
     if not len(test):
-        test = pathes[0]
+        test = pathes[:1]
     if not len(train):
-        train = pathes[0]
+        train = pathes[:1]
 
     train_test_dataset = {"test": test, "train": train}
     logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
@@ -178,10 +180,14 @@ def extract_train_skip_step(job_log_dir, step):
         skip_file_and_step_path = os.path.join(model_dir, f'{checkpoint_paths.SKIP_STEP_NAME}')
     logging.info(f"model_dir: {model_dir}")
     try:
-        with smart_open.open(skip_file_and_step_path, 'r') as f:
+        with mlxu.open_file(skip_file_and_step_path, 'r') as f:
             meta_dict = json.load(f)
         logging.info(f"Load skip_file_and_step_path: ’{skip_file_and_step_path}‘ Finished.......")
     except:
         logging.info(f"skip_file_and_step_path: ’{skip_file_and_step_path}‘ is not existed.......")
         meta_dict = {}
+
+    if jax.process_index() == 0:
+        with mlxu.open_file(os.path.join(job_log_dir, f'{step}.json'), 'w') as f1:
+            json.dump(meta_dict, f1)
     return meta_dict

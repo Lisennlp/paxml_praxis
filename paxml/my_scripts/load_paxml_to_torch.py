@@ -4,7 +4,7 @@ from collections import defaultdict
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
-from smart_open import open
+import mlxu
 from flax.traverse_util import flatten_dict, unflatten_dict
 import orbax.checkpoint
 import orbax
@@ -36,7 +36,7 @@ print(f"checkpoint_name: {checkpoint_name}")
 metadata_path = os.path.join(read_dir, checkpoint_name, "metadata/metadata")
 print(f"metadata_path: {metadata_path}")
 
-with open(metadata_path, "r") as f:
+with mlxu.open_file(metadata_path, "r") as f:
     metadata = json.load(f)
 
 flat_metadata = flatten_dict(metadata["train_state_metadata"])

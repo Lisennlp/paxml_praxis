@@ -1773,6 +1773,7 @@ class BaseLayer(nn.Module):
 
     # See comments in `init` above.
     # `variables` are unboxed variables, and not BoxedParams.
+    # lsp: 深层forward
     def apply(
         self,
         variables,

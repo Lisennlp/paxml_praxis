@@ -834,7 +834,7 @@ class BaseEvalProgram(Program):
             self._eval_summary_writer, step, loss, metrics, summary_tensors
         )
         maybe_write_eval_outputs(
-            EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs
+            EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs, write_pickle=False if self._task.only_eval else True
         )
 
         return EvalProgramOutput(

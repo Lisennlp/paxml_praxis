@@ -243,7 +243,8 @@ class FullSoftmax(base_layer.BaseLayer):
     def logits_to_logp(self, logits: JTensor) -> JTensor:
         """Converts logits to log probability scores."""
         return jax.nn.log_softmax(logits)
-
+        
+    # lsp
     def __call__(
         self,
         inputs: JTensor,
@@ -307,7 +308,7 @@ class FullSoftmax(base_layer.BaseLayer):
             class_probabilities = jax.lax.stop_gradient(class_probabilities)
 
         if self.bi_tempered_loss_tpl is None:
-            # per_example_xent: bsz * len
+            # lsp: per_example_xent: bsz * len, 为什么加个负号, log_probs为负值
             per_example_xent = -jnp.sum(log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
         else:
             per_example_xent = self.bi_tempered_loss(logits, class_probabilities)

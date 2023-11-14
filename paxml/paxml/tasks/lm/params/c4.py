@@ -189,7 +189,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
                 num_infeed_hosts=num_infeed_hosts,
                 # reset_for_eval=False if is_training else True, # eval的时候为True
-                reset_for_eval=False,  # eval的时候为True -> False
+                reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),  # eval的时候为True -> False
                 annotate_padding_fields=True,
                 eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
             )
@@ -204,7 +204,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 meta_dict=meta_dict,
                 batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
                 seq_len=self.MAX_SEQ_LEN,
-                reset_for_eval=False,
+                reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),
                 repeat=3 if is_training else 3 * 30,
                 eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
                 train_seed=self.TRAINING_SEED,
@@ -1439,6 +1439,7 @@ class Pythia410M(Pythia7B):
     ONLY_EVAL = True
     TRAINING_NUM_BATCHES_TO_SKIP = None
     TEST_RATIO = 1
+    RESET_FOR_EVAL = True # True: test while test dataset
 
     # # c4 data
     # LOAD_SEQIO_TEXT = True

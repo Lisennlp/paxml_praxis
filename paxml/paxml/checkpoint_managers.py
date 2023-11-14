@@ -188,8 +188,9 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         self._directory = epath.Path(directory)
         self._use_digit_step_subdirectory = _has_digit_step_subdirectory(self._directory)
         if self._directory.exists():
-            step = self.any_step()
+            step = self.any_step() # 存在的任何一个step目录
             if step is not None:
+                # 为什么要判断版本号?
                 version = _get_checkpoint_version(
                     self._checkpoint_type,
                     self._directory,

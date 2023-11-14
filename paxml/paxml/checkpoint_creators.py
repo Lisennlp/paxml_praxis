@@ -276,16 +276,19 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
 
         logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
-        if self._step_to_restore == 0 or not return_opt:
-            padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
-            unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+        if not return_opt:
+            if self._step_to_restore is None:
+                raise ValueError('When return_opt is True, Restore model have not been None!!!')
+            else:
+                padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
+                unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
         else:
             padded_global_shapes = metadata.padded_global_shapes
             unpadded_global_shapes = metadata.unpadded_global_shapes
 
         logging.info(f"padded_global_shapes: {padded_global_shapes}\n\n")
         logging.info(f"unpadded_global_shapes: {unpadded_global_shapes}\n\n")
-        
+
         with py_utils.timeit() as restore_period:
             if self._step_to_restore is None:
                 # 指定其他的加载模型路径

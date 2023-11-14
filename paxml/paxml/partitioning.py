@@ -859,7 +859,7 @@ class PjitPartitioner(Partitioner):
                 # init_checkpoint_rules are in the same format as the checkpoint
                 # solution used by the experiment.
                 checkpoint_type=checkpoint_type,
-                discard_opt_states=discard_opt_states,
+                discard_opt_states=False,
                 var_weight_hparams=metadata.var_weight_hparams,
             )
         # lsp：加载预训练模型参数，初始化优化器参数
@@ -876,7 +876,7 @@ class PjitPartitioner(Partitioner):
                 var_weight_hparams = metadata.var_weight_hparams
 
             partitioned_train_state = self._jax_task.create_train_state(
-                partitioned_train_state.mdl_vars, var_weight_hparams, discard_opt_states
+                partitioned_train_state.mdl_vars, var_weight_hparams, discard_opt_states=True
             )
         # lsp: 加载预训练参数和优化器
         else:

@@ -201,6 +201,7 @@ class FullSoftmax(base_layer.BaseLayer):
     z_loss_weight: float = 0.0
     bias_init: Optional[float] = 0.0
     feed_forward_tpl: LayerTpl = template_field(linears.FeedForward)
+    chunk_size: Optional[int] = None
 
 
     def setup(self) -> None:
@@ -243,8 +244,39 @@ class FullSoftmax(base_layer.BaseLayer):
     def logits_to_logp(self, logits: JTensor) -> JTensor:
         """Converts logits to log probability scores."""
         return jax.nn.log_softmax(logits)
-        
-    # lsp
+
+    def _compute_logits_and_loss(self, inputs, class_weights,
+                              class_ids=None, class_probabilities=None):  # XD
+        # Compute logits
+        logits = self.get_logits(inputs)
+        # We perform softmax in float32 to improve stability.
+        logits = logits.astype(jnp.float32)
+        log_probs = jax.nn.log_softmax(logits)
+
+        if class_probabilities is None:
+            class_probabilities = jax.lax.stop_gradient(jax.nn.one_hot(
+                jnp.squeeze(class_ids, axis=-1), self.num_classes, dtype=jnp.float32))
+
+        if self.bi_tempered_loss_tpl is None:
+            per_example_xent = -jnp.sum(
+                log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
+        else:
+            ample_xent = self.bi_tempered_loss(logits, class_probabilities)
+
+        per_example_argmax = jax.lax.stop_gradient(
+            jnp.argmax(logits.astype(jnp.float32), axis=-1))
+
+        # Compute total softmax cross-entropy loss for the output tensor.
+        total_xent = jnp.sum(
+            jnp.expand_dims(per_example_xent, axis=-1) * class_weights, dtype=jnp.float32)
+        total_weight = jnp.sum(class_weights, dtype=jnp.float32)
+
+        z_loss = None
+        if self.z_loss_weight > 0.0:
+            z_loss = (jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32)
+                / total_weight) * self.z_loss_weight
+        return logits, log_probs, per_example_xent, per_example_argmax, total_xent, total_weight, z_loss
+
     def __call__(
         self,
         inputs: JTensor,
@@ -252,114 +284,163 @@ class FullSoftmax(base_layer.BaseLayer):
         class_ids: Optional[JTensor] = None,
         class_probabilities: Optional[JTensor] = None,
     ) -> NestedMap:
-        # pyformat:disable
-        """Computes logits, softmax cross entropy etc.
-
-        Args:
-          inputs:        [..., input_dims].
-          class_weights: [..., 1], weights for each target word.
-          class_ids:     [..., 1], int32 type, target labels.
-          class_probabilities: [..., num_classes].
-
-        Returns:
-          A `.NestedMap` containing the following fields
-
-          - logits:    [..., num_classes], unnormalized softmax logits.
-          - log_probs: [..., num_classes], normalized softmax logits.
-          - per_example_argmax: [...]. argmax of i-th example.
-          - per_example_xent:   [...]. Cross entropy between i-th example's
-            prediction and its label.
-          - per_example_weight: [...]. class_weights casted to this layer's dtype.
-          - total_xent:   a scalar, the sum of per_example_weight * per_example_xent.
-          - total_weight: a scalar, the sum of per_example_weight.
-          - avg_xent: A scalar. total_loss / total_weight.
-          - z_loss: (optional) a scalar, the square of logsum logits when
-            z_loss_weight > 0.
-        """
-        # pyformat:enable
-
         # Assert one of class_ids or class_probabilities is not None
         if class_ids is None and class_probabilities is None:
-            raise ValueError("One of class_ids or class_probabilities must be given.")
-
-        # Compute logits
+            raise ValueError('One of class_ids or class_probabilities must be given.')
         inputs_dtype = inputs.dtype
-        logits = self.get_logits(inputs)
-        # We perform softmax in float32 to improve stability.
-        logits = logits.astype(jnp.float32)
-        log_probs = jax.nn.log_softmax(logits)
 
-        if class_probabilities is None:
-            class_probabilities = jax.nn.one_hot(
-                jnp.squeeze(class_ids, axis=-1), self.num_classes, dtype=jnp.float32
-            )
-            if self.label_smoothing_prob > 0.0:
-                # Label smoothing reduce the probability of the label from 1 to
-                # 1 - label_smoothing_prob, and redistribute label_smoothing_prob to the
-                # rest of num_classes - 1 classes where each class has a probability of
-                # label_smoothing_prob / (num_classes - 1).
-                if not self.do_eval or self.label_smoothing_apply_for_eval:
-                    # We may want to disable label smoothing at eval time.
-                    other_prob = self.label_smoothing_prob / (self.num_classes - 1)
-                    class_probabilities = (
-                        (1.0 - self.label_smoothing_prob) * class_probabilities
-                        + other_prob * (1.0 - class_probabilities)
-                    ).astype(jnp.float32)
-            class_probabilities = jax.lax.stop_gradient(class_probabilities)
-
-        if self.bi_tempered_loss_tpl is None:
-            # lsp: per_example_xent: bsz * len, 为什么加个负号, log_probs为负值
-            per_example_xent = -jnp.sum(log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
+        if self.chunk_size is not None:
+            w = self.chunk_size; t = inputs.shape[-2]
+            assert t % w == 0, f'{t} % {w} != 0'
+            per_example_xent, per_example_argmax = [], []
+            logits, log_probs = None, None
+            total_xent, total_weight, z_loss = None, None, None
+            for i in range(t // w):
+                start, stop = i * w, (i + 1) * w
+                _, _, _per_example_xent, _per_example_argmax, _total_xent, _total_weight, _z_loss = \
+                self._compute_logits_and_loss(inputs[..., start : stop, :],
+                    class_weights[..., start : stop, :], class_ids[..., start : stop, :])
+                per_example_xent.append(_per_example_xent)
+                per_example_argmax.append(_per_example_argmax)
+                total_xent = _total_xent if total_xent is None else total_xent + _total_xent
+                total_weight = _total_weight if total_weight is None else total_weight + _total_weight
+                z_loss = _z_loss if z_loss is None else z_loss + _z_loss
+            per_example_xent = jnp.concatenate(per_example_xent, axis=-1)
+            per_example_argmax = jnp.concatenate(per_example_argmax, axis=-1)
         else:
-            per_example_xent = self.bi_tempered_loss(logits, class_probabilities)
-        per_example_argmax = jax.lax.stop_gradient(jnp.argmax(logits.astype(jnp.float32), axis=-1))
-
-        # Compute total softmax cross-entropy loss for the output tensor.
-        # lsp: total_loss
-        total_xent = jnp.sum(
-            jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
-            dtype=jnp.float32,
-        )
-        total_weight = jnp.sum(class_weights, dtype=jnp.float32)
-        self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=self.user_summary_level)
-        # lsp
-        total_xent_batch = jnp.sum(
-            jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
-            dtype=jnp.float32,
-            axis=-2,
-        )
-        total_weight_batch = jnp.maximum(jnp.sum(class_weights, dtype=jnp.float32, axis=-2), 1e-10)
-        # lsp: 最后变成 total_loss，然后基于这个计算grad
-        avg_xent = jnp.mean(total_xent_batch / total_weight_batch)
-        # lsp end
-
-        if self.z_loss_weight > 0.0:
-            # lsp: 
-            softmax_normalizer = logits.max(-1) ** 2
-            z_loss = self.z_loss_weight * softmax_normalizer.mean()
-            # z_loss = (
-            #     jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32) / total_weight
-            # )
-            # z_loss *= self.z_loss_weight
-            self.add_summary("aux_z_loss", z_loss)
-            self.add_aux_loss("aux_z_loss", z_loss)
-            # lsp: 因此，如果需要计算z_loss的梯度的话，需要在avg_xent的基础上加上z_loss
-            avg_xent += z_loss
+            logits, log_probs, per_example_xent, per_example_argmax, total_xent, total_weight, z_loss = \
+                self._compute_logits_and_loss(inputs, class_weights, class_ids)
 
         output_nmap = NestedMap(
-            logits=logits.astype(inputs_dtype),
-            log_probs=log_probs.astype(inputs_dtype),
+            logits=logits.astype(inputs_dtype) if logits is not None else None,
+            log_probs=log_probs.astype(inputs_dtype) if log_probs is not None else None,
             per_example_argmax=per_example_argmax,
             per_example_xent=per_example_xent.astype(jnp.float32),
             total_xent=total_xent,
             total_weight=total_weight,
             avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
-            # avg_xent=avg_xent  # mesh
-            # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
         )
         if self.z_loss_weight > 0.0:
-            output_nmap["z_loss"] = z_loss            
+            output_nmap['z_loss'] = z_loss
+
         return output_nmap
+
+    # # lsp
+    # def __call__(
+    #     self,
+    #     inputs: JTensor,
+    #     class_weights: JTensor,
+    #     class_ids: Optional[JTensor] = None,
+    #     class_probabilities: Optional[JTensor] = None,
+    # ) -> NestedMap:
+    #     # pyformat:disable
+    #     """Computes logits, softmax cross entropy etc.
+
+    #     Args:
+    #       inputs:        [..., input_dims].
+    #       class_weights: [..., 1], weights for each target word.
+    #       class_ids:     [..., 1], int32 type, target labels.
+    #       class_probabilities: [..., num_classes].
+
+    #     Returns:
+    #       A `.NestedMap` containing the following fields
+
+    #       - logits:    [..., num_classes], unnormalized softmax logits.
+    #       - log_probs: [..., num_classes], normalized softmax logits.
+    #       - per_example_argmax: [...]. argmax of i-th example.
+    #       - per_example_xent:   [...]. Cross entropy between i-th example's
+    #         prediction and its label.
+    #       - per_example_weight: [...]. class_weights casted to this layer's dtype.
+    #       - total_xent:   a scalar, the sum of per_example_weight * per_example_xent.
+    #       - total_weight: a scalar, the sum of per_example_weight.
+    #       - avg_xent: A scalar. total_loss / total_weight.
+    #       - z_loss: (optional) a scalar, the square of logsum logits when
+    #         z_loss_weight > 0.
+    #     """
+    #     # pyformat:enable
+
+    #     # Assert one of class_ids or class_probabilities is not None
+    #     if class_ids is None and class_probabilities is None:
+    #         raise ValueError("One of class_ids or class_probabilities must be given.")
+
+    #     # Compute logits
+    #     inputs_dtype = inputs.dtype
+    #     logits = self.get_logits(inputs)
+    #     # We perform softmax in float32 to improve stability.
+    #     logits = logits.astype(jnp.float32)
+    #     log_probs = jax.nn.log_softmax(logits)
+
+    #     if class_probabilities is None:
+    #         class_probabilities = jax.nn.one_hot(
+    #             jnp.squeeze(class_ids, axis=-1), self.num_classes, dtype=jnp.float32
+    #         )
+    #         if self.label_smoothing_prob > 0.0:
+    #             # Label smoothing reduce the probability of the label from 1 to
+    #             # 1 - label_smoothing_prob, and redistribute label_smoothing_prob to the
+    #             # rest of num_classes - 1 classes where each class has a probability of
+    #             # label_smoothing_prob / (num_classes - 1).
+    #             if not self.do_eval or self.label_smoothing_apply_for_eval:
+    #                 # We may want to disable label smoothing at eval time.
+    #                 other_prob = self.label_smoothing_prob / (self.num_classes - 1)
+    #                 class_probabilities = (
+    #                     (1.0 - self.label_smoothing_prob) * class_probabilities
+    #                     + other_prob * (1.0 - class_probabilities)
+    #                 ).astype(jnp.float32)
+    #         class_probabilities = jax.lax.stop_gradient(class_probabilities)
+
+    #     if self.bi_tempered_loss_tpl is None:
+    #         # lsp: per_example_xent: bsz * len, 为什么加个负号, log_probs为负值
+    #         per_example_xent = -jnp.sum(log_probs * class_probabilities, axis=-1, dtype=jnp.float32)
+    #     else:
+    #         per_example_xent = self.bi_tempered_loss(logits, class_probabilities)
+    #     per_example_argmax = jax.lax.stop_gradient(jnp.argmax(logits.astype(jnp.float32), axis=-1))
+
+    #     # Compute total softmax cross-entropy loss for the output tensor.
+    #     # lsp: total_loss
+    #     total_xent = jnp.sum(
+    #         jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
+    #         dtype=jnp.float32,
+    #     )
+    #     total_weight = jnp.sum(class_weights, dtype=jnp.float32)
+    #     self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=self.user_summary_level)
+    #     # lsp
+    #     total_xent_batch = jnp.sum(
+    #         jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
+    #         dtype=jnp.float32,
+    #         axis=-2,
+    #     )
+    #     total_weight_batch = jnp.maximum(jnp.sum(class_weights, dtype=jnp.float32, axis=-2), 1e-10)
+    #     # lsp: 最后变成 total_loss，然后基于这个计算grad
+    #     avg_xent = jnp.mean(total_xent_batch / total_weight_batch)
+    #     # lsp end
+
+    #     if self.z_loss_weight > 0.0:
+    #         # lsp: 
+    #         softmax_normalizer = logits.max(-1) ** 2
+    #         z_loss = self.z_loss_weight * softmax_normalizer.mean()
+    #         # z_loss = (
+    #         #     jnp.sum(_compute_z_loss(logits) * class_weights, dtype=jnp.float32) / total_weight
+    #         # )
+    #         # z_loss *= self.z_loss_weight
+    #         self.add_summary("aux_z_loss", z_loss)
+    #         self.add_aux_loss("aux_z_loss", z_loss)
+    #         # lsp: 因此，如果需要计算z_loss的梯度的话，需要在avg_xent的基础上加上z_loss
+    #         avg_xent += z_loss
+
+    #     output_nmap = NestedMap(
+    #         logits=logits.astype(inputs_dtype),
+    #         log_probs=log_probs.astype(inputs_dtype),
+    #         per_example_argmax=per_example_argmax,
+    #         per_example_xent=per_example_xent.astype(jnp.float32),
+    #         total_xent=total_xent,
+    #         total_weight=total_weight,
+    #         avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
+    #         # avg_xent=avg_xent  # mesh
+    #         # 和mesh不一样，一个是在batch维加和，再除以batch,求平均loss。paxml是直接所有token loss加和，再除以总token数
+    #     )
+    #     if self.z_loss_weight > 0.0:
+    #         output_nmap["z_loss"] = z_loss            
+    #     return output_nmap
 
 
 # lsp

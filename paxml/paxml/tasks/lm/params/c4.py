@@ -1413,11 +1413,12 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
+                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecord', 
+                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord', 
                 }
     DATA_FUNC = extract_pythia_datapath
-
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = True
 
 
 @experiment_registry.register

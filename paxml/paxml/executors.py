@@ -350,10 +350,9 @@ def _train_and_evaluate_common(
         program.setup(task, partitioner, job_log_dir, decode_prng_seed)
 
     if task.only_eval:
-        task_model = task.model.__class__.__name__
-        step = partitioned_train_state.step.item()
+        step = train_input.num_batches_to_skip
+        logging.info(f'model step: {step}')
 
-        logging.info(f'task_model: {task_model}')
         # lsp: 仅仅获取模型参数,mdl_vars
         eval_partitioned_train_state = programs.get_eval_train_state(
                 task, partitioned_train_state, task.train.eval_use_ema_states
@@ -366,7 +365,7 @@ def _train_and_evaluate_common(
             step=eval_partitioned_train_state.step,
         )
 
-        eval_result_path = os.path.join(job_log_dir, f'{task_model}.{step}.eval_metrics')
+        eval_result_path = os.path.join(job_log_dir, f'eval_metrics.{step}.json')
         logging.info(f'eval_metrics: {eval_metrics}')
 
         logging.info(f'eval_result_path: {eval_result_path}')

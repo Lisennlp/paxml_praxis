@@ -211,6 +211,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 task_features=list(self.KEY_MAP.values()),
                 shuffle_buffer_size=shuffle_buffer_size,
                 num_batches_to_skip=num_batches_to_skip,
+                only_eval=getattr(self, 'ONLY_EVAL', False),
             )
             return p  
 
@@ -1420,6 +1421,20 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = True
 
+@experiment_registry.register
+class Pythia7BEval(Pythia7B):
+    ONLY_EVAL = True
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TEST_RATIO = 1
+    RESET_FOR_EVAL = True # True: test while test dataset
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 32
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/pile_test', 
+                'test':  'gs://common_datasets/pythia_model_test/pile_test', 
+                }
+    DATA_FUNC = extract_pythia_datapath
+
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):
@@ -1480,12 +1495,13 @@ class MyDatasets(base_input.BaseInput):
     iter_file_nums: int = 100
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
+    only_eval: bool = False
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
 
-        if not self.meta_dict:
+        if not self.meta_dict or self.only_eval: # lsp
             self.meta_dict = {
                 "seed": self.train_seed,
                 "cur_files": [],

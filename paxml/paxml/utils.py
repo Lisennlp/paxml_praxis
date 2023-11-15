@@ -93,17 +93,27 @@ def extract_pythia_datapath(task, mode):
         return task.train_test_dataset
     client = storage.Client()
     #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-    bucket_name = os.path.dirname(task.DATA_PATH[mode])
-    if 'gs:' in bucket_name:
-        bucket_name = bucket_name[5: ]
-    directory_path = os.path.basename(task.DATA_PATH[mode]) + '/'
+    path = task.DATA_PATH[mode].replace('gs://', '')
+    path_parts = path.split('/')
+    bucket_name = path_parts[0]
+    directory_path = '/'.join(path_parts[1:]) + '/'
+
+    logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
     step_map_path = {}
+    rerank = 0
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
-        logging.info(f"filename: {blob.name}=====")
-        if 'pile.tfrecord.b' not in blob.name: continue
-        step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
-        path = f'gs://{os.path.join(bucket_name, blob.name)}'
-        step_map_path[step] = path
+        if '.tfrecord' in blob.name:
+            logging.info(f"Successful filename: {blob.name}=====")
+            try:
+                step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
+            except:
+                step = rerank
+                rerank += 1
+            path = f'gs://{os.path.join(bucket_name, blob.name)}'
+            step_map_path[step] = path
+        else:
+            logging.info(f"Failed filename: {blob.name}=====")
+
     sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
     steps, pathes = zip(*sorted_step_path)
     if not isinstance(pathes, list):
@@ -133,10 +143,10 @@ def extract_zh_en_novel_datapath(task, mode):
     random.seed(task.TRAINING_SEED)
     dataset = defaultdict(list)
     client = storage.Client()
-    bucket_name = os.path.dirname(task.DATA_PATH[mode])
-    if 'gs:' in bucket_name:
-        bucket_name = bucket_name[5: ]
-    directory_path = os.path.basename(task.DATA_PATH[mode]) + '/'
+    path = task.DATA_PATH[mode].replace('gs://', '')
+    path_parts = path.split('/')
+    bucket_name = path_parts[0]
+    directory_path = '/'.join(path_parts[1:]) + '/'
     for lang in ["zh", "en"]:
         # directory_path = f'xiaomeng/processed_{lang}_data_split'
         prefix = directory_path.format(lang=lang)

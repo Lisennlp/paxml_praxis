@@ -205,7 +205,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
                 seq_len=self.MAX_SEQ_LEN,
                 reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),
-                repeat=3 if is_training else 3 * 30,
+                repeat=1,
                 eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
                 train_seed=self.TRAINING_SEED,
                 task_features=list(self.KEY_MAP.values()),

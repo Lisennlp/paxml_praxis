@@ -47,7 +47,6 @@ import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
 import wandb
-import mlxu
 from paxml import checkpoint_paths
 
 
@@ -308,18 +307,20 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
 def record_file_and_step(step, save_dir, train_input):
     fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
-    save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
-    save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_path = save_dir /  'checkpoints' / fill_step / checkpoint_paths.SKIP_STEP_NAME
+    # os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_newest_path = save_dir / 'checkpoints' / checkpoint_paths.SKIP_STEP_NAME
     if not hasattr(train_input, 'meta_dict'):
         return
     meta_dict = train_input.meta_dict
+    meta_dict['step_in_file'] = train_input.step_in_file - int(train_input._peek is not None)
+    assert meta_dict['step_in_file'] >= 0, f"{meta_dict['step_in_file']}"
     meta_dict['checkpoint_step'] = step
     if jax.process_index() == 0:
-        with mlxu.open_file(save_path, 'w') as f1, mlxu.open_file(save_newest_path, 'w') as f2:
+        with save_path.open('w') as f1, save_newest_path.open('w') as f2:
             json.dump(meta_dict, f1)
             json.dump(meta_dict, f2)
-    logging.info(f'Save skip_file_and_step successful......')
-    logging.info(f'file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]} ')
+    logging.info(f'Save skip_file_and_step successful... file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]}')  # XD
 
 
 def _train_and_evaluate_common(
@@ -365,13 +366,13 @@ def _train_and_evaluate_common(
             step=eval_partitioned_train_state.step,
         )
 
-        eval_result_path = os.path.join(job_log_dir, f'eval_metrics.{step}.json')
         logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
-        
+
+        eval_result_path = job_log_dir / f'eval_metrics.{step}.json'
         logging.info(f'eval_result_path: {eval_result_path}')
-        with mlxu.open_file(eval_result_path, 'w') as f:
-            write_str = json.dumps(eval_metrics.metrics_list[0], ensure_ascii=False)
-            f.write(f'{write_str}\n')
+        write_json = {k: str(v) for k, v in eval_metrics.metrics_list[0].items() if isinstance(v, float)}
+        with eval_result_path.open('w') as f:
+            json.dump(write_json, f)
         exit(0)
     
     train_p = task.train

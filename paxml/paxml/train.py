@@ -42,7 +42,6 @@ from praxis import pax_fiddle
 from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
-import mlxu
 from paxml import checkpoints  # mapped to internal
 from paxml import checkpoint_paths
 

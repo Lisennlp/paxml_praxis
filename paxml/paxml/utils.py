@@ -15,7 +15,6 @@ from google.cloud import storage # google-cloud-storage
 
 from absl import logging
 from paxml import checkpoint_paths
-import mlxu # mlxu[gcs]
 import jax
 
 
@@ -182,15 +181,15 @@ def extract_zh_en_novel_datapath(task, mode):
 def extract_train_skip_step(job_log_dir, step):
     if job_log_dir is None:
         return {}
-    model_dir = os.path.join(job_log_dir, "checkpoints")
+    model_dir = job_log_dir / "checkpoints"
     if step is not None:
         fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
-        skip_file_and_step_path = os.path.join(model_dir, fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+        skip_file_and_step_path = model_dir / fill_step / checkpoint_paths.SKIP_STEP_NAME
     else:
-        skip_file_and_step_path = os.path.join(model_dir, f'{checkpoint_paths.SKIP_STEP_NAME}')
+        skip_file_and_step_path = model_dir / checkpoint_paths.SKIP_STEP_NAME
     logging.info(f"model_dir: {model_dir}")
     try:
-        with mlxu.open_file(skip_file_and_step_path, 'r') as f:
+        with skip_file_and_step_path.open('r') as f:
             meta_dict = json.load(f)
         logging.info(f"Load skip_file_and_step_path: ’{skip_file_and_step_path}‘ Finished.......")
     except:
@@ -198,6 +197,7 @@ def extract_train_skip_step(job_log_dir, step):
         meta_dict = {}
 
     if jax.process_index() == 0:
-        with mlxu.open_file(os.path.join(job_log_dir, f'{step}.json'), 'w') as f1:
+        back_meta_dict_path = job_log_dir / f'{step}.json'
+        with back_meta_dict_path.open('w') as f1:
             json.dump(meta_dict, f1)
     return meta_dict

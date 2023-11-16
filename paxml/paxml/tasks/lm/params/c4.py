@@ -52,7 +52,6 @@ import numpy as np
 from praxis import py_utils
 from google.cloud import storage
 
-import mlxu
 from paxml import checkpoint_paths
 
 from paxml.utils import *
@@ -1426,7 +1425,7 @@ class Pythia7BEval(Pythia7B):
     ONLY_EVAL = True
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TEST_RATIO = 1
-    RESET_FOR_EVAL = True # True: test while test dataset
+    # RESET_FOR_EVAL = True # True: test while test dataset
     ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 32
     DATA_PATH = {
@@ -1434,6 +1433,8 @@ class Pythia7BEval(Pythia7B):
                 'test':  'gs://common_datasets/pythia_model_test/pile_test', 
                 }
     DATA_FUNC = extract_pythia_datapath
+    EVAL_LOOP_NUM_BATCHES = 20
+    RESET_FOR_EVAL = False
 
 
 @experiment_registry.register

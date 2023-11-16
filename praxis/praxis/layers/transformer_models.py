@@ -250,6 +250,7 @@ class TransformerLm(base_layer.BaseLayer):
 
     position_emb_tpl: LayerTpl = template_field(embedding_softmax.PositionalEmbedding)
     model_dims: int = 0
+    embed_dim: int = 0
     stacked_transformer_tpl: LayerTpl = template_field(transformers.StackedTransformer)
     softmax_tpl: LayerTpl = template_field(embedding_softmax.SharedEmbeddingSoftmax)
     vocab_size: int = 0
@@ -477,7 +478,8 @@ class TransformerLm(base_layer.BaseLayer):
         # Optional positional embedding layer.
         if self.position_emb_tpl is not None:
             pos_params = self.position_emb_tpl.clone()
-            pos_params.embedding_dims = self.model_dims
+            # lsp
+            pos_params.embedding_dims = self.embed_dim
             self.create_child("position_emb", pos_params)
 
         # Optional separate embedding layer.

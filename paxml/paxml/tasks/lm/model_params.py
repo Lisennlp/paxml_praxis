@@ -613,6 +613,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
                 layers.TrainablePositionalEmbedding,
                 max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
             )
+
         model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
 
         stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
@@ -829,6 +830,7 @@ class TransformerLmSpmdPipelineAdafactor(TransformerLmSpmdAdafactor):
                 layers.TrainablePositionalEmbedding,
                 max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
             )
+            model_p.lm_tpl.position_emb_tpl.embed_dim = self.EMBED_DIM
 
         stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
         stacked_transformer_tpl.model_dims = self.MODEL_DIMS

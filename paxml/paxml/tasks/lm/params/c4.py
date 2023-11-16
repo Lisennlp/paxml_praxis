@@ -1478,6 +1478,72 @@ class Pythia410M(Pythia7B):
     # DATA_FUNC = tfids_registry
 
 
+@experiment_registry.register
+class GPT2ChineseBase(DataParams, C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 6
+    NUM_HEADS = 6
+    MODEL_DIMS = 1024
+    EMBED_DIM = 768
+
+    HIDDEN_DIMS = 4096
+    VOCAB_SIZE = 21128
+
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 8, 1]
+
+    CHECKPOINT_EVERY_N_STEPS = 500
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
+    CHECKPOINT_MAX_TO_KEEP = 2
+   
+    LAYERNORM_EPSILON = 1e-05
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
+    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_WARMUP = 200
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+
+    TASK_NAME = "GPT2-chinese-base"
+    WANDB_PROJECT = "gpt2_base_test"
+
+    TRAINING_SEED = 1234
+
+    QUERY_CHUNK_SIZE = None
+    Z_LOSS_WEIGHT = 0.0
+    LM_HEAD_NORM = False
+    TRAINABLE_POSITION_EMB = True
+    USE_ROTARY_POSITION_EMB = False
+    USE_ALIBI_POSITION_EMB = False
+    NORMALIZATION_CLS = normalizations.LayerNorm
+    USE_BIAS = True
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
+
+    MAX_SEQ_LEN = 1024  # ps：pythia读取的数据长度为2049
+
+     # c4 data
+    LOAD_SEQIO_TEXT = True
+    LOAD_SEQIO_ID = False
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
+    DATA_FUNC = c4_registry
+    
+    LM_HEAD_CHUNK_SIZE = None
+    RESET_FOR_EVAL = True
+
+
 class MyDatasets(base_input.BaseInput):
     # Required params. lsp - note: 参数一定要注明类型，不然在初始化的时候就不能传入，会报错没有这个参数
     path: Optional[str] = None

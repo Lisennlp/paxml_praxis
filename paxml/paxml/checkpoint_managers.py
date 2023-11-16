@@ -39,6 +39,8 @@ from praxis import py_utils
 from praxis import base_layer
 
 
+from multiprocessing import Process
+
 Nested = pytypes.Nested
 # TODO(pax-dev): pytyping doesn't like either
 # Optional[pytypes.NestedShapeDtypeStruct]
@@ -412,10 +414,16 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     def _delete_directory(self, step: int):
         if jax.process_index() != 0:
             return
+        else:
+            # 开启一个进程删除
+            delete_process = Process(target=self._backend_del_directory, args=(step, ))
+            delete_process.daemon = True
+            delete_process.start()
+
+    def _backend_del_directory(self, step):
         options = typing.cast(CheckpointManagerOptions, self._options)
         todelete_subdir = options.todelete_subdir
         checkpoint_name = self._checkpoint_name(step)
-
         if todelete_subdir:
             rename_dir = self.directory / todelete_subdir
             if not rename_dir.exists():

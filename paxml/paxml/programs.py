@@ -818,9 +818,6 @@ class BaseEvalProgram(Program):
         for k in summary_tensors:
             summary_tensors[k] = np.array([np.asarray(t) for t in summary_tensors[k]])
 
-        if jax.process_index() == 0:
-            pickle.dump(summary_tensors, open(f'debug{step}.pkl', 'wb'))
-
         loss = np.mean(loss, axis=0)
         logging.info("step: %d, eval test %s loss: %s", step, self._name, loss)
 

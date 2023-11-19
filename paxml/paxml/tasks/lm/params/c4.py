@@ -50,7 +50,6 @@ from t5.data import preprocessors as t5_preprocessors
 import tensorflow as tf
 import numpy as np
 from praxis import py_utils
-from google.cloud import storage
 
 from paxml import checkpoint_paths
 
@@ -1423,7 +1422,7 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
 @experiment_registry.register
 class Pythia7BEval(Pythia7B):
     ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TRAINING_NUM_BATCHES_TO_SKIP = 13000
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
     ICI_MESH_SHAPE = [1, 32, 1]
@@ -1434,7 +1433,7 @@ class Pythia7BEval(Pythia7B):
                 }
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 20
-    RESET_FOR_EVAL = False
+    RESET_FOR_EVAL = True
 
 
 @experiment_registry.register
@@ -1560,9 +1559,9 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            weights = data["labels"] > 0
+            weights = data["labels"] >= 0
         else:
-            weights = data["input_ids"] > 0
+            weights = data["input_ids"] >= 0
         model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)

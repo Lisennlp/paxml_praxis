@@ -25,6 +25,8 @@ from paxml import checkpoint_managers
 from paxml import train_states
 from flax.traverse_util import flatten_dict, unflatten_dict
 
+import subprocess
+
 try:
     import torch
 except:
@@ -78,7 +80,7 @@ checkpointer = Checkpointer(
     )
 )
 
-save_dir = "gs://llm_base_models/pythia/test1109/checkpoints/"
+save_dir = "gs://llm_base_models/pythia/pythia-6.9b-paxml/checkpoints/"
 
 save_dir = epath.Path(save_dir)
 checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
@@ -91,8 +93,8 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
 )
 
 
-step = 140
-model_size = "410m"
+step = 13000
+model_size = "6.9b"
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
 n_heads = params["n_heads"]
@@ -107,14 +109,14 @@ from transformers import GPTNeoXForCausalLM, AutoTokenizer
 
 
 model = GPTNeoXForCausalLM.from_pretrained(
-  "EleutherAI/pythia-410m-deduped",
-  revision="step3000",
-  cache_dir="./pythia-410m-deduped/step3000",
+  "EleutherAI/pythia-6.9b",
+  revision=f"step{step}",
+  cache_dir=f"./pythia-6.9b/step{step}",
 )
 tokenizer = AutoTokenizer.from_pretrained(
-  "EleutherAI/pythia-410m-deduped",
-  revision="step3000",
-  cache_dir="./pythia-410m-deduped/step3000",
+  "EleutherAI/pythia-6.9b",
+  revision=f"step{step}",
+  cache_dir=f"./pythia-6.9bd/step{step}",
 )
 model = model.to(torch.bfloat16)
 model.eval()
@@ -217,6 +219,7 @@ for k, v in gold_w.items():
         qq = k.replace("query_key_value", "q_proj")
         kk = k.replace("query_key_value", "k_proj")
         vv = k.replace("query_key_value", "v_proj")
+        print(f'v.shape')
         if len(v.shape) == 1:
             v = v.reshape(n_heads, 3 * head_dim)
             split_qkv[qq] = v[..., :head_dim].detach().numpy().reshape(-1)
@@ -281,26 +284,33 @@ if step is None:
 # 构造optimizer参数
 print(f"Model save step is {step}")
 start = time.time()
-temp_no_prefix, temp_other = {}, {}
-for key_tuple, param in opt_state_mv.items():
-    if "repeat" in key_tuple:
-        temp_no_prefix[key_tuple] = MaskedNode()
-        temp_other[key_tuple] = param
-    else:
-        temp_no_prefix[key_tuple] = param
-        temp_other[key_tuple] = MaskedNode()
 
-temp_no_prefix = unflatten_dict(temp_no_prefix)
-temp_other = unflatten_dict(temp_other)
+save_pt = False
 
-no_prefix = {"count": jnp.array(step), "m": temp_no_prefix, "v": temp_no_prefix}
-other = {"count": jnp.array([step] * n_layers), "m": temp_other, "v": temp_other}
-trans_opt_states = {
-    "no_prefix": [{"count": jnp.array(step)}] * 2 + [no_prefix, {"count": jnp.array(step)}],
-    f"p#{n_layers}#i-1": [{"count": jnp.array([step] * n_layers)}] * 2
-    + [other, {"count": jnp.array([step] * n_layers)}],
-}
-trans_opt_states = [trans_opt_states]
+if save_pt:
+    temp_no_prefix, temp_other = {}, {}
+    for key_tuple, param in opt_state_mv.items():
+        if "repeat" in key_tuple:
+            temp_no_prefix[key_tuple] = MaskedNode()
+            temp_other[key_tuple] = param
+        else:
+            temp_no_prefix[key_tuple] = param
+            temp_other[key_tuple] = MaskedNode()
+
+    temp_no_prefix = unflatten_dict(temp_no_prefix)
+    temp_other = unflatten_dict(temp_other)
+
+    no_prefix = {"count": jnp.array(step), "m": temp_no_prefix, "v": temp_no_prefix}
+    other = {"count": jnp.array([step] * n_layers), "m": temp_other, "v": temp_other}
+    trans_opt_states = {
+        "no_prefix": [{"count": jnp.array(step)}] * 2 + [no_prefix, {"count": jnp.array(step)}],
+        f"p#{n_layers}#i-1": [{"count": jnp.array([step] * n_layers)}] * 2
+        + [other, {"count": jnp.array([step] * n_layers)}],
+    }
+    trans_opt_states = [trans_opt_states]
+else:
+    trans_opt_states = []
+
 new_trainstate = TrainState(
     step=jnp.array(step),
     mdl_vars=unflatten_dict(trans_result),

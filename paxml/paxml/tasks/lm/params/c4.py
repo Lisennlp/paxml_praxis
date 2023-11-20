@@ -1422,7 +1422,7 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
 @experiment_registry.register
 class Pythia7BEval(Pythia7B):
     ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 13000
+    TRAINING_NUM_BATCHES_TO_SKIP = 23000
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
     ICI_MESH_SHAPE = [1, 32, 1]

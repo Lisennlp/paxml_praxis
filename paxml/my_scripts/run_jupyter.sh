@@ -8,7 +8,8 @@ PORT=$1
 # /home/miniconda3/bin/pip install jupyter
 # conda install nbconvert==5.4.1 mistune==0.8.4
 conda install jupyter
-pip install --upgrade 'nbconvert>=7' 'mistune>=2'
+# v4: mistune==3.0.0, v3:mistune==3.0.1
+pip install --upgrade 'nbconvert==7.1' 'mistune==3.0.1'
 # Step 2: Generate configuration file
 jupyter notebook --generate-config
 

@@ -1,10 +1,12 @@
 import time
 import os
 import sys
+import json
 import random
 import multiprocessing
 from multiprocessing import set_start_method
 import socket
+from collections import defaultdict
 
 os.environ["JAX_PLATFORMS"] = "cpu"
 
@@ -107,70 +109,23 @@ class DataProcessor:
     def convert_line_to_ids(self, line):
         return self.tokenizer.encode(line)
 
-    def writer_factory(self):
-        if self.write_line == self.per_file_line_num:
-            self.writer.close()
-            self.write_line = 0
-        if self.write_line == 0:
-            name = f"{self.data_type}_R{self.rank}_F{self.file_count}_{self.epoch}"
-            save_path = os.path.join(self.save_dir, name)
-            self.writer = tf.io.TFRecordWriter(save_path)
-            print(f"Rank: {self.rank}, save_path: {save_path}")
-            self.file_count += 1
-
-    def write_file(self):
-        input_ids = self.book_input_ids[: self.max_seq_len]
-        if len(input_ids) < self.clear_threshold_length:
-            return []
-        feature = {
-            "input_ids": self._int64_feature(input_ids),
-        }
-        example = tf.train.Example(features=tf.train.Features(feature=feature))
-        self.writer.write(example.SerializeToString())
-        self.write_line += 1
-        # self.book_input_ids = self.book_input_ids[self.max_seq_len :]
-        # 每次都从句子开始
-        self.book_input_ids = []
-
-    def process_book(self, path, start_index=0):
+    def process_book(self, path):
         with mlxu.open_file(path, 'r') as fr:
             lines = fr.readlines()
-            count = 0
-            for index in range(start_index, len(lines), 1):
+            for index in range(0, len(lines), 1):
                 line = lines[index]
                 line = line.strip()
+                self.line = line
                 if not line:
                     line = '\n'
                 else:
                     line += '\n'
-        #       if index < 10 and self.data_type == 'zh':
-          #          line = match_name_category(line)
-           #         print(f'line: {line}')
                 if self.data_type == 'zh' and match_unused_content(line):
                     continue
                 ids = self.convert_line_to_ids(line)
                 self.book_input_ids.extend(ids)
-                if len(self.book_input_ids) > self.max_seq_len:
-                    self.writer_factory()
-                    self.write_file()
-                    if index + 1  >= len(lines):
-                        self.run_book_index.pop(path)
-                    else:
-                        self.run_book_index[path] = index + 1
-                    # 每本书取3段，en: 10， zh: 50
-                    if count >= self.segment_num[self.data_type]:
-                        break
-                    count += 1
-                if index == len(lines) - 1:
-                    # 书的结尾用book_end_id分割
-                    self.book_input_ids.extend(self.book_end_id)
-                    try:
-                        # 结束后，删除该书
-                        self.run_book_index.pop(path)
-                    except Exception as e:
-                        print(f'Pop error: {e}')
-        
-
+            self.book_input_ids.extend(self.book_end_id)
+            
     def __len__(self):
         return self.size
 
@@ -180,45 +135,17 @@ class DataProcessor:
     def run(self, start, end, rank):
         random.seed(42)
         time_start = time.time()
-        print(f"Rank: {rank}. book: {len(self.books_pathlist)} self.epoches: {self.epoches}")
         self.processor_bookes = self.books_pathlist[start: end]
-        self.run_book_index = {book: 0 for book in self.processor_bookes}
-        for epoch in range(self.epoches):
-            N = len(self.run_book_index)
-            if N == 0: break
-            self.epoch = epoch
-            index = 0
-            # 前1轮的时候，可以允许数据不写满per_file_line_num
-            if self.epoch == 1:
-                self.write_line = 0
-                self.writer.close()
-
-            items = list(self.run_book_index.items())
-            random.shuffle(items)
-            #每轮都shuffle一遍
-            self.run_book_index = dict(items)
-            print(f'epoch: {self.epoch} 剩下files：{len(items)}')
-            for path, start_index in self.run_book_index.copy().items():
-                print(f"Epoch: {epoch}/{self.epoches} rank: {rank} index: {index} start_index: {start_index}")
-                try:
-                    self.process_book(path, start_index)
-                except Exception as e:
-                    print(f'Rank: {rank}, error: {e}')
-                   # print(f'Rank: {rank}, error: {e}')
-                time_end = time.time()
-                print(
-                    f"{rank}-processed: {index}/{N}, path: ‘{path}’ deal finished, take:"
-                    f" {time_end - time_start}."
-                )
-         #       if rank == 0:
-          #          wandb_stats = {"index": index, "N": N, "take": time_end - time_start}
-           #         wandb.log(wandb_stats)
-                index += 1
-        try:
-            self.writer.close()
-            print(f'Rank: {rank} deal finished......')
-        except Exception as e:
-            print(f'Final close......')
+        length = len(self.processor_bookes)
+        record_index = []
+        for index, path in enumerate(self.processor_bookes):
+            filename = os.path.basename(path)
+            record_index.append(len(self.book_input_ids))
+            self.process_book(path, start_index)
+            record_index.append(len(self.book_input_ids))
+            assert (index + 1) * 2 == len(record_index)
+            time_end = time.time()
+            print(f"Rank: {rank} index: {index}/{length} take: {time_end - time_start}")
 
 
 def process_book_wrapper(args):

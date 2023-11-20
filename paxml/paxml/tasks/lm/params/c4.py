@@ -1322,29 +1322,33 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = False
 
-    # tfids datasets
-    TARGET_LOG_PPLX = -1
-    TEST_RATIO = 0.02
+    QUERY_CHUNK_SIZE = 512
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = False
     TASK_NAME = "BC2Gpt13B"
+    TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000
     TRAINING_SEED = 1234
-    QUERY_CHUNK_SIZE = 512
-    LM_HEAD_CHUNK_SIZE = 512
+    TEST_RATIO = 0.02
 
-    # novel xiaomeng zh en
-    LOAD_SEQIO_TEXT = False
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
-    DATA_FUNC = extract_zh_en_novel_datapath
+    # # novel xiaomeng zh en
+    # LOAD_SEQIO_TEXT = False
+    # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    # SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
+    # DATA_FUNC = extract_zh_en_novel_datapath
 
-    # # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
-    # LOAD_SEQIO_TEXT = True
-    # KEY_MAP = {"inputs": None, "targets": "text"}
-    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    # DATA_FUNC = c4_registry
+    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    LOAD_SEQIO_TEXT = True
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_PATH = {
+                'train': 'gs://common_datasets/', 
+                'test':  'gs://common_datasets/', 
+                }
+    DATA_FUNC = c4_registry
 
     # # baichuan1指令数据集
     # LOAD_SEQIO_ID = True

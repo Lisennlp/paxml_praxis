@@ -39,6 +39,8 @@ from praxis import py_utils
 from praxis import base_layer
 
 
+from multiprocessing import Process
+
 Nested = pytypes.Nested
 # TODO(pax-dev): pytyping doesn't like either
 # Optional[pytypes.NestedShapeDtypeStruct]
@@ -188,8 +190,9 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         self._directory = epath.Path(directory)
         self._use_digit_step_subdirectory = _has_digit_step_subdirectory(self._directory)
         if self._directory.exists():
-            step = self.any_step()
+            step = self.any_step() # 存在的任何一个step目录
             if step is not None:
+                # 为什么要判断版本号?
                 version = _get_checkpoint_version(
                     self._checkpoint_type,
                     self._directory,
@@ -411,10 +414,16 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     def _delete_directory(self, step: int):
         if jax.process_index() != 0:
             return
+        else:
+            # 开启一个进程删除
+            delete_process = Process(target=self._backend_del_directory, args=(step, ))
+            delete_process.daemon = True
+            delete_process.start()
+
+    def _backend_del_directory(self, step):
         options = typing.cast(CheckpointManagerOptions, self._options)
         todelete_subdir = options.todelete_subdir
         checkpoint_name = self._checkpoint_name(step)
-
         if todelete_subdir:
             rename_dir = self.directory / todelete_subdir
             if not rename_dir.exists():
@@ -574,6 +583,7 @@ class OrbaxCheckpointManager:
         logging.info(f"items: {items}")
         logging.info(f"restore_kwargs: {restore_kwargs}")
         logging.info(f"step: {step}")
+        
         restored = self._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
 
         # Skip metadata checks if using transformations, since the TrainState may be

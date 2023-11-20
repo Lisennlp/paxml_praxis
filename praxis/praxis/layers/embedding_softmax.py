@@ -201,6 +201,7 @@ class FullSoftmax(base_layer.BaseLayer):
     z_loss_weight: float = 0.0
     bias_init: Optional[float] = 0.0
     feed_forward_tpl: LayerTpl = template_field(linears.FeedForward)
+    chunk_size: Optional[int] = None
 
 
     def setup(self) -> None:

@@ -147,7 +147,13 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         self._external_checkpoint_path = external_checkpoint_path
         # TODO(b/278628399) Consider providing default implementation.
         self._external_checkpoint_handler = external_checkpoint_handler
-        self._step_to_restore = self.checkpoint_manager.latest_step()
+
+        num_batches_to_skip = getattr(checkpoint_manager, 'num_batches_to_skip', None)
+        if num_batches_to_skip is not None:
+            self._step_to_restore = num_batches_to_skip
+        else:
+            self._step_to_restore = self.checkpoint_manager.latest_step()
+        logging.info(f'self._step_to_restore: {self._step_to_restore}')
 
     @property
     def step_to_restore(self) -> Optional[int]:
@@ -181,7 +187,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         # 记录时间
         monitoring.record_event_duration_secs(_WRITE_CHECKPOINT_EVENT, save_period.elapsed)
 
-    # pjit
+    # lsp: pjit
     def _restore_with_args(
         self,
         step_i,
@@ -192,6 +198,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         train_input_pipeline,  # 输入数据的shape和dtype
     ):
         restore_args = {}
+
+        # lsp: here
         if self._checkpoint_type == CheckpointType.GDA:
             restore_args = {
                 "specs": train_state_pspecs,  # shard
@@ -244,7 +252,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     ):
         # lsp: 保存不需要
         del train_state_pspecs
-        if not self.checkpoint_manager.should_save(step_i):
+        # lsp
+        if not self.checkpoint_manager.should_save(step_i) or not self._enable_checkpoint_saving:
             return
         self._save_with_args(
             step_i,
@@ -263,10 +272,23 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         metadata: trainer_lib.TrainStateMetadata,
         root_prng_key: PRNGKey,
         train_input_pipeline: Optional[base_input.BaseInput] = None,
+        return_opt: bool = True, # lsp
     ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
-        logging.info(f"padded_global_shapes: {metadata.padded_global_shapes}")
-        logging.info(f"unpadded_global_shapes: {metadata.unpadded_global_shapes}")
-        logging.info(f"self._step_to_restore: {self._step_to_restore}")
+
+        logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
+        if not return_opt:
+            if self._step_to_restore is None:
+                raise ValueError('When return_opt is True, Restore model have not been None!!!')
+            else:
+                padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
+                unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+        else:
+            padded_global_shapes = metadata.padded_global_shapes
+            unpadded_global_shapes = metadata.unpadded_global_shapes
+
+        logging.info(f"padded_global_shapes: {padded_global_shapes}\n\n")
+        logging.info(f"unpadded_global_shapes: {unpadded_global_shapes}\n\n")
+
         with py_utils.timeit() as restore_period:
             if self._step_to_restore is None:
                 # 指定其他的加载模型路径
@@ -284,8 +306,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             else:
                 partitioned_train_state = self._restore_with_args(
                     self._step_to_restore,
-                    metadata.padded_global_shapes,
-                    metadata.unpadded_global_shapes,
+                    padded_global_shapes,
+                    unpadded_global_shapes,
                     partitioner.global_mesh,
                     metadata.partition_specs,
                     train_input_pipeline,
@@ -424,7 +446,7 @@ class _OrbaxPmapTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             replicated_train_state,
             train_state_provenance,
         ) = partitioner.initialize_prng_key_and_train_state(
-            root_prng_key, train_state, self.checkpoint_type
+            root_prng_key, train_state, self.checkpoint_type,
         )
 
         total_num_params = py_utils.total_num_vars(replicated_train_state.mdl_vars)
@@ -623,7 +645,6 @@ def _create_checkpointer(
     if task_p.train.enable_input_checkpointing:
         train_input_p.input_checkpointing_enabled = True
 
-    logging.info(f"options: {options}")
     checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
         checkpoint_dir,
         checkpointer,
@@ -632,6 +653,8 @@ def _create_checkpointer(
         checkpoint_type=checkpoint_type,
         tensorstore_use_ocdbt=tensorstore_use_ocdbt,
     )
+    # lsp
+    checkpoint_manager.num_batches_to_skip = train_input_p.num_batches_to_skip
 
     if task_p.model.ici_mesh_shape is not None:
         # lsp here

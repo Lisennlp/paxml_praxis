@@ -1310,6 +1310,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TRAINABLE_POSITION_EMB = False
     USE_ROTARY_POSITION_EMB = False
     USE_ALIBI_POSITION_EMB = True
+    ROTARY_TYPE = 'paxml'
 
     CHECKPOINT_EVERY_N_STEPS = 100
     EVAL_LOOP_NUM_BATCHES = 102
@@ -1329,6 +1330,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     SHUFFLE_SIZE = 10000
     TRAINING_SEED = 1234
     QUERY_CHUNK_SIZE = 512
+    LM_HEAD_CHUNK_SIZE = 512
 
     # novel xiaomeng zh en
     LOAD_SEQIO_TEXT = False
@@ -1434,48 +1436,6 @@ class Pythia7BEval(Pythia7B):
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 20
     RESET_FOR_EVAL = True
-
-
-@experiment_registry.register
-class Pythia410M(Pythia7B):
-    NUM_LAYERS = 24
-    NUM_HEADS = 16
-
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049
-    VOCAB_SIZE = 50304
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 5
-    WANDB_PROJECT = "pythia_410m_test"
-    MODEL_DIMS = 1024
-    HIDDEN_DIMS = 4096
-    ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TEST_RATIO = 1
-    RESET_FOR_EVAL = True # True: test while test dataset
-
-    # # c4 data
-    # LOAD_SEQIO_TEXT = True
-    # LOAD_SEQIO_ID = False
-    # KEY_MAP = {"inputs": None, "targets": "text"}
-    # VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
-    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    # DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
-    # DATA_FUNC = c4_registry
-    
-    # # baichuan1使用指令数据集
-    # LOAD_SEQIO_ID = True
-    # LOAD_SEQIO_TEXT = False
-    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    # DATA_PATH = {
-    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
-    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
-    # }
-    # DATA_FUNC = tfids_registry
 
 
 class MyDatasets(base_input.BaseInput):

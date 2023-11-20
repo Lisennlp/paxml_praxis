@@ -557,6 +557,11 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     DCN_MESH_SHAPE = [1, 1, 1]  # lsp：node 数量？
     TRAINING_OPTIMIZED_SHARDING = True
 
+    USE_ALIBI_POSITION_EMB = False 
+    ROTARY_TYPE = 'paxml'
+    LM_HEAD_NORM = False
+
+
     def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
         """Returns the task parameters."""
         if self.DIMS_PER_HEAD is not None:
@@ -593,6 +598,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         # lsp: lm_head norm
         model_p.lm_tpl.softmax_tpl.feed_forward_tpl.linear_tpl.norm = self.LM_HEAD_NORM
         model_p.lm_tpl.softmax_tpl.z_loss_weight = self.Z_LOSS_WEIGHT
+        model_p.lm_tpl.softmax_tpl.chunk_size = getattr(self, "LM_HEAD_CHUNK_SIZE", None)
 
         if self.SEPARATE_EMBEDDING:
             # lsp: 词向量
@@ -649,6 +655,9 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
             )
         if self.USE_ROTARY_POSITION_EMB:
             transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
+            # lsp
+            if self.ROTARY_TYPE == 'pythia':
+                transformer_layer_p.tr_atten_tpl.rotary_position_emb_tpl = pax_fiddle.Config(embedding_softmax.RotaryPythiaPositionalEmbedding)
 
         if self.USE_ALIBI_POSITION_EMB:
             model_p.lm_tpl.use_alibi_position_emb = True

@@ -363,7 +363,7 @@ def _train_and_evaluate_common(
         eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
             eval_programs=eval_programs,
             train_state=eval_partitioned_train_state,
-            step=eval_partitioned_train_state.step,
+            step=step, # eval_partitioned_train_state.step -> step
         )
 
         logging.info(f'eval_metrics: {eval_metrics.metrics_list}')

@@ -1312,7 +1312,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     USE_ALIBI_POSITION_EMB = True
     ROTARY_TYPE = 'paxml'
 
-    CHECKPOINT_EVERY_N_STEPS = 100
+    CHECKPOINT_EVERY_N_STEPS = 20
     EVAL_LOOP_NUM_BATCHES = 102
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
@@ -1331,7 +1331,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     SHUFFLE_SIZE = 10000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
-
+    RESET_FOR_EVAL = False # when True, eval whole eval dataset
     # # novel xiaomeng zh en
     # LOAD_SEQIO_TEXT = False
     # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
@@ -1339,18 +1339,18 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # SPLIT_BSZ = {"zh": 7, "en": 20}  # 7表示这本书取了前7次
     # DATA_FUNC = extract_zh_en_novel_datapath
 
-    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
-    LOAD_SEQIO_TEXT = True
-    KEY_MAP = {"inputs": None, "targets": "text"}
-    VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
-    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    DATA_PATH = {
-                'train': 'gs://common_datasets/', 
-                'test':  'gs://common_datasets/', 
-                }
-    DATA_FUNC = c4_registry
+    # # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    # LOAD_SEQIO_TEXT = True
+    # KEY_MAP = {"inputs": None, "targets": "text"}
+    # VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    # DATA_PATH = {
+    #             'train': 'gs://common_datasets/', 
+    #             'test':  'gs://common_datasets/', 
+    #             }
+    # DATA_FUNC = c4_registry
 
-    # # baichuan1指令数据集
+    # baichuan1指令数据集
     # LOAD_SEQIO_ID = True
     # LOAD_SEQIO_TEXT = False
     # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
@@ -1361,58 +1361,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     # }
     # DATA_FUNC = tfids_registry
 
-@experiment_registry.register
-class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 32
-    NUM_HEADS = 32
-    MODEL_DIMS = 4096
-    HIDDEN_DIMS = 16384
-    VOCAB_SIZE = 50432
-
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-
-    CHECKPOINT_EVERY_N_STEPS = 500
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 2
-   
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-
-    TASK_NAME = "Pythia7B"
-    WANDB_PROJECT = "pythia_7b_test"
-
-    TRAINING_SEED = 1234
-
-    QUERY_CHUNK_SIZE = 512
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = True
-    USE_ALIBI_POSITION_EMB = False
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
-
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
@@ -1422,17 +1370,16 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
                 'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord', 
                 }
     DATA_FUNC = extract_pythia_datapath
-    LM_HEAD_CHUNK_SIZE = 512
-    RESET_FOR_EVAL = True
+
 
 @experiment_registry.register
-class Pythia7BEval(Pythia7B):
+class BC2Gpt13BEval(BC2Gpt13B):
     ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 23000
+    TRAINING_NUM_BATCHES_TO_SKIP = None
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 32
+    ICI_MESH_SHAPE = [1, 8, 1]
+    PERCORE_BATCH_SIZE = 8
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/pile_test', 
                 'test':  'gs://common_datasets/pythia_model_test/pile_test', 
@@ -1474,6 +1421,7 @@ class MyDatasets(base_input.BaseInput):
                 "iter_file_nums": self.iter_file_nums,
                 "checkpoint_step": None,
             }
+            self.step_in_file = 0  # XD fix
         else:
             if self.meta_dict["file_in_data"] != 0:
                 assert self.meta_dict["iter_file_nums"] == self.iter_file_nums, print(
@@ -1483,14 +1431,22 @@ class MyDatasets(base_input.BaseInput):
         logging.info(f'meta_dict: {self.meta_dict}')
         self.train_seed = self.meta_dict['seed']
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
+        self._peek = None
+        self._state_before_peek = None
+
 
     def reset(self) -> None:
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
-    def peek_padded(self):
-        return self.get_next_padded()
+    # def peek_padded(self):
+    #     return self.get_next_padded()
 
     def get_next_padded(self):
+        if self._peek is not None:
+          output = self._peek
+          self._peek = None
+          self._state_before_peek = None
+          return output
         unpadded = next(self.dataset)
         pad_size = int(self.batch_padding_size)
         if pad_size == 0:
@@ -1499,9 +1455,6 @@ class MyDatasets(base_input.BaseInput):
             lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
             unpadded,
         )
-        # if self.num_infeed_hosts > 1:
-        #   x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
-        # return x
 
     def get_global_batch_size(self, train_input):
         logging.info(f"train_input: {train_input} type: {type(train_input)}")
@@ -1537,10 +1490,7 @@ class MyDatasets(base_input.BaseInput):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
-        # shard host data
-        process_index = jax.process_index()
-        logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")
-        ds = ds.shard(self.num_infeed_hosts, process_index)
+        ds = ds.shard(self.num_infeed_hosts, jax.process_index())
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
@@ -1554,8 +1504,7 @@ class MyDatasets(base_input.BaseInput):
         )
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
-        if self.meta_dict["step_in_file"]:
-            ds = ds.skip(self.meta_dict["step_in_file"])
+        if self.step_in_file: ds = ds.skip(self.step_in_file)
         return ds
 
     def load_tfrecord_dataset(self, fnames):
@@ -1564,16 +1513,14 @@ class MyDatasets(base_input.BaseInput):
         repeat_fnames = fnames * self.repeat
         N = math.ceil(len(repeat_fnames) / self.iter_file_nums)
         file_in_data = self.meta_dict["file_in_data"]
-        flag = 0
+        logging.info(f'file_in_data: {file_in_data} N: {N}')
         for n in range(file_in_data, N, 1):
             fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
             self.meta_dict["cur_files"] = fname
             ds = self._load_file_dataset(fname)
             ds = ds.as_numpy_iterator()
             for batch in ds:
-                self.meta_dict["step_in_file"] += 1
-                flag = 1
+                self.step_in_file += 1
                 yield batch
-            if flag:
-                self.meta_dict["file_in_data"] += 1
-                self.meta_dict["step_in_file"] = 0
+            self.meta_dict["file_in_data"] += 1
+            self.step_in_file = 0

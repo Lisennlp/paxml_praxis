@@ -47,7 +47,6 @@ import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
 import wandb
-import smart_open
 from paxml import checkpoint_paths
 
 
@@ -229,7 +228,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
         # Restore TrainState from checkpoint or initialize it.
         logging.info("[PAX STATUS]: Starting checkpoint load / variable init.")
         with py_utils.timeit() as checkpoint_load_timer:
-            # 获取模型参数
+            # lsp：获取模型参数
             (
                 partitioned_train_state,
                 train_state_provenance,
@@ -240,7 +239,9 @@ class DefaultExecutor(base_executor.BaseExecutor):
                 train_state_metadata,
                 root_prng_key,
                 train_input_for_checkpoint,
+                return_opt=False if jax_task.only_eval else True, # lsp
             )
+
         logging.info(
             "[PAX STATUS]: Checkpoint load / variable init took %d seconds",
             checkpoint_load_timer.elapsed,
@@ -272,6 +273,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
     def start(self):
         logging.info("Starting executor.")
+
         is_vars_replicated = self._task.model.ici_mesh_shape is None
         _train_and_evaluate_common(
             task=self._task,
@@ -305,14 +307,20 @@ class DefaultExecutor(base_executor.BaseExecutor):
 
 def record_file_and_step(step, save_dir, train_input):
     fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
-    save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
-    save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_path = save_dir /  'checkpoints' / fill_step / checkpoint_paths.SKIP_STEP_NAME
+    # os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_newest_path = save_dir / 'checkpoints' / checkpoint_paths.SKIP_STEP_NAME
+    if not hasattr(train_input, 'meta_dict'):
+        return
     meta_dict = train_input.meta_dict
-    with smart_open.open(save_path, 'w') as f1, smart_open.open(save_newest_path, 'w') as f2:
-        json.dump(meta_dict, f1)
-        json.dump(meta_dict, f2)
-    logging.info(f'Save skip_file_and_step successful......')
-    logging.info(f'file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]} ')
+    meta_dict['step_in_file'] = train_input.step_in_file - int(train_input._peek is not None)
+    assert meta_dict['step_in_file'] >= 0, f"{meta_dict['step_in_file']}"
+    meta_dict['checkpoint_step'] = step
+    if jax.process_index() == 0:
+        with save_path.open('w') as f1, save_newest_path.open('w') as f2:
+            json.dump(meta_dict, f1)
+            json.dump(meta_dict, f2)
+    logging.info(f'Save skip_file_and_step successful... file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]}')  # XD
 
 
 def _train_and_evaluate_common(
@@ -335,8 +343,40 @@ def _train_and_evaluate_common(
     is_vars_replicated,
     train_prng_seed,
     exit_after_ondemand_checkpoint,
-):
-    """Training loop code common to both pmap and spmd."""
+):  
+    for program in eval_programs:
+        program.setup(task, partitioner, job_log_dir, eval_prng_seed)
+
+    for program in decode_programs:
+        program.setup(task, partitioner, job_log_dir, decode_prng_seed)
+
+    if task.only_eval:
+        step = train_input.num_batches_to_skip
+        logging.info(f'model step: {step}')
+
+        # lsp: 仅仅获取模型参数,mdl_vars
+        eval_partitioned_train_state = programs.get_eval_train_state(
+                task, partitioned_train_state, task.train.eval_use_ema_states
+            )
+        assert eval_programs
+        logging.debug("[PAX STATUS]:  Running eval programs.")
+        eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
+            eval_programs=eval_programs,
+            train_state=eval_partitioned_train_state,
+            step=step, # eval_partitioned_train_state.step -> step
+        )
+
+        logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
+
+        eval_result_path = job_log_dir / f'eval_metrics.{step}.json'
+        logging.info(f'eval_result_path: {eval_result_path}')
+        write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
+
+        logging.info(f'write_json: {write_json}')
+        with eval_result_path.open('w') as f:
+            json.dump(write_json, f)
+        exit(0)
+    
     train_p = task.train
     train_state_metadata = partitioner.get_train_state_metadata()
     train_input_for_checkpoint = train_input if train_p.enable_input_checkpointing else None
@@ -363,10 +403,7 @@ def _train_and_evaluate_common(
         eval_prng_seed,
         step_i,
     )
-    for program in eval_programs:
-        program.setup(task, partitioner, job_log_dir, eval_prng_seed)
-    for program in decode_programs:
-        program.setup(task, partitioner, job_log_dir, decode_prng_seed)
+   
     trainer_lib.check_unique_names([p.eval_input for p in eval_programs])
     trainer_lib.check_unique_names([p.decode_input for p in decode_programs])
 
@@ -391,6 +428,7 @@ def _train_and_evaluate_common(
     gc.collect()
     gc.freeze()
     step_time_deque = deque(maxlen=5)
+  
     # 初始化skip file and step
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)

@@ -392,6 +392,8 @@ def initialize_model_state(
             return model.init(init_key, inputs)
 
     initial_vars = init_fn(init_key)
+
+
     logging.info("initial_vars: %s", jax.tree_map(lambda x: x.shape, initial_vars))
 
     # In case jax_task.model wraps a t5x model, let's remove the params_axes
@@ -893,7 +895,7 @@ def train_step_single_learner(
 
     # Skip variables for gradients.
     excluded_for_grad = tasks_lib.get_excluded_var_mask_for_grad(var_weight_hparams, learner)
-    logging.info(f"[lsp]excluded_for_grad: {excluded_for_grad}")
+    # logging.info(f"[lsp]excluded_for_grad: {excluded_for_grad}")
     # Excluded for optimizer states.
     excluded_for_opt = tasks_lib.get_excluded_var_mask_for_opt(
         var_weight_hparams,
@@ -929,11 +931,11 @@ def train_step_single_learner(
                 g = jax.value_and_grad(_loss, has_aux=True, allow_int=True)
             else:
                 g = functools.partial(learner.stochastic_gradient.grad_fn, _loss)
-            logging.info(f"[lsp]with_grad: {with_grad}")
-            logging.info(f"[lsp]no_grad: {no_grad}")  # no_grad按理为空
+            # logging.info(f"[lsp]with_grad: {with_grad}")
+            # logging.info(f"[lsp]no_grad: {no_grad}")  # no_grad按理为空
             values, grads = g(with_grad, (no_grad, inputs), prng_key)
-            logging.info(f"[lsp]excluded_for_opt: {excluded_for_opt}")
-            logging.info(f"[lsp]excluded_for_grad: {excluded_for_grad}")
+            # logging.info(f"[lsp]excluded_for_opt: {excluded_for_opt}")
+            # logging.info(f"[lsp]excluded_for_grad: {excluded_for_grad}")
             grads = jax.tree_map(
                 lambda eo, eg, m, g: jnp.zeros_like(m) if eg and not eo else g,
                 excluded_for_opt,
@@ -1411,6 +1413,7 @@ def initialize_partitioned_model_states(
         # TODO(b/230132535): Note that this application after constructing the
         # partitioned vars is currently inconsistent with what is being performed
         # for pmap models.
+        logging.info(f'[lsp]jax_task.hparams.train.init_from_checkpoint_rules: {jax_task.hparams.train.init_from_checkpoint_rules}')
         (
             partitioned_vars,
             train_state_provenance,

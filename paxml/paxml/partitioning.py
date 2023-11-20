@@ -640,7 +640,7 @@ class PmapPartitioner(Partitioner):
         logging.info(
             "train state shapes: %s", jax.tree_map(lambda x: x.shape, train_state)
         )
-        # 如果参数没有切分，则将其切分到本机的每个core上, jax.device_put_replicated(state, jax.local_devices())
+        # lsp: 如果参数没有切分，则将其切分到本机的每个core上, jax.device_put_replicated(state, jax.local_devices())
         replicated_train_state = trainer_lib.replicate_model_state(train_state)
         # Unreplicated model states are not needed anymore at that point.
         del train_state
@@ -824,6 +824,7 @@ class PjitPartitioner(Partitioner):
         if not trees.is_subset(spec, input_batch_spec):
             _spec_mismatch_error(input_batch_spec, spec)
 
+    # lsp: here
     def initialize_prng_key_and_train_state(
         self,
         root_prng_key: PRNGKey,
@@ -836,6 +837,7 @@ class PjitPartitioner(Partitioner):
         # train_state should already be partitioned.
         partitioned_train_state = train_state
         train_state_provenance = None
+        # lsp: 模型参数和优化器参数都会初始化
         if partitioned_train_state is None:
             # If no checkpoint was restored, initialize with random weights.
             # discard_opt_states: false, 在partition(的时候已经初始化过 self._train_state_metadata <=> metadata
@@ -857,9 +859,29 @@ class PjitPartitioner(Partitioner):
                 # init_checkpoint_rules are in the same format as the checkpoint
                 # solution used by the experiment.
                 checkpoint_type=checkpoint_type,
-                discard_opt_states=discard_opt_states,
+                discard_opt_states=False,
                 var_weight_hparams=metadata.var_weight_hparams,
             )
+        # lsp：加载预训练模型参数，初始化优化器参数
+        elif (
+            partitioned_train_state.opt_states is None
+            and partitioned_train_state.mdl_vars is not None
+        ):
+            metadata = self.get_train_state_metadata(discard_opt_states)
+            if not metadata.var_weight_hparams:
+                var_weight_hparams = self._jax_task.model.abstract_init_with_metadata(
+                    metadata.inputs_shape_dtype, do_eval=False
+                )
+            else:
+                var_weight_hparams = metadata.var_weight_hparams
+
+            partitioned_train_state = self._jax_task.create_train_state(
+                partitioned_train_state.mdl_vars, var_weight_hparams, discard_opt_states=True
+            )
+        # lsp: 加载预训练参数和优化器
+        else:
+            pass
+
         logging.info(
             "partitioned train state shapes (global shape): %s",
             jax.tree_map(lambda x: x.shape, partitioned_train_state),

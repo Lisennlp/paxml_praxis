@@ -359,6 +359,7 @@ class BaseTrainProgram(Program):
             eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
         # if jax.process_index() == 0:
         #     pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
+        #     exit(0)
         return TrainProgramOutput(
             new_state,
             loss=train_outputs.loss,
@@ -816,10 +817,12 @@ class BaseEvalProgram(Program):
         loss = np.array(loss)
         for k in summary_tensors:
             summary_tensors[k] = np.array([np.asarray(t) for t in summary_tensors[k]])
+
         loss = np.mean(loss, axis=0)
         logging.info("step: %d, eval test %s loss: %s", step, self._name, loss)
 
         for key, values in metrics.items():
+            # logging.info(f'key: {key} values: {values}')
             # `metric_utils.as_float` computes the average from a list of weighted
             # scalars.
             weighted_average = metric_utils.as_float(values)
@@ -827,11 +830,12 @@ class BaseEvalProgram(Program):
             logging.info(
                 "  %s=%f (weight=%f)", key, weighted_average, sum_metric_weights
             )
+       
         summary_utils.write_summary_entry(
             self._eval_summary_writer, step, loss, metrics, summary_tensors
         )
         maybe_write_eval_outputs(
-            EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs
+            EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs, write_pickle=False if self._task.only_eval else True
         )
 
         return EvalProgramOutput(
@@ -890,11 +894,11 @@ class BaseEvalProgram(Program):
             xla_passthrough.merge_back_xla_unsupported_batch(
                 per_example_out, unsupported_inputs
             )
-            logging.info("Finished eval step %d for %s", step_num, self._name)
             loss, weighted_scalars, per_example_out, summary_tensors = (
                 py_utils.maybe_unreplicate_for_fully_replicated(out)
                 for out in (loss, weighted_scalars, per_example_out, summary_tensors)
             )
+            logging.info("Finished eval step %d for %s -> loss: %s", step_num, self._name, loss.item())
 
             losses += [loss]
             for k, v in summary_utils.flatten_summary_dict(summary_tensors):
@@ -911,7 +915,11 @@ class BaseEvalProgram(Program):
             per_example_scores.append(
                 jax.tree_map(lambda x: x.copy(), jax.device_get(per_example_out))
             )
-
+        # logging.info(f'metrics: {metrics}')
+        # logging.info(f'per_example_scores: {per_example_scores}')
+        # logging.info(f'losses: {losses}')
+        # logging.info(f'step_num: {step_num}')
+        # acc <=> fraction_of_correct_next_step_preds: [array, .......],  loss <=>  avg_xent
         return step_num, losses, summary_tensor_dict, metrics, per_example_scores
 
     @abc.abstractmethod

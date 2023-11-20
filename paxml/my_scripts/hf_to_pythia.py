@@ -66,10 +66,18 @@ LLAMA_STANDARD_CONFIGS = {
         "norm_eps": 1e-5,
         "vocab_size": 50432
     },
+    "12b": {
+        "dim": 5120,
+        "intermediate_size": 20480,
+        "n_layers": 36,
+        "n_heads": 40,
+        "norm_eps": 1e-5,
+        "vocab_size": 50688
+    },
 }
 
 options = checkpoint_managers.CheckpointManagerOptions(
-    max_to_keep=10,
+    max_to_keep=1000,
     save_interval_steps=SAVE_INTERVAL_STEPS,
     cleanup_tmp_directories=True,
 )
@@ -80,7 +88,20 @@ checkpointer = Checkpointer(
     )
 )
 
-save_dir = "gs://llm_base_models/pythia/pythia-6.9b-paxml/checkpoints/"
+step = 3000
+
+model_size = "12b"
+
+params = LLAMA_STANDARD_CONFIGS[model_size]
+n_layers = params["n_layers"]
+n_heads = params["n_heads"]
+dim = params["dim"]
+vocab_size = params['vocab_size']
+intermediate_size = params["intermediate_size"]
+head_dim = dim // n_heads
+
+
+save_dir = f"gs://llm_base_models/pythia/pythia-{model_size}-paxml/checkpoints/"
 
 save_dir = epath.Path(save_dir)
 checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
@@ -93,30 +114,20 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
 )
 
 
-step = 13000
-model_size = "6.9b"
-params = LLAMA_STANDARD_CONFIGS[model_size]
-n_layers = params["n_layers"]
-n_heads = params["n_heads"]
-dim = params["dim"]
-vocab_size = params['vocab_size']
-intermediate_size = params["intermediate_size"]
-head_dim = dim // n_heads
-
 
 
 from transformers import GPTNeoXForCausalLM, AutoTokenizer
 
 
 model = GPTNeoXForCausalLM.from_pretrained(
-  "EleutherAI/pythia-6.9b",
+  f"EleutherAI/pythia-{model_size}",
   revision=f"step{step}",
-  cache_dir=f"./pythia-6.9b/step{step}",
+  cache_dir=f"./pythia-{model_size}/step{step}",
 )
 tokenizer = AutoTokenizer.from_pretrained(
-  "EleutherAI/pythia-6.9b",
+  f"EleutherAI/pythia-{model_size}",
   revision=f"step{step}",
-  cache_dir=f"./pythia-6.9bd/step{step}",
+  cache_dir=f"./pythia-{model_size}/step{step}",
 )
 model = model.to(torch.bfloat16)
 model.eval()

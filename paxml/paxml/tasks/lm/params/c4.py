@@ -1420,7 +1420,7 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = True
 
 @experiment_registry.register
-class Pythia7BEval(Pythia7B):
+class Pythia7BPileEval(Pythia7B):
     ONLY_EVAL = True
     TRAINING_NUM_BATCHES_TO_SKIP = 23000
     TEST_RATIO = 1
@@ -1435,6 +1435,22 @@ class Pythia7BEval(Pythia7B):
     EVAL_LOOP_NUM_BATCHES = 20
     RESET_FOR_EVAL = True
 
+@experiment_registry.register
+class Pythia7BFlanMiniEval(Pythia7B):
+    ONLY_EVAL = True
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TEST_RATIO = 1
+    # RESET_FOR_EVAL = True # True: test while test dataset
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 32
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/flan_test', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test', 
+                }
+    DATA_FUNC = extract_pythia_datapath
+    EVAL_LOOP_NUM_BATCHES = 10
+    RESET_FOR_EVAL = False
+    LOSS_BATCH_MEAN = True
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):

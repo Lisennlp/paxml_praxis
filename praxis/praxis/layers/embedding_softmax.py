@@ -267,6 +267,7 @@ class FullSoftmax(base_layer.BaseLayer):
 
         if self.loss_batch_mean:
             # lsp
+            logging.info(f'============loss_batch_mean: {loss_batch_mean}==========')
             total_xent_batch = jnp.sum(
                 jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
                 dtype=jnp.float32, axis=-2,
@@ -274,6 +275,7 @@ class FullSoftmax(base_layer.BaseLayer):
             total_weight_batch = jnp.maximum(jnp.sum(class_weights, dtype=jnp.float32, axis=-2), 1e-10)
             batch_avg_xent = jnp.mean(total_xent_batch / total_weight_batch)
         else:
+            logging.info(f'============loss_batch_mean: {loss_batch_mean}==========')
             batch_avg_xent = None
 
         # Compute total softmax cross-entropy loss for the output tensor.

@@ -864,7 +864,7 @@ class PjitPartitioner(Partitioner):
             )
         # lsp：加载预训练模型参数，初始化优化器参数
         elif (
-            partitioned_train_state.opt_states is None
+            (partitioned_train_state.opt_states is None or len(partitioned_train_state.opt_states) == 0)
             and partitioned_train_state.mdl_vars is not None
         ):
             metadata = self.get_train_state_metadata(discard_opt_states)

@@ -276,15 +276,19 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
 
         logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
-        if not return_opt or self.step_to_restore == 0:
+        # if not return_opt or self.step_to_restore == 0:
+        if not return_opt:
             if self._step_to_restore is None:
                 raise ValueError('When return_opt is True, Restore model have not been None!!!')
             else:
                 padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=[])
                 unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=[])
+                partition_specs = metadata.partition_specs.replace(opt_states=[])
+                
         else:
             padded_global_shapes = metadata.padded_global_shapes
             unpadded_global_shapes = metadata.unpadded_global_shapes
+            partition_specs = metadata.partition_specs
 
         logging.info(f"padded_global_shapes: {padded_global_shapes}\n\n")
         logging.info(f"unpadded_global_shapes: {unpadded_global_shapes}\n\n")
@@ -309,7 +313,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
                     padded_global_shapes,
                     unpadded_global_shapes,
                     partitioner.global_mesh,
-                    metadata.partition_specs,
+                    partition_specs, # lsp: metadata.partition_specs -> partition_specs
                     train_input_pipeline,
                 )
         monitoring.record_event_duration_secs(_READ_CHECKPOINT_EVENT, restore_period.elapsed)

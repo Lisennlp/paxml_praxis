@@ -25,76 +25,6 @@ sudo iptables -A OUTPUT -p tcp --sport 12345 -j ACCEPT
 
 
 
-# 测试tpu初始化
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32-0 --zone=us-east1-d  --command="cd ~/projects/mesh_easy_jax;/home/lishengping/miniconda3/bin/python device_train.py --config configs/32-test-llama.json"  --project=llm-tpu --worker=all
-gcloud compute tpus tpu-vm ssh llm-jax-v4-128-0 --zone=us-central2-b  --command="pip install mlxu"  --project=llm-tpu --worker=all
-gcloud compute tpus tpu-vm ssh llm-jax-v5litepod-32-0 --zone=us-west4-a  --command="/home/lishengping/miniconda3/bin/python -c 'import jax; print(jax.devices())'"  --project=llm-tpu --worker=all
-
-# 环境搭建
-gcloud compute tpus tpu-vm scp ~/install_new.sh llm-jax-v3-32-0:~/  --zone=us-east1-d  --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32 --zone=us-east1-d --worker=all --command="bash install_new.sh"  --project=llm-tpu
-gcloud compute tpus tpu-vm scp paxml/my_scripts/tokenizer_bucket_json.py llm-jax-v4-64-3:~/  --zone=us-central2-b  --worker=all  --project=llm-tpu
-
-# mesh train
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="/home/lishengping/miniconda3/bin/python  /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7B --job_log_dir=gs://llm_base_models/pythia/test1116_7B/ 2>&1 --enable_checkpoint_saving=True --eval_on_test=False| tee lsp_debug.log"  --project=llm-tpu
-
-# 安装torch
-pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpus
-conda install -y pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 cpuonly -c pytorch
-
-# 抢占式训练
-python3 create_tpu.py --type v3-128 --suffix 10 -inf install_0812.sh -p --del --check -trco "killall main.py; cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B --job_log_dir=gs://llm_base_models/baichuan_models/13b/2/paxml  2>&1 --enable_checkpoint_saving=True  --eval_on_test=True| tee lsp_debug.log"
-
-python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B --job_log_dir=gs://llm_base_models/temp/test1120/ 2>&1 --enable_checkpoint_saving=True --eval_on_test=False| tee lsp_debug.log
-
-
-
-gcloud compute tpus tpu-vm scp /Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/install_pax.sh llm-jax-v3-32-10:~/  --zone=us-east1-d  --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="bash install_pax.sh us-east1"  --project=llm-tpu
-
-# v3 hf pythia
-TPU_NAME=llm-jax-v3-32-10
-STEP=113000
-ZONE=us-east1-d
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
-
-
-TPU_NAME=llm-jax-v3-32-10
-STEP=113000
-ZONE=us-east1-d
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7BEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia7BEval.Step$STEP.log"
-
-# v3 PilePythia7B128x1Eval
-TPU_NAME=llm-jax-v3-32-10
-STEP=23000
-ZONE=us-east1-d
-gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:~/  --zone=$ZONE  --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command=/home/lishengping/miniconda3/bin/pip install mlxu"
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; git clone -b xd/dev https://github.com/xiaoda99/paxml.git;git clone -b xd/dev https://github.com/xiaoda99/praxis.git"
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia7B128x1Eval --job_log_dir=gs://llm_projects/log/PilePythia7B128x1_fix/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee PilePythia7B128x1Eval.Step$STEP.log"
-
-
-# PilePythia7B256x1FixRotAlignInit
-
-TPU_NAME=llm-jax-v3-32-10
-ZONE=us-east1-d
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; git clone -b xd/dev https://github.com/xiaoda99/paxml.git;git clone -b xd/dev https://github.com/xiaoda99/praxis.git"
-gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:~/  --zone=$ZONE  --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia7B256x1FixRotAlignInitEval --job_log_dir=gs://llm_projects/log/PilePythia7B256x1FixRotAlignInit_earlyckpt/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee PilePythia7B256x1FixRotAlignInitEval.Step9000.log"
-
-
-
-
-# v4 PilePythia7B256x1DynWFFN16HD128Win256Eval
-TPU_NAME=llm-jax-v4-32-10
-STEP=23000
-ZONE=us-central2-b
-gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; git clone -b xd/dev https://github.com/xiaoda99/paxml.git;git clone -b xd/dev https://github.com/xiaoda99/praxis.git;killall main.py"
-gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="sudo rm -f /tmp/libtpu_lockfile; sudo chmod +777 -R /tmp/tpu_logs/;killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia7B256x1DynWFFN16HD128Win256Eval --job_log_dir=gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256v4_fix/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee PilePythia7B256x1DynWFFN16HD128Win256Eval.Step$STEP.log"
-
-
-
-
 # v4 PilePythia7B256x1DynWFFN16HD128Win256Alignedv4
 TPU_NAME=llm-jax-v4-32-10
 ZONE=us-central2-b
@@ -102,73 +32,38 @@ STEP=33000
 gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; git clone -b xd/dev https://github.com/xiaoda99/paxml.git;git clone -b xd/dev https://github.com/xiaoda99/praxis.git"
 gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:/home/lishengping/projects/paxml/paxml/tasks/lm/params/c4.py  --zone=$ZONE  --worker=all  --project=llm-tpu
 
-TPU_NAME=llm-jax-v4-32-10
-ZONE=us-central2-b
+
+
+
+Pile v3-64-10  12B
+TPU_NAME=llm-jax-v3-64-10
 STEP=33000
-gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="sudo rm -f /tmp/libtpu_lockfile; sudo chmod +777 -R /tmp/tpu_logs/;killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia7B256x1DynWFFN16HD128Win256AlignedEval --job_log_dir=gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256Alignedv4/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee PilePythia7B256x1DynWFFN16HD128Win256AlignedEval.Step$STEP.log"
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BPileEval.Step$STEP.log"
+
+Pile v3-64-13  12B
+TPU_NAME=llm-jax-v3-64-13
+STEP=43000
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BPileEval.Step$STEP.log"
 
 
+FlanMini v3-64-12  7B
+TPU_NAME=llm-jax-v3-64-12
+STEP=3000
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7BFlanMiniEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia7BFlanMiniEval.Step$STEP.log"
 
 
-
-# kill and train
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B1001 --job_log_dir=gs://llm_base_models/baichuan_models/13b/2/paxml_1001test/  2>&1 --enable_checkpoint_saving=False  --eval_on_test=True| tee lsp_debug.log "
-gcloud compute tpus tpu-vm ssh llm-jax-v3-128-10 --zone=us-east1-d --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; cd /home/lishengping/projects/paxml;/home/lishengping/miniconda3/bin/python paxml/main.py --exp=tasks.lm.params.c4.BC2Gpt13B1001 --job_log_dir=gs://llm_base_models/baichuan_models/13b/2/paxml_1001/  2>&1 --enable_checkpoint_saving=True  --eval_on_test=True| tee lsp_debug.log"
-
-
-
-
-gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="python main.py N"
+FlanMini v3-64-11  12B
+TPU_NAME=llm-jax-v3-64-11
+STEP=3000
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BFlanMiniEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BFlanMiniEval.Step$STEP.log"
 
 
-gcloud compute tpus tpu-vm scp c4.py llm-jax-v3-32-10:~/projects/paxml/paxml/tasks/lm/params/  --zone=us-east1-d  --worker=all  --project=llm-tpu
-
-
-
-gcloud compute tpus tpu-vm ssh llm-jax-v3-64-3 --zone=us-east1-d --worker=all --command="home/lishengping/miniconda3/bin/pip install mlxu;home/lishengping/miniconda3/bin/pip install wandb"  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v3-64-3 --zone=us-east1-d --worker=all --command="killall pile_to_bucket"  --project=llm-tpu
-
-
-
-
-gcloud compute tpus tpu-vm scp /Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/install_pile.sh llm-jax-v4-256-0:~/  --zone=us-central2-b --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm scp /Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/pile_to_bucket_multiprocess.py llm-jax-v4-256-0:/home/lishengping/projects/pythia/utils/gpt-neox/  --zone=us-central2-b  --worker=all  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v4-256-0 --zone=us-central2-b --worker=all --command="bash install_pile.sh"  --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v3-64-3 --zone=us-east1-d --worker=all --command="cd /home/lishengping/projects/pythia/utils/gpt-neox/;/home/lishengping/miniconda3/bin/python pile_to_bucket.py 90"  --project=llm-tpu
-
-
-cd /home/lishengping/projects/pythia/utils/gpt-neox/megatron/data
-make
-cd /home/lishengping/projects/pythia/utils/gpt-neox/
-tmux new -s process
-python pile_to_bucket_multiprocess.py 200
-
-gcloud compute tpus tpu-vm ssh llm-jax-v4-256-0 --zone=us-central2-b --worker=all --command="sudo ps -ef | grep pile|awk 'NR>1 {print $2}' |xargs sudo kill -9"  --project=llm-tpu
-
-
-
-TPU_TYPE="v3-8"; ZONE="us-east1-d"; CREATE_ARGS="--version=tpu-vm-base --network v4-vpc-network"; SUFFIX="v3"
-ID="10"; TPU_NAME=llm-jax-${TPU_TYPE}-$ID;
-while :; do tpu_status=$(gcloud alpha compute tpus describe $TPU_NAME --zone=$ZONE --format="value[terminator=''](state)"); if [ -z $tpu_status ] || [ $tpu_status != "READY" ]; then gcloud compute tpus tpu-vm delete ${TPU_NAME} --zone=${ZONE} --quiet; gcloud alpha compute tpus tpu-vm create $TPU_NAME --accelerator-type=$TPU_TYPE ${CREATE_ARGS} --zone=$ZONE --preemptible; gcloud compute tpus tpu-vm scp /home/lishengping/tpu/install_0812.sh ${TPU_NAME}:~/  --zone=$ZONE  --worker=all; gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker=all --command="bash install_0812.sh ${ZONE:0:-2} 2>&1 | tee install.log"; fi; echo "Copying files..."; if ! gcloud compute tpus tpu-vm scp /nas/xd/projects/paxml/paxml/tasks/lm/params/c4.py ${TPU_NAME}:/home/lishengping/projects/paxml/paxml/tasks/lm/params/ --zone=$ZONE  --worker all; then continue; fi; if ! gcloud compute tpus tpu-vm scp /nas/xd/projects/praxis/praxis/layers/transformers.py ${TPU_NAME}:/home/lishengping/projects/praxis/praxis/layers/ --zone=$ZONE --worker all; then continue; fi; done
-
-
-step = 3000
-version = 'pythia-6.9b'
-wget_files = ['config.json', 'special_tokens_map.json', 'pytorch_model-00001-of-00002.bin', 'pytorch_model-00002-of-00002.bin', 'tokenizer_config.json', 'tokenizer.json']
-tgt_dir = f'{version}'
-os.makedirs(tgt_dir, exist_ok=True)
-for wget_file in wget_files
-    url = f'https://huggingface.co/EleutherAI/{version}/resolve/step{step}/{wget_file}?download=true'
-    command = f'wget {url} -O {tgt_dir}'
-
-
-gcloud compute tpus tpu-vm ssh llm-jax-v3-256-0 --zone=us-east1-d --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken"  --project=llm-tpu
-
-
-gcloud compute tpus tpu-vm scp /Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/xiaomeng_data_processed2.py llm-jax-v3-256-0:/home/lishengping/deal_en.py  --zone=us-east1-d  --worker=all --project=llm-tpu
-gcloud compute tpus tpu-vm ssh llm-jax-v3-256-0 --zone=us-east1-d --worker=all --command="/home/lishengping/miniconda3/bin/python deal_en.py 240 6 | tee log.txt"  --project=llm-tpu
-
-
-
-
-gcloud compute tpus tpu-vm ssh $TPU_NAME --project=llm-tpu --worker all  --zone $ZONE --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7BEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee pythia-6.9b-paxml.Step13000.log"
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen7B --job_log_dir=gs://llm_base_models/qwen/7b/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False| tee Qwen7B.log

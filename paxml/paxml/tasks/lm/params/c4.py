@@ -1420,13 +1420,77 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = True
 
+
+@experiment_registry.register
+class Pythia12B(DataParams, C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 36
+    NUM_HEADS = 40
+    MODEL_DIMS = 5120
+    HIDDEN_DIMS = 20480
+    VOCAB_SIZE = 50688
+
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 8, 1]
+
+    CHECKPOINT_EVERY_N_STEPS = 500
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    LAYERNORM_EPSILON = 1e-05
+    # Learning rate schedule
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_cosine_decay"
+    LR_COS_MIN_RATIO = 0.1
+    LR_COS_MAX = 1.0
+    LR_COS_WARMUP = 200
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
+    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    WEIGHT_DECAY = 0.0
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+
+    TASK_NAME = "Pythia7B"
+    WANDB_PROJECT = "pythia_7b_test"
+
+    TRAINING_SEED = 1234
+
+    QUERY_CHUNK_SIZE = 512
+    Z_LOSS_WEIGHT = 0.0
+    LM_HEAD_NORM = False
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    NORMALIZATION_CLS = normalizations.LayerNorm
+    USE_BIAS = True
+    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    ACTIVATION_CLS = layers.GELU
+    ROTARY_TYPE = 'pythia'
+
+    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+
+    LOAD_SEQIO_TEXT = False
+    LOAD_SEQIO_ID = False
+    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
+                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
+                }
+    DATA_FUNC = extract_pythia_datapath
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = True
+
+
 @experiment_registry.register
 class Pythia7BPileEval(Pythia7B):
     ONLY_EVAL = True
     TRAINING_NUM_BATCHES_TO_SKIP = 23000
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 32, 1]
+    ICI_MESH_SHAPE = [1, 16, 4]
     PERCORE_BATCH_SIZE = 1
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/pile_test', 
@@ -1435,16 +1499,36 @@ class Pythia7BPileEval(Pythia7B):
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 20
     RESET_FOR_EVAL = True
-    TASK_NAME = 'PileTest'
+    TASK_NAME = 'Pile'
+    LM_HEAD_CHUNK_SIZE = None
+
+
+@experiment_registry.register
+class Pythia12BPileEval(Pythia12B):
+    ONLY_EVAL = True
+    TRAINING_NUM_BATCHES_TO_SKIP = 23000
+    TEST_RATIO = 1
+    # RESET_FOR_EVAL = True # True: test while test dataset
+    ICI_MESH_SHAPE = [1, 16, 4]
+    PERCORE_BATCH_SIZE = 16
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/pile_test', 
+                'test':  'gs://common_datasets/pythia_model_test/pile_test', 
+                }
+    DATA_FUNC = extract_pythia_datapath
+    EVAL_LOOP_NUM_BATCHES = 20
+    RESET_FOR_EVAL = True
+    TASK_NAME = 'Pile'
+    LM_HEAD_CHUNK_SIZE = None
+
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(Pythia7B):
     ONLY_EVAL = True
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TEST_RATIO = 1
-    # RESET_FOR_EVAL = True # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 32
+    ICI_MESH_SHAPE = [1, 16, 4]
+    PERCORE_BATCH_SIZE = 16
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/flan_test', 
                 'test':  'gs://common_datasets/pythia_model_test/flan_test', 
@@ -1452,12 +1536,36 @@ class Pythia7BFlanMiniEval(Pythia7B):
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 5
-    RESET_FOR_EVAL = False
-    LOSS_BATCH_MEAN = False
-    ACC_BATCH_MEAN = False
-    TASK_NAME = 'FlanMiniTest'
+    RESET_FOR_EVAL = True
     ZERO_LOSS = False
+    LOSS_BATCH_MEAN = True
+    ACC_BATCH_MEAN = True
+    TASK_NAME = 'FlanMini'
     LM_HEAD_CHUNK_SIZE = None
+
+
+
+@experiment_registry.register
+class Pythia12BFlanMiniEval(Pythia12B):
+    ONLY_EVAL = True
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TEST_RATIO = 1
+    ICI_MESH_SHAPE = [1, 16, 4]
+    PERCORE_BATCH_SIZE = 16
+    DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/flan_test', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test', 
+                }
+    KEY_MAP = {"targets": "input_ids", "labels": "labels"}
+    DATA_FUNC = extract_pythia_datapath
+    EVAL_LOOP_NUM_BATCHES = 5
+    RESET_FOR_EVAL = True
+    ZERO_LOSS = False
+    LOSS_BATCH_MEAN = True
+    ACC_BATCH_MEAN = True
+    TASK_NAME = 'FlanMini'
+    LM_HEAD_CHUNK_SIZE = None
+
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):

@@ -317,6 +317,7 @@ def set_adam_and_learning_rate_schedule(
     return task_p
 
 
+# 这个类继承
 class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
     """Base SPMD Transformer LM configuration using Adam.
 
@@ -374,7 +375,11 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
             # stacked_p.block: StackedTransformer
             stacked_p = stacked_p.block
         transformer_layer_p = stacked_p.transformer_layer_params_tpl
-        transformer_layer_p.tr_atten_tpl.use_bias = self.USE_BIAS
+        # lsp： 在这里设置的attn bias
+        # qkv bias
+        transformer_layer_p.tr_atten_tpl.use_bias = getattr(self, 'QKV_BIAS', False)
+        # post bias | mlp bias
+        transformer_layer_p.tr_atten_tpl.o_bias = getattr(self, 'O_BIAS', False)
         # lsp
         task_p = set_adam_and_learning_rate_schedule(cls=self, task_p=task_p)
 
@@ -556,7 +561,9 @@ def configure_gpt3_task(
         model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
 
     transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
-    transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
+    # lsp 优先级最高：atten qkv bias
+    transformer_layer_p.tr_atten_tpl.use_bias = getattr(cls, 'QKV_BIAS', False)
+    transformer_layer_p.tr_atten_tpl.o_bias = getattr(cls, 'O_BIAS', False)
 
     # lsp:
     # transformer_layer_p.tr_atten_tpl.atten_dropout_prob = cls.ATTEN_DROPOUT_PROB # 会被transformer_layer_p的atten_dropout_prob覆盖
@@ -1272,7 +1279,7 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class BC2Gpt13B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 2
+    NUM_LAYERS = 40
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
@@ -1373,20 +1380,111 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
-class BC2Gpt13BEval(BC2Gpt13B):
-    ONLY_EVAL = True
+class Qwen7B(C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 32
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 22016
+    NUM_HEADS = 32
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 1025
+    VOCAB_SIZE = 151936
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
+    Z_LOSS_WEIGHT = 0.0
+
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    TEST_RATIO = 1
-    # RESET_FOR_EVAL = True # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 8, 1]
-    PERCORE_BATCH_SIZE = 8
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    ROTARY_TYPE = 'paxml'
+    NORMALIZATION_CLS = normalizations.RmsNorm
+    QKV_BIAS = True
+    O_BIAS = False
+    USE_BIAS = False
+    FPROP_DTYPE = jnp.bfloat16
+
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 102
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "debug"
+    LM_HEAD_NORM = False
+
+    QUERY_CHUNK_SIZE = 128
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = False
+    TASK_NAME = "Qwen7B"
+    TARGET_LOG_PPLX = -1
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+    TRAINING_SEED = 1234
+    TEST_RATIO = 0.02
+    RESET_FOR_EVAL = False # when True, eval whole eval dataset
+
+    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    LOAD_SEQIO_TEXT = False
+    LOAD_SEQIO_ID = False
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/pile_test', 
-                'test':  'gs://common_datasets/pythia_model_test/pile_test', 
+                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
                 }
     DATA_FUNC = extract_pythia_datapath
+
+
+@experiment_registry.register
+class BaseEval():
+  ONLY_EVAL = True
+  TEST_RATIO = 1
+  RESET_FOR_EVAL = True # True: test while test dataset
+  DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/pile_test',
+                'test':  'gs://common_datasets/pythia_model_test/pile_test',
+                }
+  DATA_FUNC = extract_pythia_datapath
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
+class BC2Gpt13BEval(BaseEval, BC2Gpt13B):
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    ICI_MESH_SHAPE = [1, 8, 1]
+    PERCORE_BATCH_SIZE = 4
+    # DATA_PATH = {
+    #             'train': 'gs://common_datasets/pythia_model_test/pile_test', 
+    #             'test':  'gs://common_datasets/pythia_model_test/pile_test', 
+    #             }
+    # DATA_FUNC = extract_pythia_datapath
+
+    RESET_FOR_EVAL = False
     EVAL_LOOP_NUM_BATCHES = 20
-    RESET_FOR_EVAL = True
+
+     # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    LOAD_SEQIO_TEXT = True
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCAB_FILE = "gs://llm_base_models/baichuan2-13b-hf/tokenizer.model"
+    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+    DATA_PATH = {
+                'train': 'gs://common_datasets/', 
+                'test':  'gs://common_datasets/', 
+                }
+    DATA_FUNC = c4_registry
 
 
 class MyDatasets(base_input.BaseInput):

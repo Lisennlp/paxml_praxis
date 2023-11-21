@@ -95,13 +95,13 @@ def extract_pythia_datapath(task, mode):
     path = task.DATA_PATH[mode].replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
-    directory_path = '/'.join(path_parts[1:]) + '/'
-
+    directory_path = '/'.join(path_parts[1:])
+    directory_path = directory_path if directory_path.endswith('/') else directory_path  + '/'
     logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
     step_map_path = {}
     rerank = 0
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
-        if '.tfrecord' in blob.name:
+        if '.tfrecord' in blob.name or ('_R' in blob.name and '_F' in blob.name):
             logging.info(f"Successful filename: {blob.name}=====")
             try:
                 step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])

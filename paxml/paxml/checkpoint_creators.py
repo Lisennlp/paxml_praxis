@@ -276,7 +276,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
 
         logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
-        if not return_opt:
+        if not return_opt or self.step_to_restore == 0:
             if self._step_to_restore is None:
                 raise ValueError('When return_opt is True, Restore model have not been None!!!')
             else:

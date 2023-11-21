@@ -1066,6 +1066,7 @@ class DotProductAttention(base_layer.BaseLayer):
     combine_qkv: bool = False
     combined_qkv_proj_tpl: LayerTpl = template_field(CombinedQKVProjectionLayer)
     use_bias: bool = True
+    o_bias: bool = False
     output_proj_use_nhd_shape: bool = False
     internal_enable_query_scale: bool = True
     internal_enable_per_dim_scale: bool = True
@@ -1240,7 +1241,7 @@ class DotProductAttention(base_layer.BaseLayer):
             num_heads=self.num_heads,
             dim_per_head=dim_per_head,
             is_output_projection=True,
-            use_bias=self.use_bias,
+            use_bias=self.o_bias,
             use_nhd_shape=self.output_proj_use_nhd_shape,
         )
         if post_std is not None:

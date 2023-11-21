@@ -353,7 +353,8 @@ def _train_and_evaluate_common(
     if task.only_eval:
         step = train_input.num_batches_to_skip
         logging.info(f'model step: {step}')
-
+        if step is None:
+            step = 0
         # lsp: 仅仅获取模型参数,mdl_vars
         eval_partitioned_train_state = programs.get_eval_train_state(
                 task, partitioned_train_state, task.train.eval_use_ema_states

@@ -280,8 +280,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             if self._step_to_restore is None:
                 raise ValueError('When return_opt is True, Restore model have not been None!!!')
             else:
-                padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
-                unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+                padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=[])
+                unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=[])
         else:
             padded_global_shapes = metadata.padded_global_shapes
             unpadded_global_shapes = metadata.unpadded_global_shapes

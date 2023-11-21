@@ -210,6 +210,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 shuffle_buffer_size=shuffle_buffer_size,
                 num_batches_to_skip=num_batches_to_skip,
                 only_eval=getattr(self, 'ONLY_EVAL', False),
+                zero_loss=getattr(self, 'ZERO_LOSS', False),
             )
             return p  
 
@@ -1448,11 +1449,13 @@ class Pythia7BFlanMiniEval(Pythia7B):
                 'train': 'gs://common_datasets/pythia_model_test/flan_test', 
                 'test':  'gs://common_datasets/pythia_model_test/flan_test', 
                 }
+    KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 10
     RESET_FOR_EVAL = False
     LOSS_BATCH_MEAN = True
     TASK_NAME = 'FlanMiniTest'
+    ZERO_LOSS = True
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):
@@ -1513,6 +1516,7 @@ class MyDatasets(base_input.BaseInput):
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
+    zero_loss: bool = False
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
@@ -1540,6 +1544,7 @@ class MyDatasets(base_input.BaseInput):
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
         self._peek = None
         self._state_before_peek = None
+        logging.info(f'zero loss: {self.zero_loss}')
 
  #   def peek_padded(self):
   #      return self.get_next_padded()
@@ -1579,9 +1584,16 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            weights = data["labels"] >= 0
+            if self.zero_loss:
+                weights = data["labels"] >= 0
+            else:
+                weights = data["labels"] > 0
         else:
-            weights = data["input_ids"] >= 0
+            if self.zero_loss:
+                weights = data["input_ids"] >= 0
+            else:
+                weights = data["input_ids"] > 0
+
         model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)

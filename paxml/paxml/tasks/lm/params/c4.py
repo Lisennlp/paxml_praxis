@@ -1506,7 +1506,7 @@ class Pythia7BPileEval(Pythia7B):
 @experiment_registry.register
 class Pythia12BPileEval(Pythia12B):
     ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 23000
+    TRAINING_NUM_BATCHES_TO_SKIP = 43000
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
     ICI_MESH_SHAPE = [1, 16, 4]
@@ -1535,8 +1535,8 @@ class Pythia7BFlanMiniEval(Pythia7B):
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 5
-    RESET_FOR_EVAL = True
+    EVAL_LOOP_NUM_BATCHES = 160
+    RESET_FOR_EVAL = False
     ZERO_LOSS = False
     LOSS_BATCH_MEAN = True
     ACC_BATCH_MEAN = True
@@ -1558,8 +1558,8 @@ class Pythia12BFlanMiniEval(Pythia12B):
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 5
-    RESET_FOR_EVAL = True
+    EVAL_LOOP_NUM_BATCHES = 160
+    RESET_FOR_EVAL = False
     ZERO_LOSS = False
     LOSS_BATCH_MEAN = True
     ACC_BATCH_MEAN = True

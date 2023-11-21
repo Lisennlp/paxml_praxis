@@ -23,6 +23,7 @@ import json
 import time
 from collections import deque
 from typing import Any, Callable, Optional, Sequence, Tuple
+import sys
 
 from absl import logging
 from etils import epath
@@ -367,15 +368,15 @@ def _train_and_evaluate_common(
         )
 
         logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
+   
+        write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
+        logging.info(f'write_json: {write_json}')
 
         eval_result_path = job_log_dir / f'eval_metrics.{step}.json'
         logging.info(f'eval_result_path: {eval_result_path}')
-        write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
-
-        logging.info(f'write_json: {write_json}')
         with eval_result_path.open('w') as f:
             json.dump(write_json, f)
-        exit(0)
+        sys.exit(0)
     
     train_p = task.train
     train_state_metadata = partitioner.get_train_state_metadata()

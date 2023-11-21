@@ -1434,6 +1434,7 @@ class Pythia7BPileEval(Pythia7B):
     DATA_FUNC = extract_pythia_datapath
     EVAL_LOOP_NUM_BATCHES = 20
     RESET_FOR_EVAL = True
+    TASK_NAME = 'PileTest'
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(Pythia7B):
@@ -1451,6 +1452,7 @@ class Pythia7BFlanMiniEval(Pythia7B):
     EVAL_LOOP_NUM_BATCHES = 10
     RESET_FOR_EVAL = False
     LOSS_BATCH_MEAN = True
+    TASK_NAME = 'FlanMiniTest'
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):

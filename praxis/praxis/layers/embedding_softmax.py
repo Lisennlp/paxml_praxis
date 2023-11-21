@@ -266,8 +266,9 @@ class FullSoftmax(base_layer.BaseLayer):
         per_example_argmax = jax.lax.stop_gradient(jnp.argmax(logits.astype(jnp.float32), axis=-1))
 
         if self.loss_batch_mean:
-            # lsp
+            # lsp class_weights: bsz * len * 1
             logging.info(f'============loss_batch_mean: {self.loss_batch_mean}==========')
+            logging.info(f'per_example_xent: {per_example_xent.shape} class_weights： {class_weights.shape}' )
             total_xent_batch = jnp.sum(
                 jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
                 dtype=jnp.float32, axis=-2,
@@ -318,6 +319,7 @@ class FullSoftmax(base_layer.BaseLayer):
                 batch_avg_xent = _batch_avg_xent if batch_avg_xent is None else batch_avg_xent + _batch_avg_xent
                 total_weight = _total_weight if total_weight is None else total_weight + _total_weight
                 z_loss = _z_loss if z_loss is None else z_loss + _z_loss
+            batch_avg_xent = batch_avg_xent if batch_avg_xent is None else batch_avg_xent / (i + 1)
             per_example_xent = jnp.concatenate(per_example_xent, axis=-1)
             per_example_argmax = jnp.concatenate(per_example_argmax, axis=-1)
         else:

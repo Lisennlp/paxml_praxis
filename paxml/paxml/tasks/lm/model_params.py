@@ -582,6 +582,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         model_p.lm_tpl.packed_input = self.PACKED_INPUT
         model_p.lm_tpl.model_dims = self.MODEL_DIMS
         model_p.lm_tpl.vocab_size = self.VOCAB_SIZE
+        model_p.acc_batch_mean = getattr(self, 'ACC_BATCH_MEAN', False)
 
         if self.SEPARATE_EMBEDDING:
             # lsp embed 这是词向量层

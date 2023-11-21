@@ -1427,7 +1427,7 @@ class Pythia7BPileEval(Pythia7B):
     TEST_RATIO = 1
     # RESET_FOR_EVAL = True # True: test while test dataset
     ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 32
+    PERCORE_BATCH_SIZE = 1
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/pile_test', 
                 'test':  'gs://common_datasets/pythia_model_test/pile_test', 
@@ -1451,11 +1451,13 @@ class Pythia7BFlanMiniEval(Pythia7B):
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 10
+    EVAL_LOOP_NUM_BATCHES = 5
     RESET_FOR_EVAL = False
-    LOSS_BATCH_MEAN = True
+    LOSS_BATCH_MEAN = False
+    ACC_BATCH_MEAN = False
     TASK_NAME = 'FlanMiniTest'
-    ZERO_LOSS = True
+    ZERO_LOSS = False
+    LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class Pythia410M(Pythia7B):
@@ -1584,7 +1586,9 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
+            print(f'labels in data')
             if self.zero_loss:
+                print(f'zero_loss is True')
                 weights = data["labels"] >= 0
             else:
                 weights = data["labels"] > 0
@@ -1595,6 +1599,8 @@ class MyDatasets(base_input.BaseInput):
                 weights = data["input_ids"] > 0
 
         model_needed_inputs.weights = weights[:, 1:seq_len]
+        logging.info(f"weights: {model_needed_inputs.weights.shape} sum: {model_needed_inputs.weights}")
+        
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)
         pos = tf.range(seq_len - 1)

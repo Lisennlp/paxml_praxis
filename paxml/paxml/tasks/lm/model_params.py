@@ -598,6 +598,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         model_p.lm_tpl.softmax_tpl.feed_forward_tpl.linear_tpl.norm = self.LM_HEAD_NORM
         model_p.lm_tpl.softmax_tpl.z_loss_weight = self.Z_LOSS_WEIGHT
         model_p.lm_tpl.softmax_tpl.chunk_size = getattr(self, "LM_HEAD_CHUNK_SIZE", None)
+        model_p.lm_tpl.softmax_tpl.loss_batch_mean = getattr(self, "LOSS_BATCH_MEAN", False)
 
         if self.SEPARATE_EMBEDDING:
             # lsp: 词向量

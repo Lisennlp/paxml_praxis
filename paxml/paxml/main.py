@@ -61,17 +61,6 @@ FLAGS = flags.FLAGS
 
 
 flags.DEFINE_string(
-    "eval__step",
-    0,
-    (
-        "Experiment configuration identifier name. This name typically "
-        'has a format like "<task>.<module>.<experiment>", which should have been '
-        "already registered in the global experiment registry with "
-        "@experiment_registry.register."
-    ),
-)
-
-flags.DEFINE_string(
     "exp",
     None,
     (
@@ -296,11 +285,15 @@ flags.DEFINE_string("server_addr", None, help="server ip addr")
 flags.DEFINE_integer("num_hosts", None, help="num of hosts")
 flags.DEFINE_integer("host_idx", None, help="index of current host")
 
+flags.DEFINE_integer("eval_model_step", None, help="num of hosts")
+
 # Flags --jax_backend_target, --jax_xla_backend, --jax_enable_checks are
 # available through JAX.
 
 # Debugging flag
 EVAL_MODEL_STEP = FLAGS.eval_model_step
+
+logging.info(f'EVAL_MODEL_STEP: {EVAL_MODEL_STEP}')
 
 @py_utils.benchmark("[PAX STATUS]: ")
 def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:

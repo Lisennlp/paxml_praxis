@@ -585,6 +585,8 @@ def _main(argv: Sequence[str]) -> None:
     # 没有，应该是todo
     experiment_config.validate()
     logging.info(f"FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}")
+
+    logging.info(f"experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
     run(
         experiment_config=experiment_config,
         enable_checkpoint_saving=FLAGS.enable_checkpoint_saving,

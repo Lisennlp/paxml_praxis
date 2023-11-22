@@ -54,7 +54,6 @@ from praxis import py_utils
 from paxml import checkpoint_paths
 
 from paxml.utils import *
-from paxml.main import EVAL_MODEL_STEP
 
 
 NestedMap = py_utils.NestedMap
@@ -1532,25 +1531,25 @@ class FlanMiniEval(BaseEval):
 
 @experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
-    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia7BPile'
 
 
 @experiment_registry.register
 class Pythia12BPileEval(PileEval, Pythia12B):
-    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia12BPile'
 
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
-    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia7BFlanMini'
 
 
 @experiment_registry.register
 class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
-    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia12BFlanMini'
 
 

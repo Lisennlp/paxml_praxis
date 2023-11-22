@@ -59,6 +59,18 @@ from praxis import py_utils
 
 FLAGS = flags.FLAGS
 
+
+flags.DEFINE_string(
+    "eval__step",
+    0,
+    (
+        "Experiment configuration identifier name. This name typically "
+        'has a format like "<task>.<module>.<experiment>", which should have been '
+        "already registered in the global experiment registry with "
+        "@experiment_registry.register."
+    ),
+)
+
 flags.DEFINE_string(
     "exp",
     None,
@@ -288,7 +300,7 @@ flags.DEFINE_integer("host_idx", None, help="index of current host")
 # available through JAX.
 
 # Debugging flag
-
+EVAL_MODEL_STEP = FLAGS.eval_model_step
 
 @py_utils.benchmark("[PAX STATUS]: ")
 def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
@@ -364,6 +376,7 @@ def run_experiment(
     task_p = experiment_config.task()
     # lsp： 将task_p作为pax_fiddle.Config[tasks_lib.SingleTask]对象
     task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
+
 
     if FLAGS.mode == "train":
         work_unit.set_task_status(f"Train experiment {FLAGS.exp} at {job_log_dir}")

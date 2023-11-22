@@ -54,6 +54,7 @@ from praxis import py_utils
 from paxml import checkpoint_paths
 
 from paxml.utils import *
+from paxml.main import EVAL_MODEL_STEP
 
 
 NestedMap = py_utils.NestedMap
@@ -1511,8 +1512,9 @@ class PileEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    EVAL_LOOP_NUM_BATCHES = 40
+    EVAL_LOOP_NUM_BATCHES = 50
     
+
 @experiment_registry.register
 class FlanMiniEval(BaseEval):
     ZERO_LOSS = False
@@ -1530,25 +1532,25 @@ class FlanMiniEval(BaseEval):
 
 @experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
     TASK_NAME = 'Pythia7BPile'
 
 
 @experiment_registry.register
 class Pythia12BPileEval(PileEval, Pythia12B):
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
     TASK_NAME = 'Pythia12BPile'
 
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
     TASK_NAME = 'Pythia7BFlanMini'
 
 
 @experiment_registry.register
 class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TRAINING_NUM_BATCHES_TO_SKIP = EVAL_MODEL_STEP
     TASK_NAME = 'Pythia12BFlanMini'
 
 
@@ -1588,7 +1590,7 @@ class MyDatasets(base_input.BaseInput):
     pad_id: int = 0
     drop_remainder: bool = True
     iter_file_nums: int = 2 # 100  500 steps/file
-    meta_dict: Optional[dict] = {}
+    meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
     zero_loss: bool = False
@@ -1598,6 +1600,7 @@ class MyDatasets(base_input.BaseInput):
             self.num_infeed_hosts = jax.process_count()
 
         if not self.meta_dict or self.only_eval:
+            self.meta_dict = {}
             self.init_meta()
         else:
             if self.meta_dict["file_in_data"] != 0:

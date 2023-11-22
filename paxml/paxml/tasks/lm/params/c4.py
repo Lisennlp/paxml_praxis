@@ -1462,6 +1462,20 @@ class BaseEval():
 
 
 @experiment_registry.register
+class Qwen7BEval(BaseEval, Qwen7B):
+  TEST_RATIO = 1
+  RESET_FOR_EVAL = True # True: test while test dataset
+  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+  DATA_PATH = {
+                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                }
+  DATA_FUNC = extract_pythia_datapath
+  ICI_MESH_SHAPE = [1, 8, 1]
+  PERCORE_BATCH_SIZE = 2
+
+
+@experiment_registry.register
 class BC2Gpt13BEval(BaseEval, BC2Gpt13B):
     TRAINING_NUM_BATCHES_TO_SKIP = None
     ICI_MESH_SHAPE = [1, 8, 1]

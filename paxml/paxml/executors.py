@@ -352,7 +352,7 @@ def _train_and_evaluate_common(
 
     if task.only_eval:
         step = train_input.num_batches_to_skip
-        logging.info(f'model step: {step}')
+        logging.info(f'Note: Model step is {step}, now set to 0')
         if step is None:
             step = 0
         # lsp: 仅仅获取模型参数,mdl_vars

@@ -792,8 +792,6 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     EVAL_INTERVAL_STEPS = 100  # 每隔多少step评测一次
     CHECKPOINT_MAX_TO_KEEP = 2  # 保留n个checkpoint
 
-    WANDB_PROJECT = "debug"
-
     TRAINING_SEED = 1234
     USE_ROTARY_POSITION_EMB = True
     USE_ALIBI_POSITION_EMB = False
@@ -1317,7 +1315,6 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
-    WANDB_PROJECT = "debug"
     LM_HEAD_NORM = True
     LOAD_SEQIO_ID = False
     LOAD_SEQIO_TEXT = False
@@ -1390,7 +1387,6 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
 
     TASK_NAME = "Pythia7B"
-    WANDB_PROJECT = "pythia_7b_test"
 
     TRAINING_SEED = 1234
 
@@ -1453,7 +1449,6 @@ class Pythia12B(DataParams, C4SpmdGpt37BRoPE):
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
 
     TASK_NAME = "Pythia7B"
-    WANDB_PROJECT = "pythia_7b_test"
 
     TRAINING_SEED = 1234
 
@@ -1566,7 +1561,6 @@ class Pythia410M(Pythia7B):
     EVAL_LOOP_NUM_BATCHES = 50
     EVAL_INTERVAL_STEPS = 250
     CHECKPOINT_MAX_TO_KEEP = 5
-    WANDB_PROJECT = "pythia_410m_test"
     MODEL_DIMS = 1024
     HIDDEN_DIMS = 4096
     ONLY_EVAL = True
@@ -1592,7 +1586,7 @@ class MyDatasets(base_input.BaseInput):
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
-    zero_loss: bool = False
+    zero_loss: bool = True
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
@@ -1664,19 +1658,8 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs = NestedMap()
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
-        if "labels" in data:
-            print(f'labels in data')
-            if self.zero_loss:
-                print(f'zero_loss is True')
-                weights = data["labels"] >= 0
-            else:
-                weights = data["labels"] > 0
-        else:
-            if self.zero_loss:
-                weights = data["input_ids"] >= 0
-            else:
-                weights = data["input_ids"] > 0
-
+        key = 'labels' if "labels" in data else 'input_ids'
+        weights = data[key] >= 0 if self.zero_loss else data[key] > 0
         model_needed_inputs.weights = weights[:, 1:seq_len]
         logging.info(f"weights: {model_needed_inputs.weights.shape} sum: {model_needed_inputs.weights}")
         

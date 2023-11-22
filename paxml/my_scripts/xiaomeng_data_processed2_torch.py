@@ -13,7 +13,6 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 import tensorflow as tf
 from transformers import AutoTokenizer
 import mlxu
-import wandb
 import math
 
 
@@ -180,10 +179,6 @@ def process_book_wrapper(args):
     processor.rank = rank
     processor.per_file_line_num = 50000
     every_rank_nums = math.ceil(len(processor.books_pathlist) / WORKERS)
-    if rank == 0:
-        wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
-        wandb.init(project=f"xiaomeng_{processor.data_type}_qwen14B", name="data_processed", config=None, resume=True)
-        # wandb.init(project=f"xiaomeng_{processor.data_type}_bc213B", name="data_processed", config=None, resume=True)
     start = int(rank * every_rank_nums)
     end = int((rank + 1) * every_rank_nums)
     print(f"Rank: {rank} start: {start} end: {end}")

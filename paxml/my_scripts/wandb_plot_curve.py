@@ -1,13 +1,9 @@
-import wandb
 from collections import defaultdict
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
-api = wandb.Api()
-# ids = 'jc923mns'
-# ids = 'nuv989ox'
+
 losses_train = defaultdict(list)
 losses_eval = defaultdict(list)
 

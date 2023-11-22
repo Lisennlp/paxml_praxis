@@ -9,7 +9,6 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 import tensorflow as tf
 from transformers import AutoTokenizer
 import mlxu
-import wandb
 
 
 class DataProcessor:
@@ -139,9 +138,6 @@ class DataProcessor:
                 f"{rank}-processed: {index}/{N}, path: ‘{path}’ deal finished, take:"
                 f" {time_end - time_start}."
             )
-            if rank == 0:
-                wandb_stats = {"index": index, "N": N, "take": time_end - time_start}
-                wandb.log(wandb_stats)
         try:
             self.writer.close()
         except Exception as e:
@@ -181,9 +177,6 @@ def process_book_wrapper(args):
     processor.chunks = chunks
     processor.per_file_line_num = 10000
     every_rank_nums = int(len(processor.books_pathlist) // WORKERS)
-    if rank == 0:
-        wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
-        wandb.init(project="xiaomeng_test", name="data_processed", config=None, resume=True)
     start = int(rank * every_rank_nums)
     end = int((rank + 1) * every_rank_nums)
     print(f"Rank: {rank} start: {start} end: {end}")

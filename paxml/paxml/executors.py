@@ -47,7 +47,6 @@ from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
-import wandb
 from paxml import checkpoint_paths
 
 
@@ -466,17 +465,6 @@ def _train_and_evaluate_common(
         # While the eval ones below are post-model weight updates, hence the step
         # counter is incremented in between.
         step_i = program_output.new_train_step
-        if jax.process_index() == 0:
-            take = round(time.time() - step_start, 6)
-            step_time_deque.append(take)
-            steps_per_sec = round(len(step_time_deque) / sum(step_time_deque), 6)
-            wandb_stats = {
-                "step": step_i,
-                "train_loss": program_output.loss.item(),
-                "steps_per_sec": steps_per_sec,
-                "take": take,
-            }
-            wandb.log(wandb_stats)
         logging.info(f"step_i: {step_i} || train_loss: {program_output.loss.item()}")
         eval_metrics: Optional[tuning_lib.EvalMetrics] = None
         # Run eval at regular step interval.
@@ -511,7 +499,6 @@ def _train_and_evaluate_common(
                             "eval_loss": eval_metric["avg_xent"],
                             "eval_acc": eval_metric["fraction_of_correct_next_step_preds"],
                         }
-                        wandb.log(eval_result)
                         logging.info(f"eval_result: {eval_result}")
                     logging.info("\n")
         decode_metrics: Optional[tuning_lib.DecodeMetrics] = None

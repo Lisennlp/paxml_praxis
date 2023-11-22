@@ -35,32 +35,84 @@ gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:/home/lishengping/projects/paxml/
 
 
 
-Pile v3-64-10  12B
+Pile v3-64-10  7B
+TPU_NAME=llm-jax-v3-64-10
+STEP=143000
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia7BPileEval.Step$STEP.log"
+
+Pile v3-64-13  12B-2
 TPU_NAME=llm-jax-v3-64-10
 STEP=33000
 ZONE=us-east1-d
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BPileEval.Step$STEP.log"
-
-Pile v3-64-13  12B
-TPU_NAME=llm-jax-v3-64-13
-STEP=43000
-ZONE=us-east1-d
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BPileEval.Step$STEP.log"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BPileEval --job_log_dir=gs://llm_base_models/pythia/pythia-12b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BPileEval.Step$STEP.log"
 
 
 FlanMini v3-64-12  7B
 TPU_NAME=llm-jax-v3-64-12
-STEP=3000
+STEP=6000
 ZONE=us-east1-d
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia7BFlanMiniEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia7BFlanMiniEval.Step$STEP.log"
 
 
 FlanMini v3-64-11  12B
-TPU_NAME=llm-jax-v3-64-11
+TPU_NAME=llm-jax-v3-64-10
 STEP=3000
 ZONE=us-east1-d
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia12BFlanMiniEval --job_log_dir=gs://llm_base_models/pythia/pythia-6.9b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia12BFlanMiniEval.Step$STEP.log"
+
+# qwen-7b
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen7B --job_log_dir=gs://llm_base_models/qwen/7b/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False| tee Qwen7B.log
+
+ 
+33000, 12b pile float32
+eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 2.0879445, 'fraction_of_correct_next_step_preds': 0.5645174, 'log_pplx': 2.0879445, 'num_predictions': 2095831.8, 'total_loss': 2.0879445}]
+I1121 13:56:41.942080 140600586442752 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '2.0879445', 'fraction_of_correct_next_step_preds': '0.5645174', 'log_pplx': '2.0879445', 'num_predictions': '2095831.8', 'total_loss': '2.0879445'}
+I1121 13:56:41.942376 140600586442752 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.Pile.train.33000.json
+
+
+14300 7b flan flaot32
+Wrote summary entry at step `143000` (loss=`3.264148`).
+I1121 14:09:22.082455 140504437872640 programs.py:690] Writing eval outputs to gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_out/FlanMini.test/eval_out_143000_shard_0 with 163840 entries
+I1121 14:10:01.762053 140504437872640 executors.py:370] eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 3.2624993, 'fraction_of_correct_next_step_preds': 0.4234591, 'log_pplx': 3.2624993, 'num_predictions': 25956.637, 'total_loss': 3.2624993}]
+I1121 14:10:01.762461 140504437872640 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '3.2624993', 'fraction_of_correct_next_step_preds': '0.4234591', 'log_pplx': '3.2624993', 'num_predictions': '25956.637', 'total_loss': '3.2624993'}
+I1121 14:10:01.762703 140504437872640 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.FlanMini.train.143000.json
+
+
+14300 12b pile flaot32
+total_loss=1.794458 (weight=339524800.000000)
+I1121 14:38:21.221881 140308956825600 local.py:45] Setting task status: step = 143000, loss= 1.7944560050964355, aux_loss=0.0, avg_xent=1.794458270072937, fraction_of_correct_next_step_preds=0.6059816479682922, log_pplx=1.794458270072937, num_predictions=2095832.25, total_loss=1.794458270072937
+I1121 14:38:21.244586 140308956825600 summary_utils.py:448] Wrote summary entry at step `143000` (loss=`1.794456`).
+I1121 14:38:21.347818 140308956825600 executors.py:370] eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 1.7944595, 'fraction_of_correct_next_step_preds': 0.6059815, 'log_pplx': 1.7944595, 'num_predictions': 2095831.8, 'total_loss': 1.7944595}]
+I1121 14:38:21.347944 140308956825600 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '1.7944595', 'fraction_of_correct_next_step_preds': '0.6059815', 'log_pplx': '1.7944595', 'num_predictions': '2095831.8', 'total_loss': '1.7944595'}
+I1121 14:38:21.348038 140308956825600 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-12b-paxml/eval_metrics.Pile.train.143000.json
+
+
+33000 12b pile flaot32
+summary_utils.py:448] Wrote summary entry at step `33000` (loss=`1.968474`).
+I1121 15:53:50.234416 140410682583040 programs.py:690] Writing eval outputs to gs://llm_base_models/pythia/pythia-12b-paxml/eval_out/Pile.test/eval_out_33000_shard_0 with 165888 entries
+I1121 15:54:51.297042 140410682583040 executors.py:370] eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 1.9684777, 'fraction_of_correct_next_step_preds': 0.5774783, 'log_pplx': 1.9684777, 'num_predictions': 2095831.8, 'total_loss': 1.9684777}]
+I1121 15:54:51.297456 140410682583040 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '1.9684777', 'fraction_of_correct_next_step_preds': '0.5774783', 'log_pplx': '1.9684777', 'num_predictions': '2095831.8', 'total_loss': '1.9684777'}
+I1121 15:54:51.297706 140410682583040 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-12b-paxml/eval_metrics.Pile.train.33000.json
+
+
+14300 7b pile flaot32 wu pad loss
+I1122 03:24:22.743440 140718536423424 local.py:45] Setting task status: step = 143000, loss= 1.8395969867706299, aux_loss=0.0, avg_xent=1.8395992517471313, fraction_of_correct_next_step_preds=0.5991172194480896, log_pplx=1.8395992517471313, num_predictions=2095832.25, total_loss=1.8395992517471313
+I1122 03:24:23.866902 140718536423424 summary_utils.py:448] Wrote summary entry at step `143000` (loss=`1.839597`).
+I1122 03:24:23.925146 140718536423424 programs.py:690] Writing eval outputs to gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_out/Pile.test/eval_out_143000_shard_0 with 165888 entries
+I1122 03:25:26.631429 140718536423424 executors.py:370] eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 1.8396003, 'fraction_of_correct_next_step_preds': 0.59911704, 'log_pplx': 1.8396003, 'num_predictions': 2095831.8, 'total_loss': 1.8396003}]
+I1122 03:25:26.631811 140718536423424 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '1.8396003', 'fraction_of_correct_next_step_preds': '0.59911704', 'log_pplx': '1.8396003', 'num_predictions': '2095831.8', 'total_loss': '1.8396003'}
+I1122 03:25:26.632023 140718536423424 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.Pile.train.143000.json
+
+
+3000 7b pile flaot32
+57.738480 139846637156352 summary_utils.py:448] Wrote summary entry at step `3000` (loss=`2.577582`).
+I1122 05:00:57.797963 139846637156352 programs.py:690] Writing eval outputs to gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_out/Pile.test/eval_out_3000_shard_0 with 165888 entries
+I1122 05:01:59.520355 139846637156352 executors.py:370] eval_metrics: [{'aux_loss': 0.0, 'avg_xent': 2.5775824, 'fraction_of_correct_next_step_preds': 0.4972553, 'log_pplx': 2.5775824, 'num_predictions': 2097152.0, 'total_loss': 2.5775824}]
+I1122 05:01:59.520754 139846637156352 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '2.5775824', 'fraction_of_correct_next_step_preds': '0.4972553', 'log_pplx': '2.5775824', 'num_predictions': '2097152.0', 'total_loss': '2.5775824'}
+I1122 05:01:59.520973 139846637156352 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.Pile.train.3000.json
+is_training: True

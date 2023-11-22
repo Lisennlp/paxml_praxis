@@ -285,15 +285,12 @@ flags.DEFINE_string("server_addr", None, help="server ip addr")
 flags.DEFINE_integer("num_hosts", None, help="num of hosts")
 flags.DEFINE_integer("host_idx", None, help="index of current host")
 
-flags.DEFINE_integer("eval_model_step", None, help="num of hosts")
+flags.DEFINE_integer("eval_model_step", None, help="eval step moel")
 
 # Flags --jax_backend_target, --jax_xla_backend, --jax_enable_checks are
 # available through JAX.
 
 # Debugging flag
-EVAL_MODEL_STEP = FLAGS.eval_model_step
-
-logging.info(f'EVAL_MODEL_STEP: {EVAL_MODEL_STEP}')
 
 @py_utils.benchmark("[PAX STATUS]: ")
 def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
@@ -369,7 +366,6 @@ def run_experiment(
     task_p = experiment_config.task()
     # lsp： 将task_p作为pax_fiddle.Config[tasks_lib.SingleTask]对象
     task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
-
 
     if FLAGS.mode == "train":
         work_unit.set_task_status(f"Train experiment {FLAGS.exp} at {job_log_dir}")
@@ -586,7 +582,13 @@ def _main(argv: Sequence[str]) -> None:
     experiment_config.validate()
     logging.info(f"FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}")
 
-    logging.info(f"experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
+    logging.info(f"Original TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
+    # 这样设置不能成功，需要用setattr
+    # experiment_config.TRAINING_NUM_BATCHES_TO_SKIP = FLAGS.eval_model_step
+    if FLAGS.eval_model_step is not None:
+        setattr(experiment_config, 'TRAINING_NUM_BATCHES_TO_SKIP', int(FLAGS.eval_model_step))
+        logging.info(f"Change experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
+
     run(
         experiment_config=experiment_config,
         enable_checkpoint_saving=FLAGS.enable_checkpoint_saving,

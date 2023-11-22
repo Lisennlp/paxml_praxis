@@ -1485,86 +1485,71 @@ class Pythia12B(DataParams, C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
-class Pythia7BPileEval(Pythia7B):
-    ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 23000
-    TEST_RATIO = 1
-    # RESET_FOR_EVAL = True # True: test while test dataset
+class BaseEval():
+    TRAINING_NUM_BATCHES_TO_SKIP = None
     ICI_MESH_SHAPE = [1, 16, 4]
-    PERCORE_BATCH_SIZE = 1
+    PERCORE_BATCH_SIZE = 16
+    LM_HEAD_CHUNK_SIZE = None
+    FPROP_DTYPE = jnp.float32
+
+    ONLY_EVAL = True
+    TEST_RATIO = 1
+    RESET_FOR_EVAL = False
+    EVAL_LOOP_NUM_BATCHES = 1
+    DATA_FUNC = extract_pythia_datapath
+
+
+@experiment_registry.register
+class PileEval(BaseEval):
+    ZERO_LOSS = True
+    LOSS_BATCH_MEAN = False
+    ACC_BATCH_MEAN = False
+
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/pile_test', 
                 'test':  'gs://common_datasets/pythia_model_test/pile_test', 
                 }
-    DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 20
-    RESET_FOR_EVAL = True
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    LM_HEAD_CHUNK_SIZE = None
-
-
+    EVAL_LOOP_NUM_BATCHES = 40
+    
 @experiment_registry.register
-class Pythia12BPileEval(Pythia12B):
-    ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 43000
-    TEST_RATIO = 1
-    # RESET_FOR_EVAL = True # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 16, 4]
-    PERCORE_BATCH_SIZE = 16
-    DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/pile_test', 
-                'test':  'gs://common_datasets/pythia_model_test/pile_test', 
-                }
-    DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 20
-    RESET_FOR_EVAL = True
-    TASK_NAME = 'Pile'
-    LM_HEAD_CHUNK_SIZE = None
+class FlanMiniEval(BaseEval):
+    ZERO_LOSS = False
+    LOSS_BATCH_MEAN = True
+    ACC_BATCH_MEAN = True
 
-
-@experiment_registry.register
-class Pythia7BFlanMiniEval(Pythia7B):
-    ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TEST_RATIO = 1
-    ICI_MESH_SHAPE = [1, 16, 4]
-    PERCORE_BATCH_SIZE = 16
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/flan_test', 
                 'test':  'gs://common_datasets/pythia_model_test/flan_test', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
-    DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 160
-    RESET_FOR_EVAL = False
-    ZERO_LOSS = False
-    LOSS_BATCH_MEAN = True
-    ACC_BATCH_MEAN = True
     TASK_NAME = 'FlanMini'
-    LM_HEAD_CHUNK_SIZE = None
-
+    EVAL_LOOP_NUM_BATCHES = 80
 
 
 @experiment_registry.register
-class Pythia12BFlanMiniEval(Pythia12B):
-    ONLY_EVAL = True
+class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TEST_RATIO = 1
-    ICI_MESH_SHAPE = [1, 16, 4]
-    PERCORE_BATCH_SIZE = 16
-    DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test', 
-                }
-    KEY_MAP = {"targets": "input_ids", "labels": "labels"}
-    DATA_FUNC = extract_pythia_datapath
-    EVAL_LOOP_NUM_BATCHES = 160
-    RESET_FOR_EVAL = False
-    ZERO_LOSS = False
-    LOSS_BATCH_MEAN = True
-    ACC_BATCH_MEAN = True
-    TASK_NAME = 'FlanMini'
-    LM_HEAD_CHUNK_SIZE = None
+    TASK_NAME = 'Pythia7BPile'
+
+
+@experiment_registry.register
+class Pythia12BPileEval(PileEval, Pythia12B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia12BPile'
+
+
+@experiment_registry.register
+class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia7BFlanMini'
+
+
+@experiment_registry.register
+class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia12BFlanMini'
 
 
 @experiment_registry.register
@@ -1588,26 +1573,6 @@ class Pythia410M(Pythia7B):
     TEST_RATIO = 1
     RESET_FOR_EVAL = True # True: test while test dataset
 
-    # # c4 data
-    # LOAD_SEQIO_TEXT = True
-    # LOAD_SEQIO_ID = False
-    # KEY_MAP = {"inputs": None, "targets": "text"}
-    # VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
-    # VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    # DATA_PATH = {'train': 'gs://common_datasets', 'test': 'gs://common_datasets'}
-    # DATA_FUNC = c4_registry
-    
-    # # baichuan1使用指令数据集
-    # LOAD_SEQIO_ID = True
-    # LOAD_SEQIO_TEXT = False
-    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    # VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    # DATA_PATH = {
-    #     "train": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.train.tfrecords"],
-    #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
-    # }
-    # DATA_FUNC = tfids_registry
-
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None
@@ -1623,7 +1588,7 @@ class MyDatasets(base_input.BaseInput):
     pad_id: int = 0
     drop_remainder: bool = True
     iter_file_nums: int = 2 # 100  500 steps/file
-    meta_dict: Optional[dict] = None
+    meta_dict: Optional[dict] = {}
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
     zero_loss: bool = False
@@ -1633,15 +1598,7 @@ class MyDatasets(base_input.BaseInput):
             self.num_infeed_hosts = jax.process_count()
 
         if not self.meta_dict or self.only_eval:
-            self.meta_dict = {
-                "seed": self.train_seed,
-                "cur_files": [],
-                "file_in_data": 0,
-                "step_in_file": 0,
-                "iter_file_nums": self.iter_file_nums,
-                "checkpoint_step": None,
-            }
-            self.step_in_file = 0  # XD fix
+            self.init_meta()
         else:
             if self.meta_dict["file_in_data"] != 0:
                 assert self.meta_dict["iter_file_nums"] == self.iter_file_nums, print(
@@ -1656,8 +1613,20 @@ class MyDatasets(base_input.BaseInput):
         self._state_before_peek = None
         logging.info(f'zero loss: {self.zero_loss}')
 
- #   def peek_padded(self):
-  #      return self.get_next_padded()
+    def init_meta(self):
+        self.meta_dict = {
+                "seed": self.train_seed,
+                "cur_files": self.meta_dict.get('cur_files', []),
+                "file_in_data": 0,
+                "step_in_file": 0,
+                "iter_file_nums": self.iter_file_nums,
+                "checkpoint_step": self.meta_dict.get('checkpoint_step', 0),
+            }
+        self.step_in_file = 0
+
+    def reset(self):
+        self.init_meta()
+        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def get_next_padded(self):
         if self._peek is not None:
@@ -1714,9 +1683,6 @@ class MyDatasets(base_input.BaseInput):
         pos = tf.range(seq_len - 1)
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
-
-    def split(self):
-        return
 
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)

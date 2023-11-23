@@ -583,9 +583,12 @@ def _main(argv: Sequence[str]) -> None:
     logging.info(f"FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}")
 
     logging.info(f"Original TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
+
     # 这样设置不能成功，需要用setattr
     # experiment_config.TRAINING_NUM_BATCHES_TO_SKIP = FLAGS.eval_model_step
     if FLAGS.eval_model_step is not None:
+        assert FLAGS.eval_on_test
+        assert experiment_config.ONLY_EVAL
         setattr(experiment_config, 'TRAINING_NUM_BATCHES_TO_SKIP', int(FLAGS.eval_model_step))
         logging.info(f"Change experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
 

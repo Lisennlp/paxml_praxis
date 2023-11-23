@@ -1491,6 +1491,7 @@ class BaseEval():
     TEST_RATIO = 1
     RESET_FOR_EVAL = False
     EVAL_LOOP_NUM_BATCHES = 1
+    SHUFFLE = {"train": False, "test": False}
     DATA_FUNC = extract_pythia_datapath
 
 
@@ -1516,12 +1517,12 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test2', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test2', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 20
 
 
 @experiment_registry.register

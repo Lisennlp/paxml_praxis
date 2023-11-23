@@ -23,6 +23,24 @@ sudo ipsec verify
 sudo iptables -A INPUT -p tcp --dport 12345 -j ACCEPT
 sudo iptables -A OUTPUT -p tcp --sport 12345 -j ACCEPT
 
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+STEP=53000
+SIZE=12b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+gcloud compute tpus tpu-vm scp t_c4.py $TPU_NAME:/home/lishengping/projects/paxml/paxml/tasks/lm/params/c4.py  --zone=$ZONE  --worker=all  --project=llm-tpu
+
+SIZE=12b
+EXP=Pythia12BFlanMiniEval
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9;killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/pythia/pythia-$SIZE-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True --eval_model_step=$STEP| tee $EXP.step$STEP.log"
+
+
+MODEL_SIZE=14B
+STEP=0
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Qwen$MODEL_SIZE.step$STEP.log"
+
+# kill
+gcloud compute tpus tpu-vm ssh llm-jax-v3-32-10 --zone=us-east1-d --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9"
 
 
 # v4 PilePythia7B256x1DynWFFN16HD128Win256Alignedv4
@@ -130,3 +148,12 @@ I1122 05:01:59.520355 139846637156352 executors.py:370] eval_metrics: [{'aux_los
 I1122 05:01:59.520754 139846637156352 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '2.5775824', 'fraction_of_correct_next_step_preds': '0.4972553', 'log_pplx': '2.5775824', 'num_predictions': '2097152.0', 'total_loss': '2.5775824'}
 I1122 05:01:59.520973 139846637156352 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.Pile.train.3000.json
 is_training: True
+
+
+
+
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+STEP=0
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14BEval --job_log_dir=gs://llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True --eva_model_step=$STEP| tee Pythia7BFlanMiniEval.step$STEP.lo

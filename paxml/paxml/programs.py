@@ -920,6 +920,9 @@ class BaseEvalProgram(Program):
         # logging.info(f'losses: {losses}')
         # logging.info(f'step_num: {step_num}')
         # acc <=> fraction_of_correct_next_step_preds: [array, .......],  loss <=>  avg_xent
+        if jax.process_index() == 0:
+            pickle.dump(summary_tensors, open('debug.pkl', 'wb'))
+
         return step_num, losses, summary_tensor_dict, metrics, per_example_scores
 
     @abc.abstractmethod

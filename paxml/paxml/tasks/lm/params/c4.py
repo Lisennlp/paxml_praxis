@@ -1386,7 +1386,7 @@ class Qwen7B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 11008
     NUM_HEADS = 32
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 64, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 151936
 
@@ -1450,6 +1450,78 @@ class Qwen7B(C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
+class Qwen14B(C4SpmdGpt37BRoPE):
+    TASK_NAME = "Qwen14B"
+    NUM_LAYERS = 40
+    MODEL_DIMS = 5120
+    HIDDEN_DIMS = 13696
+    NUM_HEADS = 32
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 64, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 4097
+    VOCAB_SIZE = 152064
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
+    Z_LOSS_WEIGHT = 0.0
+
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    ROTARY_TYPE = 'paxml'
+    NORMALIZATION_CLS = normalizations.RmsNorm
+    QKV_BIAS = True
+    O_BIAS = False
+    USE_BIAS = False
+    FPROP_DTYPE = jnp.bfloat16
+
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 102
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "debug"
+    LM_HEAD_NORM = False
+
+    QUERY_CHUNK_SIZE = 128
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = False
+    TASK_NAME = "Qwen7B"
+    TARGET_LOG_PPLX = -1
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+    TRAINING_SEED = 1234
+    TEST_RATIO = 0.02
+    RESET_FOR_EVAL = False # when True, eval whole eval dataset
+
+    # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
+    LOAD_SEQIO_TEXT = False
+    LOAD_SEQIO_ID = False
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    DATA_PATH = {
+                'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
+                'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
+                }
+    DATA_FUNC = extract_qwen_datapath
+
+
+   
+@experiment_registry.register
 class BaseEval():
   ONLY_EVAL = True
   TEST_RATIO = 1
@@ -1475,6 +1547,22 @@ class Qwen7BEval(BaseEval, Qwen7B):
   DATA_FUNC = extract_pythia_datapath
   ICI_MESH_SHAPE = [1, 8, 1]
   PERCORE_BATCH_SIZE = 2
+
+
+@experiment_registry.register
+class Qwen14BEval(BaseEval, Qwen14B):
+  TEST_RATIO = 1
+  RESET_FOR_EVAL = False # True: test while test dataset
+  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+  DATA_PATH = {
+                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                }
+  DATA_FUNC = extract_pythia_datapath
+  ICI_MESH_SHAPE = [1, 8, 1]
+  PERCORE_BATCH_SIZE = 1
+  MAX_SEQ_LEN = 1025
+  EVAL_LOOP_NUM_BATCHES = 1
 
 
 @experiment_registry.register

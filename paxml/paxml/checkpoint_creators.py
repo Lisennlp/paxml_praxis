@@ -591,7 +591,7 @@ def _create_checkpointer(
         save_interval_steps=save_interval_steps,
         keep_time_interval=keep_interval_timedelta,
         todelete_subdir=todelete_subdir,
-        cleanup_tmp_directories=True,
+        cleanup_tmp_directories=not train_input_p.only_eval,
     )
     # lsp
     options.save_on_steps = train_p.save_on_steps

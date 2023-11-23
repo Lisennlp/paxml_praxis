@@ -1,62 +1,4 @@
-import json
-import random
-import os
-import time
 
-os.environ["JAX_PLATFORMS"] = "cpu"
-
-from etils import epath
-import tensorflow as tf
-
-
-path = 'gs://common_datasets/pythia_model_test/flan_test/flan_mini_filtered_v2.jsonl'
-path = epath.Path(path)
-
-lines = []
-with path.open('r') as f:
-    for line in f:
-        line = json.loads(line)
-        lines.append(line)
-        
-
-random.seed(1234)
-random.shuffle(lines)
-
-def _int64_feature(value): return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
-
-
-start = time.time()
-wp = 'gs://common_datasets/pythia_model_test/flan_test/flan_mini_filtered_v2_len2049.tfrecord'
-
-N = len(lines)
-max_len = 2049
-with tf.io.TFRecordWriter(wp) as writer:
-     for index, line in enumerate(lines):
-        example = line
-        labels = [-100] +  example['labels'][:-1]
-        if len(labels) > max_len:
-            print(f'exceed max length: {len(labels)}, index: {index}')
-            continue
-        assert len(line['input_ids']) == len(labels)
-        
-        if index % 100 == 0:
-            print(f'processed: {index}/{N} take: {time.time() - start}s')
-        feature = {
-            "input_ids": _int64_feature(example['input_ids']),
-            "labels": _int64_feature(labels),
-            
-                  }
-        example = tf.train.Example(features=tf.train.Features(feature=feature))
-        writer.write(example.SerializeToString())
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.generation import GenerationConfig
-
-model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-7B", device_map="auto", trust_remote_code=True).eval()
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-7B", trust_remote_code=True)
-
-#!/usr/bin/env python
-# coding: utf-8
 import sys
 import time
 import os
@@ -84,12 +26,17 @@ from paxml import train_states
 from paxml import trainer_lib
 from flax.traverse_util import flatten_dict, unflatten_dict
 
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.generation import GenerationConfig
+
 try:
     import torch
 except:
     command = (
         "pip install torch==2.0.0+cpu torchvision==0.15.1+cpu torchaudio==2.0.1 --index-url"
-        " https://download.pytorch.org/whl/cpu"
+        "https://download.pytorch.org/whl/cpu", "pip install transformers_stream_generator", 
+        "pip install accelerate"
     )
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import torch
@@ -103,22 +50,38 @@ checkpoint_type = CheckpointType.GDA
 SAVE_INTERVAL_STEPS = 1
 
 LLAMA_STANDARD_CONFIGS = {
-    "7b": {
+    "7B": {
         "dim": 4096,
-        "intermediate_size": 22016,
+        "intermediate_size": 11008,
         "n_layers": 32,
         "n_heads": 32,
         "norm_eps": 1e-6,
         "vocab_size": 151936
     },
+    "14B": {
+        "dim": 5120,
+        "intermediate_size": 13696,
+        "n_layers": 40,
+        "n_heads": 40,
+        "norm_eps": 1e-6,
+        "vocab_size": 152064
+    },
 }
-model_size = '7b'
+
+step = 0
+model_size = '14B'
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
 n_heads = params["n_heads"]
 dim = params["dim"]
 intermediate_size = params["intermediate_size"]
 head_dim = dim // n_heads
+save_opt = False
+
+
+model = AutoModelForCausalLM.from_pretrained(f"Qwen/Qwen-{model_size}", device_map="auto", trust_remote_code=True).eval()
+# pip install tiktoken
+# tokenizer = AutoTokenizer.from_pretrained(f"Qwen/Qwen-{model_size}", trust_remote_code=True)
 
 ckpt = {}
 for k, v in model.named_parameters():
@@ -150,19 +113,6 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
 
 for k, v in model.named_parameters():
     print(k, v.shape)
-
-step = 0
-
-model_size = "7b"
-
-params = LLAMA_STANDARD_CONFIGS[model_size]
-n_layers = params["n_layers"]
-n_heads = params["n_heads"]
-dim = params["dim"]
-vocab_size = params['vocab_size']
-intermediate_size = params["intermediate_size"]
-head_dim = dim // n_heads
-
 
 paxml_to_hf_key_and_shape = {
     "params.lm.embedding_lookup.emb_var": {
@@ -265,7 +215,6 @@ import re
 
 trans_result = {}
 flag = 0
-a = 0
 with jax.default_device(jax.devices("cpu")[0]):
     for k, v in paxml_to_hf_key_and_shape.items():
         v = v["map_to_hf"]
@@ -274,14 +223,12 @@ with jax.default_device(jax.devices("cpu")[0]):
         for gold_key, glod_values in split_qkv.items():
             flag = 0
             if v in gold_key:
-#                 print(v, gold_key, "====")
                 flag = 1
                 match_res = re.findall("q_proj|k_proj|v_proj|attn.c_proj", v)
                 if match_res:
                     if len(glod_values.shape) > 1:
                         glod_values = glod_values.reshape(dim, n_heads, head_dim)
                     else:
-#                         if "attn.c_proj.bias" not in v:
                         glod_values = glod_values.reshape(n_heads, head_dim)
                 try:
                     layer_index = int(re.findall("\d+", gold_key)[0])
@@ -312,7 +259,6 @@ if step is None:
 print(f"Model save step is {step}")
 start = time.time()
 
-save_opt = True
 if save_opt:
     with jax.default_device(jax.devices("cpu")[0]):
     

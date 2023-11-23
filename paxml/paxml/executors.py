@@ -365,16 +365,15 @@ def _train_and_evaluate_common(
             train_state=eval_partitioned_train_state,
             step=step, # eval_partitioned_train_state.step -> step
         )
-
         logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
    
-        write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
-        logging.info(f'write_json: {write_json}')
-
-        eval_result_path = job_log_dir / f'eval_metrics.{train_input.name}.{step}.json'
-        logging.info(f'eval_result_path: {eval_result_path}')
-        with eval_result_path.open('w') as f:
-            json.dump(write_json, f)
+        if jax.process_index() == 0:
+            write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
+            logging.info(f'write_json: {write_json}')
+            eval_result_path = job_log_dir / f'eval_metrics.{train_input.name}.{step}.json'
+            logging.info(f'eval_result_path: {eval_result_path}')
+            with eval_result_path.open('w') as f:
+                json.dump(write_json, f)
         sys.exit(0)
     
     train_p = task.train

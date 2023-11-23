@@ -136,6 +136,54 @@ def extract_pythia_datapath(task, mode):
     return train_test_dataset
 
 
+def extract_qwen_datapath(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+    client = storage.Client()
+    trains = []
+    if isinstance(task.DATA_PATH[mode], list):
+        for path in task.DATA_PATH[mode]:
+            path = path.replace('gs://', '')
+            path_parts = path.split('/')
+            bucket_name = path_parts[0]
+            directory_path = '/'.join(path_parts[1:])
+            directory_path = directory_path if directory_path.endswith('/') else directory_path  + '/'
+            logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
+            step_map_path = defaultdict(list)
+            rerank = 0
+            for blob in client.list_blobs(bucket_name, prefix=directory_path):
+                if '.tfrecord' in blob.name or ('_R' in blob.name and '_F' in blob.name):
+                    logging.info(f"Successful filename: {blob.name}=====")
+                    try:
+                        step = int(blob.name.rsplit("_", maxsplit=1)[-1])
+                    except:
+                        step = rerank
+                        rerank += 1
+                    path = f'gs://{os.path.join(bucket_name, blob.name)}'
+                    if step == 0:
+                        pass
+                    else:
+                        logging.info(f"Successful filename final: {blob.name}=====")
+                        trains.append(path)
+                        pass
+                else:
+                    logging.info(f"Failed filename: {blob.name}=====")
+
+    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
+        random.shuffle(trains)
+
+    test_num = int(len(trains) * task.TEST_RATIO)
+    test = trains[ :test_num]
+    train = trains[test_num: ]
+    if not len(test):
+        test = trains[:1]
+
+    train_test_dataset = {"test": test, "train": train}
+    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+    task.train_test_dataset = train_test_dataset
+    return train_test_dataset
+
+
 def extract_zh_en_novel_datapath(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset

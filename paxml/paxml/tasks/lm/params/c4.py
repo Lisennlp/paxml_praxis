@@ -1522,7 +1522,7 @@ class FlanMiniEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 20
+    EVAL_LOOP_NUM_BATCHES = 80
 
 
 @experiment_registry.register

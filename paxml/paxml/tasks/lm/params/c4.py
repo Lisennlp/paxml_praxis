@@ -1383,11 +1383,11 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
 class Qwen7B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 32
     MODEL_DIMS = 4096
-    HIDDEN_DIMS = 22016
+    HIDDEN_DIMS = 11008
     NUM_HEADS = 32
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 1025
+    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 151936
 
     LAYERNORM_EPSILON = 1e-06
@@ -1441,10 +1441,12 @@ class Qwen7B(C4SpmdGpt37BRoPE):
     LOAD_SEQIO_ID = False
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     DATA_PATH = {
-                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
-                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+                'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
+                'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
-    DATA_FUNC = extract_pythia_datapath
+    DATA_FUNC = extract_qwen_datapath
 
 
 @experiment_registry.register

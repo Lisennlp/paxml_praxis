@@ -1456,7 +1456,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 8
+    PERCORE_BATCH_SIZE = 4
     ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
     MAX_SEQ_LEN = 4097
@@ -1497,8 +1497,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "debug"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = 512
-    LM_HEAD_CHUNK_SIZE = 512
+    QUERY_CHUNK_SIZE = 128
+    LM_HEAD_CHUNK_SIZE = 128
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
@@ -1518,7 +1518,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
     DATA_FUNC = extract_qwen_datapath
-
+    SAVE_ON_STEPS = list(range(1000, 1000000, 2000))
+    ONLY_EVAL = False
 
    
 @experiment_registry.register

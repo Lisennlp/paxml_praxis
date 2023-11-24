@@ -314,6 +314,8 @@ def write_summary_tensor(
     sample_rate: int = AUDIO_SUMMARY_SAMPLE_RATE,
 ) -> bool:
     """Writes summary in relevant processes."""
+    # # lsp
+    # return 
     if FLAGS.pax_only_aggregate_summaries:
         if summary_type not in {SummaryType.AGGREGATE_SCALAR, SummaryType.AGGREGATE_IMAGE}:
             return

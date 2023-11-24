@@ -1497,10 +1497,9 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "debug"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = 128
+    QUERY_CHUNK_SIZE = 512
     LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = False
-    TASK_NAME = "Qwen7B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 10000

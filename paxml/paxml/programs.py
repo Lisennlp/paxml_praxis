@@ -837,6 +837,9 @@ class BaseEvalProgram(Program):
         maybe_write_eval_outputs(
             EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs, write_pickle=False if self._task.only_eval else True
         )
+          # if jax.process_index() == 0:
+        logging.info('------')
+        pickle.dump(summary_tensors, open('/home/lishengping/debug.pkl', 'wb'))
 
         return EvalProgramOutput(
             state,
@@ -899,7 +902,8 @@ class BaseEvalProgram(Program):
                 for out in (loss, weighted_scalars, per_example_out, summary_tensors)
             )
             logging.info("Finished eval step %d for %s -> loss: %s", step_num, self._name, loss.item())
-
+            
+          
             losses += [loss]
             for k, v in summary_utils.flatten_summary_dict(summary_tensors):
                 if k in summary_tensor_dict:
@@ -920,8 +924,7 @@ class BaseEvalProgram(Program):
         # logging.info(f'losses: {losses}')
         # logging.info(f'step_num: {step_num}')
         # acc <=> fraction_of_correct_next_step_preds: [array, .......],  loss <=>  avg_xent
-        if jax.process_index() == 0:
-            pickle.dump(summary_tensors, open('debug.pkl', 'wb'))
+        
 
         return step_num, losses, summary_tensor_dict, metrics, per_example_scores
 

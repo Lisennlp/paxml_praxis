@@ -1455,9 +1455,9 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 40
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
-    NUM_HEADS = 32
+    NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 64, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 16, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 152064
 
@@ -1497,7 +1497,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     LM_HEAD_NORM = False
 
     QUERY_CHUNK_SIZE = 128
-    LM_HEAD_CHUNK_SIZE = 512
+    LM_HEAD_CHUNK_SIZE = 128
     RESET_FOR_EVAL = False
     TASK_NAME = "Qwen7B"
     TARGET_LOG_PPLX = -1
@@ -1559,10 +1559,12 @@ class Qwen14BEval(BaseEval, Qwen14B):
                 'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
                 }
   DATA_FUNC = extract_pythia_datapath
-  ICI_MESH_SHAPE = [1, 8, 1]
+  ICI_MESH_SHAPE = [1, 8, 4]
   PERCORE_BATCH_SIZE = 1
-  MAX_SEQ_LEN = 1025
+  MAX_SEQ_LEN = 513
   EVAL_LOOP_NUM_BATCHES = 1
+  SHUFFLE = {"train": False, "test": False}
+  FPROP_DTYPE = jnp.float32
 
 
 @experiment_registry.register
@@ -1669,7 +1671,7 @@ class MyDatasets(base_input.BaseInput):
             t = example[name]
             if t.dtype == tf.int64:
                 t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)
+            example[name] = tf.sparse.to_dense(t, default_value=0)[:self.seq_len]
         return example
 
     def convert(self, data):

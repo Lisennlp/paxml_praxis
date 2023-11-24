@@ -1429,9 +1429,9 @@ class DotProductAttention(base_layer.BaseLayer):
         asserts.in_set(atten_mask.shape[2], [t, 1])
         asserts.in_set(atten_mask.shape[0], [b, 1])
 
-        self.add_summary("[lsp]before_scale_query", query[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]before_key", key[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
+        # self.add_summary("[lsp]before_scale_query", query[1], verbosity=self.user_summary_level)
+        # self.add_summary("[lsp]before_key", key[1], verbosity=self.user_summary_level)
+        # self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
 
         query = self._scale_query(query)  # scale query,  internal_enable_query_scale为True生效
 

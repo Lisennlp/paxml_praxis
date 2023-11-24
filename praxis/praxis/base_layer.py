@@ -1524,7 +1524,7 @@ class BaseLayer(nn.Module):
     activation_split_dims_mapping: pax_fiddle.Config[BaseLayer.ActivationSharding] = template_field(
         ActivationSharding
     )
-    user_summary_level = 3
+    user_summary_level = 4
 
     @property
     def mesh_shape(self):

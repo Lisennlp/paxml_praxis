@@ -1566,7 +1566,7 @@ class Qwen14BEval(BaseEval, Qwen14B):
     RESET_FOR_EVAL = False # True: test while test dataset
     ICI_MESH_SHAPE = [1, 8, 1]
     PERCORE_BATCH_SIZE = 1
-    EVAL_LOOP_NUM_BATCHES = 1
+    EVAL_LOOP_NUM_BATCHES = 1000
     MAX_SEQ_LEN = 4097
     SHUFFLE = {"train": False, "test": False}
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}

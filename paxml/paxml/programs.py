@@ -837,9 +837,6 @@ class BaseEvalProgram(Program):
         maybe_write_eval_outputs(
             EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs, write_pickle=False if self._task.only_eval else True
         )
-          # if jax.process_index() == 0:
-        logging.info('------')
-        pickle.dump(summary_tensors, open('/home/lishengping/debug.pkl', 'wb'))
 
         return EvalProgramOutput(
             state,

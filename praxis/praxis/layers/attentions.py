@@ -1429,9 +1429,9 @@ class DotProductAttention(base_layer.BaseLayer):
         asserts.in_set(atten_mask.shape[2], [t, 1])
         asserts.in_set(atten_mask.shape[0], [b, 1])
 
-        # self.add_summary("[lsp]before_scale_query", query[1], verbosity=self.user_summary_level)
-        # self.add_summary("[lsp]before_key", key[1], verbosity=self.user_summary_level)
-        # self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]before_scale_query", query[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]before_key", key[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
 
         query = self._scale_query(query)  # scale query,  internal_enable_query_scale为True生效
 
@@ -1622,6 +1622,8 @@ class DotProductAttention(base_layer.BaseLayer):
           encoded: JTensor of shape [B, T, D].
           atten_probs: JTensor of shape [B, N, T, S].
         """
+        self.add_summary("[lsp]key_vecin", key_vec[1], verbosity=3)
+
         if self.combine_qkv:
             # Only supports self attention.
             assert query_vec is key_vec
@@ -1663,8 +1665,8 @@ class DotProductAttention(base_layer.BaseLayer):
             self._fprop_update_decode_state("key_post_rotary_pos_emb", key_proj)
             assert alibi_mask is None
 
-        self.add_summary("[lsp]query_proj_rotary", query_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_proj", key_proj[1], verbosity=self.user_summary_level)
+        self.add_summary("[lsp]query_proj_rotary", query_proj[1], verbosity=3)
+        # self.add_summary("[lsp]key_proj_rotary", key_proj[1], verbosity=3)
         # # Apply relative bias.
         # Paper: https://aclanthology.org/N18-2074.pdf.
         if self.relative_bias_tpl:

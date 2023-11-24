@@ -3,6 +3,7 @@ import functools
 from collections import defaultdict
 import random
 import os
+import math
 
 import seqio
 import t5
@@ -16,6 +17,32 @@ from google.cloud import storage # google-cloud-storage
 from absl import logging
 from paxml import checkpoint_paths
 import jax
+
+
+           
+def extract_train_skip_step(job_log_dir, step):
+    if job_log_dir is None:
+        return {}
+    model_dir = job_log_dir / "checkpoints"
+    if step is not None:
+        fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
+        skip_file_and_step_path = model_dir / fill_step / checkpoint_paths.SKIP_STEP_NAME
+    else:
+        skip_file_and_step_path = model_dir / checkpoint_paths.SKIP_STEP_NAME
+    logging.info(f"model_dir: {model_dir}")
+    try:
+        with skip_file_and_step_path.open('r') as f:
+            meta_dict = json.load(f)
+        logging.info(f"Load skip_file_and_step_path: ’{skip_file_and_step_path}‘ Finished.......")
+    except:
+        logging.info(f"skip_file_and_step_path: ’{skip_file_and_step_path}‘ is not existed.......")
+        meta_dict = {}
+
+    if jax.process_index() == 0:
+        back_meta_dict_path = job_log_dir / f'{step}.json'
+        with back_meta_dict_path.open('w') as f1:
+            json.dump(meta_dict, f1)
+    return meta_dict
 
 
 def get_feature(key_map, vocabulary):
@@ -87,165 +114,87 @@ def c4_registry(task, mode):
         )
 
 
-def extract_pythia_datapath(task, mode):
-    if hasattr(task, 'train_test_dataset'):
-        return task.train_test_dataset
-    client = storage.Client()
-    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-    path = task.DATA_PATH[mode].replace('gs://', '')
+def read_bucket(path, substrings=None):
+    path = path.replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
     directory_path = '/'.join(path_parts[1:])
     directory_path = directory_path if directory_path.endswith('/') else directory_path  + '/'
     logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
-    step_map_path = {}
+    step_map_path = defaultdict(list)
     rerank = 0
+    files = defaultdict(list)
+    client = storage.Client()
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
-        if '.tfrecord' in blob.name or ('_R' in blob.name and '_F' in blob.name):
-            logging.info(f"Successful filename: {blob.name}=====")
+        filename = blob.name
+        if substrings is None:
+            substrings = []
+        elif isinstance(substrings, str):
+            substrings = [substrings]
+        if any(substring in filename for substring in substrings):
+            logging.info(f"Successful filename: {filename}=====")
             try:
-                step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
+                step = int(filename.rsplit("_", maxsplit=1)[-1])
             except:
                 step = rerank
                 rerank += 1
-            path = f'gs://{os.path.join(bucket_name, blob.name)}'
-            step_map_path[step] = path
+            path = f'gs://{os.path.join(bucket_name, filename)}'
+            files[step].append(path)
         else:
-            logging.info(f"Failed filename: {blob.name}=====")
+            logging.info(f"Failed filename: {filename}=====")
+    return files
+            
 
-    sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
-    steps, pathes = zip(*sorted_step_path)
-    if not isinstance(pathes, list):
-        pathes = list(pathes)
-
-    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
-        random.shuffle(pathes)
-
-    test_num = int(len(pathes) * task.TEST_RATIO)
-    test = pathes[ :test_num]
-    train = pathes[test_num: ]
-    if not len(test):
-        test = pathes[:1]
-
-    if not len(train):
-        train = pathes[:1]
-        
-    train_test_dataset = {"test": test, "train": train}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    task.train_test_dataset = train_test_dataset
-    return train_test_dataset
+def chunk_files(files, ratios, shuffle=False):
+    if shuffle:
+        random.shuffle(files)
+    chunks = []
+    last_chunk_end = 0
+    for ratio in ratios:
+        fs = files[last_chunk_end: last_chunk_end + math.ceil(ratio * len(files))]
+        last_chunk_end += len(fs)
+        if len(fs) == 0:
+            fs = files[0:1]
+            print(f'Ratio: {ratio} is too low, get file num is 0')
+        chunks.append(fs)
+    return chunks
 
 
-def extract_qwen_datapath(task, mode):
+def extract_datapath(task, mode, substrings=None, remove_steps=None):
+    if remove_steps is None:
+        remove_steps = []
+    if substrings is None:
+        substrings = []
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    client = storage.Client()
-    trains = []
-    if isinstance(task.DATA_PATH[mode], list):
-        for path in task.DATA_PATH[mode]:
-            path = path.replace('gs://', '')
-            path_parts = path.split('/')
-            bucket_name = path_parts[0]
-            directory_path = '/'.join(path_parts[1:])
-            directory_path = directory_path if directory_path.endswith('/') else directory_path  + '/'
-            logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
-            step_map_path = defaultdict(list)
-            rerank = 0
-            for blob in client.list_blobs(bucket_name, prefix=directory_path):
-                if '.tfrecord' in blob.name or ('_R' in blob.name and '_F' in blob.name):
-                    logging.info(f"Successful filename: {blob.name}=====")
-                    try:
-                        step = int(blob.name.rsplit("_", maxsplit=1)[-1])
-                    except:
-                        step = rerank
-                        rerank += 1
-                    path = f'gs://{os.path.join(bucket_name, blob.name)}'
-                    if step == 0:
-                        pass
-                    else:
-                        logging.info(f"Successful filename final: {blob.name}=====")
-                        trains.append(path)
-                        pass
-                else:
-                    logging.info(f"Failed filename: {blob.name}=====")
-
-    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
-        random.shuffle(trains)
-
-    test_num = int(len(trains) * task.TEST_RATIO)
-    test = trains[ :test_num]
-    train = trains[test_num: ]
-    if not len(test):
-        test = trains[:1]
-
+    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
+    paths = [task.DATA_PATH[mode]] if isinstance(task.DATA_PATH[mode], str) else task.DATA_PATH[mode]
+    total_files = []
+    for path in paths:
+        files = read_bucket(path, substrings=substrings)
+        for step in remove_steps:
+            if step in files:
+                files.pop(step)
+            else:
+                break
+        files = [f for _, fs in files.items() for f in fs]
+        total_files.extend(files)
+    test, train = chunk_files(total_files, ratios=[task.TEST_RATIO, 1 - task.TEST_RATIO], shuffle=task.SHUFFLE['train'])
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
     train_test_dataset = {"test": test, "train": train}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    task.train_test_dataset = train_test_dataset
+    setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
+
+
+def extract_pythia_datapath(task, mode):
+    return extract_datapath(task, mode, substrings=['.tfrecord'], remove_steps=None)
+   
+
+def extract_qwen_datapath(task, mode):
+    return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[0])
 
 
 def extract_zh_en_novel_datapath(task, mode):
-    if hasattr(task, 'train_test_dataset'):
-        return task.train_test_dataset
-    random.seed(task.TRAINING_SEED)
-    dataset = defaultdict(list)
-    client = storage.Client()
-    path = task.DATA_PATH[mode].replace('gs://', '')
-    path_parts = path.split('/')
-    bucket_name = path_parts[0]
-    directory_path = '/'.join(path_parts[1:]) + '/'
-    for lang in ["zh", "en"]:
-        # directory_path = f'xiaomeng/processed_{lang}_data_split'
-        prefix = directory_path.format(lang=lang)
-        for blob in client.list_blobs(bucket_name, prefix=prefix):
-            logging.info(f"filename: {blob.name}=====")
-            if not blob.name or "_R" not in blob.name:
-                continue
-            if len(dataset[lang]) > 5:
-                break
-            index = int(blob.name.rsplit("_", maxsplit=1)[-1])
-            # 每本书的前多少个4096
-            if index < task.SPLIT_BSZ[lang]:
-                path = os.path.join(f"gs://{bucket_name}", blob.name)
-                dataset[lang].append(path)
-    total = dataset["zh"] + dataset["en"]
-    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
-        random.shuffle(total)
-
-    test_num = int(len(pathes) * task.TEST_RATIO)
-    test = pathes[ :test_num]
-    train = pathes[test_num: ]
-    if not len(test):
-        test = pathes[:1]
-    if not len(train):
-        train = pathes[:1]
-
-    train_test_dataset = {"test": test, "train": train}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    task.train_test_dataset = train_test_dataset
-    return train_test_dataset
-
-
-def extract_train_skip_step(job_log_dir, step):
-    if job_log_dir is None:
-        return {}
-    model_dir = job_log_dir / "checkpoints"
-    if step is not None:
-        fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
-        skip_file_and_step_path = model_dir / fill_step / checkpoint_paths.SKIP_STEP_NAME
-    else:
-        skip_file_and_step_path = model_dir / checkpoint_paths.SKIP_STEP_NAME
-    logging.info(f"model_dir: {model_dir}")
-    try:
-        with skip_file_and_step_path.open('r') as f:
-            meta_dict = json.load(f)
-        logging.info(f"Load skip_file_and_step_path: ’{skip_file_and_step_path}‘ Finished.......")
-    except:
-        logging.info(f"skip_file_and_step_path: ’{skip_file_and_step_path}‘ is not existed.......")
-        meta_dict = {}
-
-    if jax.process_index() == 0:
-        back_meta_dict_path = job_log_dir / f'{step}.json'
-        with back_meta_dict_path.open('w') as f1:
-            json.dump(meta_dict, f1)
-    return meta_dict
+    remove_steps = list(range(6, 100000))
+    return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=remove_steps)
+    

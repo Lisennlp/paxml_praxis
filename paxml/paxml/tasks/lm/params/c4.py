@@ -1457,8 +1457,9 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 16, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 4097
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    # MAX_SEQ_LEN = 4097
+    MAX_SEQ_LEN = 3073
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
@@ -1497,7 +1498,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     LM_HEAD_NORM = False
 
     QUERY_CHUNK_SIZE = 128
-    LM_HEAD_CHUNK_SIZE = 128
+    LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = False
     TASK_NAME = "Qwen7B"
     TARGET_LOG_PPLX = -1
@@ -1523,48 +1524,65 @@ class Qwen14B(C4SpmdGpt37BRoPE):
    
 @experiment_registry.register
 class BaseEval():
-  ONLY_EVAL = True
-  TEST_RATIO = 1
-  RESET_FOR_EVAL = True # True: test while test dataset
-  DATA_PATH = {
+    ONLY_EVAL = True
+    TEST_RATIO = 1
+    RESET_FOR_EVAL = True # True: test while test dataset
+    DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/pile_test',
                 'test':  'gs://common_datasets/pythia_model_test/pile_test',
                 }
-  DATA_FUNC = extract_pythia_datapath
-  ICI_MESH_SHAPE = [1, 32, 1]
-  PERCORE_BATCH_SIZE = 32
+    DATA_FUNC = extract_pythia_datapath
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 32
 
 
 @experiment_registry.register
 class Qwen7BEval(BaseEval, Qwen7B):
-  TEST_RATIO = 1
-  RESET_FOR_EVAL = True # True: test while test dataset
-  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
-                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
-                }
-  DATA_FUNC = extract_pythia_datapath
-  ICI_MESH_SHAPE = [1, 8, 1]
-  PERCORE_BATCH_SIZE = 2
+    TEST_RATIO = 1
+    RESET_FOR_EVAL = False # True: test while test dataset
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    # DATA_PATH = {
+    #             'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+    #             'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
+    #             }
+    # DATA_FUNC = extract_pythia_datapath
+    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 1
+    EVAL_LOOP_NUM_BATCHES = 10
+    MAX_SEQ_LEN = 4097
+    SHUFFLE = {"train": False, "test": False}
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    DATA_PATH = {
+            'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                        'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
+            'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                        'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
+            }
+    DATA_FUNC = extract_qwen_datapath
 
 
 @experiment_registry.register
 class Qwen14BEval(BaseEval, Qwen14B):
-  TEST_RATIO = 1
-  RESET_FOR_EVAL = False # True: test while test dataset
-  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-                'train': 'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
-                'test':  'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen7B_test1024/', 
-                }
-  DATA_FUNC = extract_pythia_datapath
-  ICI_MESH_SHAPE = [1, 8, 4]
-  PERCORE_BATCH_SIZE = 1
-  MAX_SEQ_LEN = 513
-  EVAL_LOOP_NUM_BATCHES = 1
-  SHUFFLE = {"train": False, "test": False}
-  FPROP_DTYPE = jnp.float32
+    TEST_RATIO = 1
+    RESET_FOR_EVAL = False # True: test while test dataset
+    ICI_MESH_SHAPE = [1, 8, 1]
+    PERCORE_BATCH_SIZE = 1
+    EVAL_LOOP_NUM_BATCHES = 1
+    MAX_SEQ_LEN = 4097
+    SHUFFLE = {"train": False, "test": False}
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    FPROP_DTYPE = jnp.bfloat16
+    DATA_PATH = {
+            'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                        'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
+            'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
+                        'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
+            }
+    QUERY_CHUNK_SIZE = 128
+    LM_HEAD_CHUNK_SIZE = 128
+    ROTARY_TYPE = 'qwen'
+    DATA_FUNC = extract_qwen_datapath
+
 
 
 @experiment_registry.register
@@ -1607,7 +1625,7 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 100
+    iter_file_nums: int = 10
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
@@ -1680,9 +1698,9 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            weights = data["labels"] >= 0
+            weights = data["labels"] > 0
         else:
-            weights = data["input_ids"] >= 0
+            weights = data["input_ids"] > 0
         model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)

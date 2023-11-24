@@ -658,6 +658,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
             # lsp
             if self.ROTARY_TYPE == 'pythia':
                 transformer_layer_p.tr_atten_tpl.rotary_position_emb_tpl = pax_fiddle.Config(embedding_softmax.RotaryPythiaPositionalEmbedding)
+            elif self.ROTARY_TYPE == 'qwen':
+                transformer_layer_p.tr_atten_tpl.rotary_position_emb_tpl.rotary_type = 'qwen'
 
         if self.USE_ALIBI_POSITION_EMB:
             model_p.lm_tpl.use_alibi_position_emb = True

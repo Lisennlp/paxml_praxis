@@ -1456,8 +1456,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    PERCORE_BATCH_SIZE = 8
+    ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
     MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 152064
@@ -1489,8 +1489,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     USE_BIAS = False
     FPROP_DTYPE = jnp.bfloat16
 
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 102
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 25
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
@@ -1502,7 +1502,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
+    SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset

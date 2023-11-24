@@ -1459,14 +1459,14 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
-    MAX_SEQ_LEN = 3073
+    MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
-    LR_LRED_WARMUP = 2000
-    LR_LRED_DECAY_START = 2001
+    LR_LRED_WARMUP = 1000
+    LR_LRED_DECAY_START = 1001
     LR_LRED_DECAY_END = 200000
     LR_LRED_MIN_RATIO = 1.0
     LR_LRED_MAX = 1.0
@@ -1476,13 +1476,13 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+    WEIGHT_DECAY = 0.01  # baichuan2 finetune: 0.005  pretrain: 0.1
 
     TRAINING_NUM_BATCHES_TO_SKIP = None
     TRAINABLE_POSITION_EMB = False
     USE_ROTARY_POSITION_EMB = True
     USE_ALIBI_POSITION_EMB = False
-    ROTARY_TYPE = 'paxml'
+    ROTARY_TYPE = 'qwen'
     NORMALIZATION_CLS = normalizations.RmsNorm
     QKV_BIAS = True
     O_BIAS = False

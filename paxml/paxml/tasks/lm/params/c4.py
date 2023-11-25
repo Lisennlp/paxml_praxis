@@ -1650,11 +1650,13 @@ class MyDatasets(base_input.BaseInput):
                     f'iter_file_nums in meta_dict is not equal to cur args. => {self.meta_dict["iter_file_nums"]}≠'
                     f" {self.iter_file_nums}"
                 )
+                
         logging.info(f'meta_dict: {self.meta_dict}')
         self.train_seed = self.meta_dict['seed']
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
         self._peek = None
         self._state_before_peek = None
+        self.step_in_file = self.meta_dict['step_in_file']
 
 
     def reset(self) -> None:

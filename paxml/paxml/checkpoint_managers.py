@@ -327,6 +327,8 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
         maybe_delete = [
             info for info in maybe_delete if info.step not in self._options.save_on_steps
         ]  # XD
+        logging.info(f'maybe_delete: {maybe_delete}')
+        logging.info(f'save_on_steps: {self._options.save_on_steps}')
 
         kept_checkpoints = []
         for info in maybe_delete:

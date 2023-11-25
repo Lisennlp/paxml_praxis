@@ -214,8 +214,8 @@ def extract_qwen_datapath_shuffled(task, mode):
         en_file = en_files.get(key, None)
         if zh_file is None or en_file is None:
             break
-        total_files.append(zh_file)
-        total_files.append(en_file)
+        total_files.extend(zh_file)
+        total_files.extend(en_file)
     test = total_files[ :10]
     train = total_files[10: ]
     logging.info(f'Train file: {len(train)},  test file: {len(test)}')

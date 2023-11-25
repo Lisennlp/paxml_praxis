@@ -94,8 +94,11 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     def _dataset_common(
         self, is_training: bool, job_log_dir=None
     ) -> pax_fiddle.Config[base_input.BaseInput]:
-        meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
-        num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
+        LOAD_SEQIO_ID = getattr(self, 'LOAD_SEQIO_ID', False)
+        LOAD_SEQIO_TEXT = getattr(self, 'LOAD_SEQIO_TEXT', True)
+        if not LOAD_SEQIO_ID and not LOAD_SEQIO_TEXT: 
+            meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
+            num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
 
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
@@ -1490,11 +1493,11 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     FPROP_DTYPE = jnp.bfloat16
 
     CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_LOOP_NUM_BATCHES = 25
+    EVAL_LOOP_NUM_BATCHES = 40
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
-    WANDB_PROJECT = "debug"
+    WANDB_PROJECT = "Qwen14B"
     LM_HEAD_NORM = False
 
     QUERY_CHUNK_SIZE = 128
@@ -1517,7 +1520,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                 'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
-    DATA_FUNC = extract_qwen_datapath
+    # DATA_FUNC = extract_qwen_datapath
+    DATA_FUNC = extract_qwen_datapath_shuffled
     SAVE_ON_STEPS = list(range(1000, 1000000, 2000))
     ONLY_EVAL = False
 
@@ -1610,9 +1614,10 @@ class BC2Gpt13BEval(BaseEval, BC2Gpt13B):
                 }
     DATA_FUNC = c4_registry
 
+ 
+
 
 class MyDatasets(base_input.BaseInput):
-    # Required params. lsp - note: 参数一定要注明类型，不然在初始化的时候就不能传入，会报错没有这个参数
     path: Optional[str] = None
     num_infeed_hosts: int = 0
     reset_for_eval: bool = False
@@ -1625,7 +1630,7 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 10
+    iter_file_nums: int = 20 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
@@ -1634,7 +1639,7 @@ class MyDatasets(base_input.BaseInput):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
 
-        if not self.meta_dict or self.only_eval: # lsp
+        if not self.meta_dict or self.only_eval:
             self.meta_dict = {
                 "seed": self.train_seed,
                 "cur_files": [],
@@ -1650,20 +1655,15 @@ class MyDatasets(base_input.BaseInput):
                     f'iter_file_nums in meta_dict is not equal to cur args. => {self.meta_dict["iter_file_nums"]}≠'
                     f" {self.iter_file_nums}"
                 )
-                
+            self.step_in_file = self.meta_dict['step_in_file']  # XD fix
         logging.info(f'meta_dict: {self.meta_dict}')
         self.train_seed = self.meta_dict['seed']
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
         self._peek = None
         self._state_before_peek = None
-        self.step_in_file = self.meta_dict['step_in_file']
 
-
-    def reset(self) -> None:
-        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
-
-    # def peek_padded(self):
-    #     return self.get_next_padded()
+ #   def peek_padded(self):
+  #      return self.get_next_padded()
 
     def get_next_padded(self):
         if self._peek is not None:
@@ -1691,8 +1691,11 @@ class MyDatasets(base_input.BaseInput):
             t = example[name]
             if t.dtype == tf.int64:
                 t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)[:self.seq_len]
+            example[name] = tf.sparse.to_dense(t, default_value=0)
         return example
+
+    def reset(self) -> None:
+        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def convert(self, data):
         seq_len = self.seq_len
@@ -1710,11 +1713,17 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
+    def split(self):
+        return
+
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
-        ds = ds.shard(self.num_infeed_hosts, jax.process_index())
+        # shard host data
+        process_index = jax.process_index()
+        # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
+        ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
@@ -1728,7 +1737,7 @@ class MyDatasets(base_input.BaseInput):
         )
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
-        if self.step_in_file: ds = ds.skip(self.step_in_file)
+        if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix
         return ds
 
     def load_tfrecord_dataset(self, fnames):
@@ -1744,7 +1753,9 @@ class MyDatasets(base_input.BaseInput):
             ds = self._load_file_dataset(fname)
             ds = ds.as_numpy_iterator()
             for batch in ds:
+                # self.meta_dict["step_in_file"] += 1  # XD fix
                 self.step_in_file += 1
                 yield batch
             self.meta_dict["file_in_data"] += 1
+            # self.meta_dict["step_in_file"] = 0  # XD fix
             self.step_in_file = 0

@@ -320,8 +320,9 @@ def record_file_and_step(step, save_dir, train_input):
         with save_path.open('w') as f1, save_newest_path.open('w') as f2:
             json.dump(meta_dict, f1)
             json.dump(meta_dict, f2)
+    py_utils.sync_global_devices("Save meta dict finished.......")
     logging.info(f'Save skip_file_and_step successful... file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]}')  # XD
-
+    
 
 def _train_and_evaluate_common(
     *,

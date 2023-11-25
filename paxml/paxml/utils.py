@@ -114,7 +114,7 @@ def c4_registry(task, mode):
         )
 
 
-def read_bucket(path, substrings=None):
+def read_bucket(path, substrings=None, split='_'):
     path = path.replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
@@ -134,7 +134,7 @@ def read_bucket(path, substrings=None):
         if any(substring in filename for substring in substrings):
             logging.info(f"Successful filename: {filename}=====")
             try:
-                step = int(filename.rsplit("_", maxsplit=1)[-1])
+                step = int(filename.rsplit(split, maxsplit=1)[-1])
             except:
                 step = rerank
                 rerank += 1
@@ -198,3 +198,27 @@ def extract_zh_en_novel_datapath(task, mode):
     remove_steps = list(range(6, 100000))
     return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=remove_steps)
     
+
+def extract_qwen_datapath_shuffled(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+
+    path = 'gs://jax_llm_data/xiaomeng/shuffled_zh_data'
+    zh_files = read_bucket(path, substrings=['tfrecord'], split='.b')
+
+    path = 'gs://jax_llm_data/xiaomeng/shuffled_en_data'
+    en_files = read_bucket(path, substrings=['tfrecord'], split='.b')
+    total_files = []
+    for key in range(0, 2000000, 10000):
+        zh_file = zh_files.get(key, None)
+        en_file = en_files.get(key, None)
+        if zh_file is None or en_file is None:
+            break
+        total_files.append(zh_file)
+        total_files.append(en_file)
+    test = total_files[ :10]
+    train = total_files[10: ]
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset

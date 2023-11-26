@@ -864,7 +864,7 @@ class BaseEvalProgram(Program):
                 logging.info("Data exhausted (%s) after %d steps", self._name, step_num)
                 # lsp: 测试集超过一个epoch的时候，进行重置.
                 self.eval_input.reset()
-                continue
+                break
 
             step_num += 1
             (

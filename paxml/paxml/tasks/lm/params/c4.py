@@ -219,9 +219,9 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     # lsp: 数据
     def datasets(self, job_log_dir=None) -> List[pax_fiddle.Config[base_input.BaseInput]]:
         """Returns a list of dataset parameters."""
-        if not (hasattr(self, 'train_datasets') and hasattr(self, 'eval_datasets')):
-            self.train_datasets = self._dataset_common(is_training=True, job_log_dir=job_log_dir)
-            self.eval_datasets = self._dataset_common(is_training=False)
+        # if not (hasattr(self, 'train_datasets') and hasattr(self, 'eval_datasets')):
+        self.train_datasets = self._dataset_common(is_training=True, job_log_dir=job_log_dir)
+        self.eval_datasets = self._dataset_common(is_training=False)
         return [self.train_datasets, self.eval_datasets]
         
 

@@ -79,6 +79,7 @@ def write_hparams_file(
         job_log_dir.mkdir(parents=True, exist_ok=True)
         params_fpath = job_log_dir / f"{filename_prefix}model_params.txt"
         with params_fpath.open("w") as hparams_file:
+            # 写数据参数配置
             for dataset in model_config.datasets():
                 hparams_file.write(base_hyperparams.nested_struct_to_text(dataset))
                 hparams_file.write("\n\n")
@@ -174,6 +175,7 @@ def train_and_evaluate(
     # [train_p datasets, notrain_p datasets]的pax_fiddle.Config对象
     # num_batches_to_skip = extract_train_skip_step(job_log_dir=job_log_dir)
     input_p = experiment_config.datasets(job_log_dir=job_log_dir)
+
     for inp in input_p:
         if not isinstance(
             inp,

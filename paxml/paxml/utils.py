@@ -21,6 +21,7 @@ import jax
 
            
 def extract_train_skip_step(job_log_dir, step):
+    logging.info(f'job_log_dir: {job_log_dir} step: {step}')
     if job_log_dir is None:
         return {}
     model_dir = job_log_dir / "checkpoints"

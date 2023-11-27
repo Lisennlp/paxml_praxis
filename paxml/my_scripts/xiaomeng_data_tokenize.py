@@ -10,12 +10,13 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import tensorflow as tf
 from transformers import AutoTokenizer
-import mlxu
-import wandb
+from etils import epath
 import math
-
+from tqdm import tqdm
 
 import re
+from datetime import datetime
+
 
 
 # null_content = re.compile(
@@ -97,7 +98,7 @@ class DataProcessor:
         random.seed(42)
         self.books_pathlist = [
             line.strip().replace(*self.path_map[self.data_type])
-            for line in mlxu.open_file(self.data_pathfile, 'r').readlines()
+            for line in epath.Path(self.data_pathfile).open('r').readlines()
         ]
         if self.shuffle:
             self.books_pathlist = random.sample(
@@ -108,20 +109,15 @@ class DataProcessor:
         return self.tokenizer.encode(line)
 
     def writer_factory(self):
-        if self.write_line == self.per_file_line_num:
-            self.writer.close()
-            self.write_line = 0
-        if self.write_line == 0:
-            name = f"{self.data_type}_R{self.rank}_F{self.file_count}_{self.epoch}"
+        if self.write_line % self.per_file_line_num == 0:
+            if self.write_line > 0: self.writer.close()
+            name = f"{self.data_type}_R{self.rank}_E{self.epoch}_b{self.write_line}"
             save_path = os.path.join(self.save_dir, name)
             self.writer = tf.io.TFRecordWriter(save_path)
-            print(f"Rank: {self.rank}, save_path: {save_path}")
             self.file_count += 1
 
     def write_file(self):
         input_ids = self.book_input_ids[: self.max_seq_len]
-        if len(input_ids) < self.clear_threshold_length:
-            return []
         feature = {
             "input_ids": self._int64_feature(input_ids),
         }
@@ -133,43 +129,30 @@ class DataProcessor:
         self.book_input_ids = []
 
     def process_book(self, path, start_index=0):
-        with mlxu.open_file(path, 'r') as fr:
+        with epath.Path(path).open('r') as fr:
             lines = fr.readlines()
+            if not len(lines):
+                return 
             count = 0
             for index in range(start_index, len(lines), 1):
-                line = lines[index]
-                line = line.strip()
-                if not line:
-                    line = '\n'
-                else:
-                    line += '\n'
-        #       if index < 10 and self.data_type == 'zh':
-          #          line = match_name_category(line)
-           #         print(f'line: {line}')
+                line = lines[index].strip()
+                line = line + '\n' if line else '\n'
                 if self.data_type == 'zh' and match_unused_content(line):
                     continue
                 ids = self.convert_line_to_ids(line)
+                if index == len(lines) - 1:
+                    ids.extend(self.book_end_id)
                 self.book_input_ids.extend(ids)
-                if len(self.book_input_ids) > self.max_seq_len:
+                if len(self.book_input_ids) >= self.max_seq_len:
                     self.writer_factory()
                     self.write_file()
-                    if index + 1  >= len(lines):
-                        self.run_book_index.pop(path)
-                    else:
-                        self.run_book_index[path] = index + 1
-                    # 每本书取3段，en: 10， zh: 50
                     if count >= self.segment_num[self.data_type]:
+                        self.run_book_index[path] = index + 1
                         break
                     count += 1
-                if index == len(lines) - 1:
-                    # 书的结尾用book_end_id分割
-                    self.book_input_ids.extend(self.book_end_id)
-                    try:
-                        # 结束后，删除该书
-                        self.run_book_index.pop(path)
-                    except Exception as e:
-                        print(f'Pop error: {e}')
-        
+            if index == len(lines) - 1:
+                self.run_book_index.pop(path) # 结束后，删除该书
+            
 
     def __len__(self):
         return self.size
@@ -183,43 +166,24 @@ class DataProcessor:
         print(f"Rank: {rank}. book: {len(self.books_pathlist)} self.epoches: {self.epoches}")
         self.processor_bookes = self.books_pathlist[start: end]
         self.run_book_index = {book: 0 for book in self.processor_bookes}
-        for epoch in range(self.epoches):
+        for epoch in tqdm(range(self.epoches), desc=f'Rank-{rank}'):
             N = len(self.run_book_index)
             if N == 0: break
             self.epoch = epoch
-            index = 0
             # 前1轮的时候，可以允许数据不写满per_file_line_num
             if self.epoch == 1:
                 self.write_line = 0
                 self.writer.close()
-
             items = list(self.run_book_index.items())
-            random.shuffle(items)
             #每轮都shuffle一遍
+            random.shuffle(items)
             self.run_book_index = dict(items)
-            print(f'epoch: {self.epoch} 剩下files：{len(items)}')
-            for path, start_index in self.run_book_index.copy().items():
-                print(f"Epoch: {epoch}/{self.epoches} rank: {rank} index: {index} start_index: {start_index}")
-                try:
-                    self.process_book(path, start_index)
-                except Exception as e:
-                    print(f'Rank: {rank}, error: {e}')
-                   # print(f'Rank: {rank}, error: {e}')
-                time_end = time.time()
-                print(
-                    f"{rank}-processed: {index}/{N}, path: ‘{path}’ deal finished, take:"
-                    f" {time_end - time_start}."
-                )
-         #       if rank == 0:
-          #          wandb_stats = {"index": index, "N": N, "take": time_end - time_start}
-           #         wandb.log(wandb_stats)
-                index += 1
+            for path, start_index in tqdm(self.run_book_index.copy().items(), desc=f'Processing-epoch{epoch}-{rank}'):
+                self.process_book(path, start_index)
         try:
             self.writer.close()
-            print(f'Rank: {rank} deal finished......')
         except Exception as e:
-            print(f'Final close......')
-
+            pass
 
 def process_book_wrapper(args):
     rank, LANG, WORKERS, max_seq_len, ratio = args
@@ -234,14 +198,16 @@ def process_book_wrapper(args):
             "zh": "/nas2/xiaomeng/zh_data/69shuba.filelist.shuffled",
             "en": "/nas2/xiaomeng/en_data/allfile.filelist.shuffed",
         }
-   # if not os.path.exists(tokenizer_path):
-        # tokenizer_path = "baichuan-inc/Baichuan2-13B-Base"
-    tokenizer_path = "Qwen/Qwen-7B"
+    tokenizer_path = "Qwen/Qwen-14B"
+    model_name = os.path.basename(tokenizer_path)
+    today = datetime.today()
+    formatted_date = today.strftime("%m%d")
     if bucket:
-        save_dir = f"gs://jax_llm_data/xiaomeng/processed_{LANG}_data_qwen7B_test/"
+        save_dir = f"gs://jax_llm_data/xiaomeng/{LANG}_data_{model_name}_{formatted_date}"
     else:
         raise ValueError(f'Now version only support bucket is True')
-
+    if rank == 0:
+        print(f'save_dir: {save_dir}')
     processor = DataProcessor(
         data_pathfiles[LANG],
         tokenizer_path,
@@ -251,13 +217,9 @@ def process_book_wrapper(args):
         ratio=ratio,
     )
     processor.rank = rank
-    processor.per_file_line_num = 50000
-    processor.epoches = 1
+    processor.per_file_line_num = 10000
+    processor.epoches = 1000
     every_rank_nums = math.ceil(len(processor.books_pathlist) / WORKERS)
-    if rank == 0:
-        wandb.login(key="7988c805dfe3fed4d6e4017f616555a5160fd2c2")
-        wandb.init(project=f"xiaomeng_{processor.data_type}_qwen14B", name="data_processed", config=None, resume=True)
-        # wandb.init(project=f"xiaomeng_{processor.data_type}_bc213B", name="data_processed", config=None, resume=True)
     start = int(rank * every_rank_nums)
     end = int((rank + 1) * every_rank_nums)
     print(f"Rank: {rank} start: {start} end: {end}")
@@ -282,6 +244,7 @@ if __name__ == "__main__":
         host_id = host_id.rsplit("-", maxsplit=1)[-1]
     host_id = int(host_id)
     host_num = int(host_num)
+
 
     print(f'data_dtype: {data_dtype}')
 
@@ -316,3 +279,10 @@ if __name__ == "__main__":
     results = pool.map(process_book_wrapper, args)  # 包含每个进程的返回值
     pool.close()
     pool.join()
+
+# Usage:
+# TPU_NAME=llm-jax-v4-256-0; ZONE=us-central2-b; WORKERS=200; HOST_NUM=5; DATA_TYPE='zh'
+# SCRIPT=novel_processed.py
+# gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=llm-tpu
+# gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken"
+# gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $WORKERS $HOST_NUM $DATA_TYPE| tee $DATA_TYPE_processed.log"

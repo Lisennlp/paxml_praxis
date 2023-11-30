@@ -1507,7 +1507,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     SHUFFLE = {"train": True, "test": True}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
-    TEST_RATIO = 0.02
+    TEST_RATIO = 0.002
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
 
     # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
@@ -1521,8 +1521,10 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
     # DATA_FUNC = extract_qwen_datapath
-    DATA_FUNC = extract_qwen_datapath_shuffled
+    # DATA_FUNC = extract_qwen_datapath_shuffled
+    DATA_FUNC = extract_qwen_datapath2
     SAVE_ON_STEPS = list(range(1000, 1000000, 2000))
+
     ONLY_EVAL = False
 
    

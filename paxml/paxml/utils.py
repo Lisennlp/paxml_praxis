@@ -175,13 +175,13 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
         files = read_bucket(path, substrings=substrings)
         newfiles = {}
         for step, file in files.items():
-            if step not in keep_steps:
-                files.pop(step)
-            elif step in remove_steps:
-                files.pop(step)
-            else:
+            if step in keep_steps and step not in remove_steps:
                 newfiles[step] = file
         files = [f for _, fs in newfiles.items() for f in fs]
+        # 英文bookstart数据较多，去掉一部分
+        if '_en_' in path:
+            filter_nums = int(0.2 * len(files))
+            files = files[:filter_nums]
         total_files.extend(files)
     test, train = chunk_files(total_files, ratios=[task.TEST_RATIO, 1 - task.TEST_RATIO], shuffle=task.SHUFFLE['train'])
     logging.info(f'Train file: {len(train)},  test file: {len(test)}')
@@ -197,6 +197,7 @@ def extract_pythia_datapath(task, mode):
 def extract_qwen_datapath(task, mode):
     return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[0])
 
+
 def extract_qwen_datapath2(task, mode):
     train = extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])['train']
     test = extract_qwen_datapath_shuffled(task, mode)['test']
@@ -204,6 +205,7 @@ def extract_qwen_datapath2(task, mode):
     logging.info(f'Train file: {len(train)},  test file: {len(test)}')
     setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
+
 
 def extract_zh_en_novel_datapath(task, mode):
     remove_steps = list(range(6, 100000))

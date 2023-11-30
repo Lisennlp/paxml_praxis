@@ -1304,12 +1304,15 @@ class DotProductAttention(base_layer.BaseLayer):
         # internal_enable_query_scale true?
         if not self.internal_enable_query_scale:
             return query
+        # false
         if self.internal_enable_per_dim_scale:
             query = self.per_dim_scale(query)
         else:
+            # false
             if self.scale_query_by_dim_per_head and self.dim_per_head is not None:
                 dim_per_head = self.dim_per_head
             else:
+                # here
                 dim_per_head = self.hidden_dim // self.num_heads
 
             query *= dim_per_head**-0.5

@@ -58,6 +58,14 @@ LLAMA_STANDARD_CONFIGS = {
         "norm_eps": 1e-5,
         "vocab_size": 50304
     },
+    "1.4b": {
+        "dim": 2048,
+        "intermediate_size": 8192,
+        "n_layers": 24,
+        "n_heads": 16,
+        "norm_eps": 1e-5,
+        "vocab_size": 50304
+    },
     "6.9b": {
         "dim": 4096,
         "intermediate_size": 16384,
@@ -88,9 +96,9 @@ checkpointer = Checkpointer(
     )
 )
 
-step = 3000
+step = 43000
 
-model_size = "12b"
+model_size = "1.4b"
 
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
@@ -101,7 +109,7 @@ intermediate_size = params["intermediate_size"]
 head_dim = dim // n_heads
 
 
-save_dir = f"gs://llm_base_models/pythia/pythia-{model_size}-paxml/checkpoints/"
+save_dir = f"gs://llm_base_models/pythia/pythia-{model_size}-paxml2/checkpoints/"
 
 save_dir = epath.Path(save_dir)
 checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(

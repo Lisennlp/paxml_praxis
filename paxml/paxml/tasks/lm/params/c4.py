@@ -1352,43 +1352,44 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
     # }
     # DATA_FUNC = tfids_registry
-
 @experiment_registry.register
-class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 32
-    NUM_HEADS = 32
-    MODEL_DIMS = 4096
-    HIDDEN_DIMS = 16384
-    VOCAB_SIZE = 50432
+class Pythia(DataParams, C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 24
+    NUM_HEADS = 16
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 4096
+    VOCAB_SIZE = 50304
+
+    MAX_SEQ_LEN = 2049
+
+    CHECKPOINT_EVERY_N_STEPS = 250
+    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_INTERVAL_STEPS = 250
+    CHECKPOINT_MAX_TO_KEEP = 5
 
     PERCORE_BATCH_SIZE = 2
     ICI_MESH_SHAPE = [1, 8, 1]
-
-    CHECKPOINT_EVERY_N_STEPS = 500
+    TRAINING_SEED = 1234
+       
+    ONLY_EVAL = False
     EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 2
-   
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TEST_RATIO = 0.02
+    RESET_FOR_EVAL = False # True: test while test dataset
+
     LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
     LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
+    LR_COS_MAX = 1.0
     LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
+    LR_COS_DECAY_START = LR_COS_WARMUP + 1
+    LR_COS_DECAY_END = 10000
     WEIGHT_DECAY = 0.0
     ADAM_BETA2 = 0.95
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-
-    TASK_NAME = "Pythia7B"
-
-    TRAINING_SEED = 1234
 
     QUERY_CHUNK_SIZE = 512
     Z_LOSS_WEIGHT = 0.0
@@ -1398,11 +1399,10 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
     USE_ALIBI_POSITION_EMB = False
     NORMALIZATION_CLS = normalizations.LayerNorm
     USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
+    USE_GATED_ACTIVATION = False
     ACTIVATION_CLS = layers.GELU
     ROTARY_TYPE = 'pythia'
-
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
+    TASK_NAME = "Pythia"
 
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
@@ -1418,67 +1418,45 @@ class Pythia7B(DataParams, C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
-class Pythia12B(DataParams, C4SpmdGpt37BRoPE):
+class Pythia410M(DataParams, Pythia):
+    NUM_LAYERS = 24
+    NUM_HEADS = 16
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 4096
+    VOCAB_SIZE = 50304
+    TASK_NAME = "Pythia410M"
+
+
+@experiment_registry.register
+class Pythia1B(DataParams, Pythia):
+    NUM_LAYERS = 24
+    NUM_HEADS = 16
+    MODEL_DIMS = 2048
+    HIDDEN_DIMS = 8092
+    VOCAB_SIZE = 50304
+    TASK_NAME = "Pythia1BM"
+
+
+@experiment_registry.register
+class Pythia7B(DataParams, Pythia):
+    NUM_LAYERS = 32
+    NUM_HEADS = 32
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 16384
+    VOCAB_SIZE = 50432
+    TASK_NAME = "Pythia7B"
+
+
+@experiment_registry.register
+class Pythia12B(DataParams, Pythia):
     NUM_LAYERS = 36
     NUM_HEADS = 40
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 20480
     VOCAB_SIZE = 50688
+    TASK_NAME = "Pythia12B"
 
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-
-    CHECKPOINT_EVERY_N_STEPS = 500
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 2
-
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-
-    TASK_NAME = "Pythia7B"
-
-    TRAINING_SEED = 1234
-
-    QUERY_CHUNK_SIZE = 512
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = True
-    USE_ALIBI_POSITION_EMB = False
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
-
-    LOAD_SEQIO_TEXT = False
-    LOAD_SEQIO_ID = False
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
-                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
-                }
-    DATA_FUNC = extract_pythia_datapath
-    LM_HEAD_CHUNK_SIZE = 512
-    RESET_FOR_EVAL = True
-
-
+    
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
@@ -1526,6 +1504,22 @@ class FlanMiniEval(BaseEval):
 
 
 @experiment_registry.register
+class Pythia410MPileEval(PileEval, Pythia410M):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia410MPile'
+    ICI_MESH_SHAPE = [1, 16, 2]
+    PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
+class Pythia1BPileEval(PileEval, Pythia1B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia1BPile'
+    ICI_MESH_SHAPE = [1, 16, 2]
+    PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia7BPile'
@@ -1538,6 +1532,22 @@ class Pythia12BPileEval(PileEval, Pythia12B):
 
 
 @experiment_registry.register
+class Pythia410MFlanMiniEval(FlanMiniEval, Pythia410M):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia410MFlanMini'
+    ICI_MESH_SHAPE = [1, 16, 2]
+    PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
+class Pythia1BFlanMiniEval(FlanMiniEval, Pythia1B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia1BFlanMini'
+    ICI_MESH_SHAPE = [1, 16, 2]
+    PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia7BFlanMini'
@@ -1547,27 +1557,6 @@ class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
 class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia12BFlanMini'
-
-
-@experiment_registry.register
-class Pythia410M(Pythia7B):
-    NUM_LAYERS = 24
-    NUM_HEADS = 16
-
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-    MAX_SEQ_LEN = 2049
-    VOCAB_SIZE = 50304
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 5
-    MODEL_DIMS = 1024
-    HIDDEN_DIMS = 4096
-    ONLY_EVAL = True
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TEST_RATIO = 1
-    RESET_FOR_EVAL = True # True: test while test dataset
 
 
 class MyDatasets(base_input.BaseInput):

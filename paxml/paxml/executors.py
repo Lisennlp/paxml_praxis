@@ -429,23 +429,25 @@ def _train_and_evaluate_common(
     gc.collect()
     gc.freeze()
     step_time_deque = deque(maxlen=5)
-  
+    flag = 0
     # 初始化skip file and step
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)
         step_start = time.time()
         # 在这传入训练的文件和step节点信息
-        save_or_pass = checkpointer.save_if_needed(
-            step_i,
-            partitioned_train_state,
-            train_state_metadata.unpadded_global_shapes,
-            train_state_metadata.partition_specs,
-            train_input_for_checkpoint,
-        )
+        if flag > 0:
+            save_or_pass = checkpointer.save_if_needed(
+                step_i,
+                partitioned_train_state,
+                train_state_metadata.unpadded_global_shapes,
+                train_state_metadata.partition_specs,
+                train_input_for_checkpoint,
+            )
         # # lsp
-        if save_or_pass:
-            record_file_and_step(step=step_i, save_dir=job_log_dir, train_input=train_program._train_input)
-
+            if save_or_pass:
+                record_file_and_step(step=step_i, save_dir=job_log_dir, train_input=train_program._train_input)
+                
+        flag += 1
         if exit_after_ondemand_checkpoint and checkpointer.reached_preemption(step_i):
             checkpointer.wait_until_finished()
             exit(1)

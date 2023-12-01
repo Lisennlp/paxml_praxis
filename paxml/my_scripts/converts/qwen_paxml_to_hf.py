@@ -52,7 +52,7 @@ LLAMA_STANDARD_CONFIGS = {
 }
 
 
-step = 10400
+step = 12000
 model_size = '14B'
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
@@ -62,7 +62,7 @@ intermediate_size = params["intermediate_size"]
 head_dim = dim // n_heads
 save_opt = False
 
-read_dir = 'gs://llm_base_models/qwen/14B/paxml1127/checkpoints'
+read_dir = 'gs://llm_base_models/qwen/14B/bookstart/checkpoints'
 save_dir = f'paxml_to_hf{step}'
 
 os.makedirs(save_dir, exist_ok=True)

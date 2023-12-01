@@ -23,11 +23,32 @@ sudo ipsec verify
 sudo iptables -A INPUT -p tcp --dport 12345 -j ACCEPT
 sudo iptables -A OUTPUT -p tcp --sport 12345 -j ACCEPT
 
-TPU_NAME=llm-jax-v3-32-10
+
+TPU_NAME=llm-jax-v4-32-10
+ZONE=us-central2-b
+STEP=0
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+MODEL_SIZE=14B
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo apt-get install golang; /home/lishengping/miniconda3/bin/pip install jax-smi"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False| tee Qwen$MODEL_SIZE.step$STEP.log"
+
+MODEL_SIZE=14B
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False| tee Qwen$MODEL_SIZE.log
+
+
+TPU_NAME=llm-jax-v3-128-10
 ZONE=us-east1-d
-STEP=53000
-SIZE=12b
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="grep model_dir Qwen14B.stepdebugif0.log"
+
+TPU_NAME=llm-jax-v3-128-10
+ZONE=us-east1-d
+STEP=0
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/paxml/ 2>&1 --enable_checkpoint_saving=True --eval_on_test=True| tee Qwen$MODEL_SIZE.step$STEP.log"
+
+
 gcloud compute tpus tpu-vm scp t_c4.py $TPU_NAME:/home/lishengping/projects/paxml/paxml/tasks/lm/params/c4.py  --zone=$ZONE  --worker=all  --project=llm-tpu
 
 SIZE=12b
@@ -156,4 +177,13 @@ TPU_NAME=llm-jax-v3-32-10
 ZONE=us-east1-d
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
 STEP=0
-python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14BEval --job_log_dir=gs://llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True --eva_model_step=$STEP| tee Pythia7BFlanMiniEval.step$STEP.lo
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14B --job_log_dir=gs://llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"
+
+
+
+TPU_NAME=llm-jax-v4-32-10
+ZONE=us-central2-b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; gsutil -m cp -r  gs://llm_projects_us-central2/llm_base_models/qwen/14B/projects  ./"
+STEP=0
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14B --job_log_dir=gs://llm_projects_us-central2/llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"

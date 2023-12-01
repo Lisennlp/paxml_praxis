@@ -195,16 +195,15 @@ def extract_pythia_datapath(task, mode):
    
 
 def extract_qwen_datapath(task, mode):
-    return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[0])
+    return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])
 
-
-def extract_qwen_datapath2(task, mode):
-    train = extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])['train']
-    test = extract_qwen_datapath_shuffled(task, mode)['test']
-    train_test_dataset = {"test": test, "train": train}
-    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
-    setattr(task, 'train_test_dataset', train_test_dataset)
-    return train_test_dataset
+# def extract_qwen_datapath2(task, mode):
+#     train = extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])['train']
+#     test = extract_qwen_datapath_shuffled(task, mode)['test']
+#     train_test_dataset = {"test": test, "train": train}
+#     logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+#     setattr(task, 'train_test_dataset', train_test_dataset)
+#     return train_test_dataset
 
 
 def extract_zh_en_novel_datapath(task, mode):
@@ -213,8 +212,8 @@ def extract_zh_en_novel_datapath(task, mode):
     
 
 def extract_qwen_datapath_shuffled(task, mode):
-    # if hasattr(task, 'train_test_dataset'):
-    #     return task.train_test_dataset
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
     path = 'gs://jax_llm_data/xiaomeng/shuffled_zh_data'
     zh_files = read_bucket(path, substrings=['tfrecord'], split='.b')
 

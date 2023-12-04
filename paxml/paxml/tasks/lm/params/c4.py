@@ -1418,27 +1418,28 @@ class Pythia(DataParams, C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
-class Pythia410M(DataParams, Pythia):
-    NUM_LAYERS = 24
-    NUM_HEADS = 16
-    MODEL_DIMS = 1024
-    HIDDEN_DIMS = 4096
-    VOCAB_SIZE = 50304
-    TASK_NAME = "Pythia410M"
+class Pythia410M(Pythia):
+    pass
+    # NUM_LAYERS = 24
+    # NUM_HEADS = 16
+    # MODEL_DIMS = 1024
+    # HIDDEN_DIMS = 4096
+    # VOCAB_SIZE = 50304
+    # TASK_NAME = "Pythia410M"
 
 
 @experiment_registry.register
-class Pythia1B(DataParams, Pythia):
+class Pythia1B(Pythia):
     NUM_LAYERS = 24
     NUM_HEADS = 16
     MODEL_DIMS = 2048
     HIDDEN_DIMS = 8092
     VOCAB_SIZE = 50304
-    TASK_NAME = "Pythia1BM"
+    TASK_NAME = "Pythia1B"
 
 
 @experiment_registry.register
-class Pythia7B(DataParams, Pythia):
+class Pythia7B(Pythia):
     NUM_LAYERS = 32
     NUM_HEADS = 32
     MODEL_DIMS = 4096
@@ -1448,7 +1449,7 @@ class Pythia7B(DataParams, Pythia):
 
 
 @experiment_registry.register
-class Pythia12B(DataParams, Pythia):
+class Pythia12B(Pythia):
     NUM_LAYERS = 36
     NUM_HEADS = 40
     MODEL_DIMS = 5120
@@ -1485,7 +1486,8 @@ class PileEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
     
 
 @experiment_registry.register
@@ -1495,12 +1497,12 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test2', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test2', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test3', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test3', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 320
 
 
 @experiment_registry.register
@@ -1522,13 +1524,13 @@ class Pythia1BPileEval(PileEval, Pythia1B):
 @experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia7BPile'
+    TASK_NAME = 'Pythia7BPileWhole'
 
 
 @experiment_registry.register
 class Pythia12BPileEval(PileEval, Pythia12B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia12BPile'
+    TASK_NAME = 'Pythia12BPileWhole'
 
 
 @experiment_registry.register
@@ -1550,13 +1552,13 @@ class Pythia1BFlanMiniEval(FlanMiniEval, Pythia1B):
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia7BFlanMini'
+    TASK_NAME = 'Pythia7BFlanMiniWhole'
 
 
 @experiment_registry.register
 class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia12BFlanMini'
+    TASK_NAME = 'Pythia12BFlanMiniWhole'
 
 
 class MyDatasets(base_input.BaseInput):

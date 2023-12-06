@@ -1487,7 +1487,7 @@ class PileEval(BaseEval):
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
     EVAL_LOOP_NUM_BATCHES = 162
-    RESET_FOR_EVAL = False
+    RESET_FOR_EVAL = True
     
 
 @experiment_registry.register
@@ -1516,7 +1516,7 @@ class Pythia410MPileEval(PileEval, Pythia410M):
 @experiment_registry.register
 class Pythia1BPileEval(PileEval, Pythia1B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia1BPile'
+    TASK_NAME = 'Pythia1BPileWhole'
     ICI_MESH_SHAPE = [1, 16, 2]
     PERCORE_BATCH_SIZE = 32
 

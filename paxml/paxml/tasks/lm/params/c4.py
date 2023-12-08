@@ -1427,16 +1427,32 @@ class Pythia410M(Pythia):
     # VOCAB_SIZE = 50304
     # TASK_NAME = "Pythia410M"
 
-
 @experiment_registry.register
 class Pythia1B(Pythia):
-    NUM_LAYERS = 24
-    NUM_HEADS = 16
+    NUM_LAYERS = 16
+    NUM_HEADS = 8
     MODEL_DIMS = 2048
-    HIDDEN_DIMS = 8092
+    HIDDEN_DIMS = 8192
     VOCAB_SIZE = 50304
     TASK_NAME = "Pythia1B"
 
+@experiment_registry.register
+class Pythia1p4B(Pythia):
+    NUM_LAYERS = 24
+    NUM_HEADS = 16
+    MODEL_DIMS = 2048
+    HIDDEN_DIMS = 8192
+    VOCAB_SIZE = 50304
+    TASK_NAME = "Pythia1p4B"
+
+@experiment_registry.register
+class Pythia2p8B(Pythia):
+    NUM_LAYERS = 32
+    NUM_HEADS = 32
+    MODEL_DIMS = 2560
+    HIDDEN_DIMS = 10240
+    VOCAB_SIZE = 50304
+    TASK_NAME = "Pythia2p8B"
 
 @experiment_registry.register
 class Pythia7B(Pythia):
@@ -1461,8 +1477,8 @@ class Pythia12B(Pythia):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 16, 4]
-    PERCORE_BATCH_SIZE = 16
+    ICI_MESH_SHAPE = [1, 16, 2]
+    PERCORE_BATCH_SIZE = 32
     LM_HEAD_CHUNK_SIZE = None
     FPROP_DTYPE = jnp.float32
 
@@ -1486,8 +1502,8 @@ class PileEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    EVAL_LOOP_NUM_BATCHES = 162
-    RESET_FOR_EVAL = True
+    EVAL_LOOP_NUM_BATCHES = 50
+    RESET_FOR_EVAL = False
     
 
 @experiment_registry.register
@@ -1509,18 +1525,27 @@ class FlanMiniEval(BaseEval):
 class Pythia410MPileEval(PileEval, Pythia410M):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia410MPile'
-    ICI_MESH_SHAPE = [1, 16, 2]
-    PERCORE_BATCH_SIZE = 32
-
 
 @experiment_registry.register
 class Pythia1BPileEval(PileEval, Pythia1B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia1BPileWhole'
-    ICI_MESH_SHAPE = [1, 16, 2]
-    PERCORE_BATCH_SIZE = 32
+    TASK_NAME = 'Pythia1BPile'
 
 
+@experiment_registry.register
+class Pythia1p4BPileEval(PileEval, Pythia1p4B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia1p4BPileWhole'
+
+@experiment_registry.register
+class Pythia2p8BPileEval(PileEval, Pythia2p8B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia2p8BPile'
+
+@experiment_registry.register
+class Pythia1BPileEval(PileEval, Pythia1B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia1BPile'
 @experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
@@ -1542,9 +1567,9 @@ class Pythia410MFlanMiniEval(FlanMiniEval, Pythia410M):
 
 
 @experiment_registry.register
-class Pythia1BFlanMiniEval(FlanMiniEval, Pythia1B):
+class Pythia1p4BFlanMiniEval(FlanMiniEval, Pythia1p4B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia1BFlanMini'
+    TASK_NAME = 'Pythia1p4BFlanMini'
     ICI_MESH_SHAPE = [1, 16, 2]
     PERCORE_BATCH_SIZE = 32
 

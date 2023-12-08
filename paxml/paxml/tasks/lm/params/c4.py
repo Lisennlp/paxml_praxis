@@ -206,7 +206,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
                 seq_len=self.MAX_SEQ_LEN,
                 reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),
-                repeat=10 if is_training else 30,
+                repeat=getattr(self, 'DATA_REPEAT', {'train': 1})['train'] if is_training else getattr(self, 'DATA_REPEAT', {'test': 1})['test'],
                 eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
                 train_seed=self.TRAINING_SEED,
                 task_features=list(self.KEY_MAP.values()),
@@ -1505,6 +1505,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
+    DATA_REPEAT = {'train': 1, 'test': 30}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
@@ -1520,11 +1521,11 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                 'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
-    DATA_FUNC = extract_qwen_datapath
+    # DATA_FUNC = extract_qwen_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
+    DATA_FUNC = extract_qwen_datapath1208
     SAVE_ON_STEPS = list(range(1000, 1000000, 1000))
-
     ONLY_EVAL = False
 
    

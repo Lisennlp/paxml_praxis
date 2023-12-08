@@ -233,3 +233,29 @@ def extract_qwen_datapath_shuffled(task, mode):
     train_test_dataset = {"test": test, "train": train}
     setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
+
+def extract_qwen_datapath1208(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+    path = 'gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208'
+    zh_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
+    path = 'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208'
+    en_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
+    total_files = []
+    for key in range(10000, 20001, 10000):
+        zh_file = zh_files.get(key, None)
+        en_file = en_files.get(key, None)
+        if zh_file is None or en_file is None:
+            break
+        total_files.extend(zh_file)
+        total_files.extend(en_file)
+    random.seed(task.TRAINING_SEED)
+    random.shuffle(total_files)
+    test_nums = len(total_files) * task.TEST_RATIO
+    test = total_files[: test_nums]
+    train = total_files[test_nums:]
+
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset

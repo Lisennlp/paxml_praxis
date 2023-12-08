@@ -1664,6 +1664,7 @@ class MyDatasets(base_input.BaseInput):
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
         self._peek = None
         self._state_before_peek = None
+        self.label_flag = 0
 
  #   def peek_padded(self):
   #      return self.get_next_padded()
@@ -1706,7 +1707,10 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            weights = data["labels"] >= 0
+            if self.label_flag == 0:
+                print(f'=================data:\n{data}')
+            self.label_flag = 1
+            weights = data["labels"] > 0
         else:
             weights = data["input_ids"] >= 0
         model_needed_inputs.weights = weights[:, 1:seq_len]

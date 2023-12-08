@@ -1442,7 +1442,7 @@ class Qwen7B(C4SpmdGpt37BRoPE):
     # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     DATA_PATH = {
                 'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
@@ -1514,7 +1514,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     DATA_PATH = {
                 'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 

@@ -1543,10 +1543,6 @@ class Pythia2p8BPileEval(PileEval, Pythia2p8B):
     TASK_NAME = 'Pythia2p8BPile'
 
 @experiment_registry.register
-class Pythia1BPileEval(PileEval, Pythia1B):
-    TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia1BPile'
-@experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia7BPileWhole'

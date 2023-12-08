@@ -251,7 +251,7 @@ def extract_qwen_datapath1208(task, mode):
         total_files.extend(en_file)
     random.seed(task.TRAINING_SEED)
     random.shuffle(total_files)
-    test_nums = len(total_files) * task.TEST_RATIO
+    test_nums = int(len(total_files) * task.TEST_RATIO)
     test = total_files[: test_nums]
     train = total_files[test_nums:]
 

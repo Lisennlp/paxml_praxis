@@ -1466,7 +1466,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
-    LEARNING_RATE = 1e-5
+    LEARNING_RATE = 1e-6
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
     LR_LRED_WARMUP = 1000
     LR_LRED_DECAY_START = 1001
@@ -1570,14 +1570,14 @@ class Qwen7BEval(BaseEval, Qwen7B):
 
 @experiment_registry.register
 class Qwen14BEval(BaseEval, Qwen14B):
-    TEST_RATIO = 1
+    TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # True: test while test dataset
     ICI_MESH_SHAPE = [1, 8, 4]
     PERCORE_BATCH_SIZE = 2
     EVAL_LOOP_NUM_BATCHES = 100
     MAX_SEQ_LEN = 4097
-    SHUFFLE = {"train": False, "test": False}
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    SHUFFLE = {"train": True, "test": True}
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     FPROP_DTYPE = jnp.bfloat16
     DATA_PATH = {
             'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
@@ -1589,8 +1589,8 @@ class Qwen14BEval(BaseEval, Qwen14B):
     LM_HEAD_CHUNK_SIZE = 128
     ROTARY_TYPE = 'qwen'
     # DATA_FUNC = extract_qwen_datapath
-    DATA_FUNC = extract_qwen_datapath_shuffled
-
+    DATA_FUNC = extract_qwen_datapath1208
+    TRAINING_NUM_BATCHES_TO_SKIP = None
 
 @experiment_registry.register
 class BC2Gpt13BEval(BaseEval, BC2Gpt13B):

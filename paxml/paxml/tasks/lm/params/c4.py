@@ -1572,9 +1572,9 @@ class Qwen7BEval(BaseEval, Qwen7B):
 class Qwen14BEval(BaseEval, Qwen14B):
     TEST_RATIO = 1
     RESET_FOR_EVAL = False # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 8, 1]
-    PERCORE_BATCH_SIZE = 1
-    EVAL_LOOP_NUM_BATCHES = 1000
+    ICI_MESH_SHAPE = [1, 8, 4]
+    PERCORE_BATCH_SIZE = 2
+    EVAL_LOOP_NUM_BATCHES = 100
     MAX_SEQ_LEN = 4097
     SHUFFLE = {"train": False, "test": False}
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
@@ -1588,8 +1588,8 @@ class Qwen14BEval(BaseEval, Qwen14B):
     QUERY_CHUNK_SIZE = 128
     LM_HEAD_CHUNK_SIZE = 128
     ROTARY_TYPE = 'qwen'
-    DATA_FUNC = extract_qwen_datapath
-
+    # DATA_FUNC = extract_qwen_datapath
+    DATA_FUNC = extract_qwen_datapath_shuffled
 
 
 @experiment_registry.register
@@ -1708,7 +1708,7 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
             if self.label_flag == 0:
-                print(f'=================data:\n{data}')
+                logging.info(f'=================data:\n{data}')
             self.label_flag = 1
             weights = data["labels"] > 0
         else:

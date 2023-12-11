@@ -40,7 +40,7 @@ def extract_train_skip_step(job_log_dir, step):
         meta_dict = {}
 
     if jax.process_index() == 0:
-        back_meta_dict_path = job_log_dir / f'{step}.json'
+        back_meta_dict_path = job_log_dir / f'{meta_dict.get("checkpoint_step", None)}.json'
         with back_meta_dict_path.open('w') as f1:
             json.dump(meta_dict, f1)
     return meta_dict
@@ -233,6 +233,31 @@ def extract_qwen_datapath_shuffled(task, mode):
     train_test_dataset = {"test": test, "train": train}
     setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
+
+
+def extract_qwen_datapath1208_shuffled(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+    path = 'gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208_shuffled'
+    zh_files = read_bucket(path, substrings=['_b'], split='_b')
+
+    path = 'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208_shuffled'
+    en_files = read_bucket(path, substrings=['_b'], split='_b')
+    total_files = []
+    for key in range(0, 2000000, 10000):
+        zh_file = zh_files.get(key, None)
+        en_file = en_files.get(key, None)
+        if zh_file is not None:
+            total_files.extend(zh_file)
+        if en_file is not None:
+            total_files.extend(en_file)
+    test = total_files[ :10]
+    train = total_files[10: ]
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset
+
 
 def extract_qwen_datapath1208(task, mode):
     if hasattr(task, 'train_test_dataset'):

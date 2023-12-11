@@ -1524,7 +1524,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     # DATA_FUNC = extract_qwen_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
-    DATA_FUNC = extract_qwen_datapath1208
+    # DATA_FUNC = extract_qwen_datapath1208
+    DATA_FUNC = extract_qwen_datapath1208_shuffled
     SAVE_ON_STEPS = list(range(1000, 1000000, 1000))
     ONLY_EVAL = False
 
@@ -1720,9 +1721,6 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
-    def split(self):
-        return
-
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
@@ -1733,6 +1731,7 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
+            logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
         padded_shapes = {key: self.seq_len for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}

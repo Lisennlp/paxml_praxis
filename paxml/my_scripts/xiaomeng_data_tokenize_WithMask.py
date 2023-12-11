@@ -25,7 +25,7 @@ from collections import deque
 # )
 # poison_content = re.compile(r'本章完|第(\d|[零一二三四五六七八九十百千]){1,}(章|节|卷)|(^\d{1,5}$)|未 ?完待续|(^\d{1,5}\.)')
 # chapter_pat = re.compile('第(\d|[零一二三四五六七八九十百千]){1,}(章|节|卷)')
-chapter_pat = re.compile('第(\d|[零一二三四五六七八九十百千]){1,}(章|节|卷)|^【\d+】|^\d+\.|^0\d+')
+chapter_pat = re.compile('第(\d|[零一二三四五六七八九十百千]){1,}(章|节|卷|回)|^【\d+】|^\d+\.|^0\d+')
 
 chapter_en_pat = re.compile('Chapter ?\d+|^【\d+】|^\d+\.|^0\d+')
 

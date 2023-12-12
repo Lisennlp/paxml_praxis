@@ -42,11 +42,9 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="gr
 
 TPU_NAME=llm-jax-v3-128-10
 ZONE=us-east1-d
-STEP=0
+MODEL_SIZE=14B
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
-
-
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/paxml/ 2>&1 --enable_checkpoint_saving=True --eval_on_test=True| tee Qwen$MODEL_SIZE.step$STEP.log"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen$MODEL_SIZE --job_log_dir=gs://llm_base_models/qwen/$MODEL_SIZE/paxml1208/ 2>&1 --enable_checkpoint_saving=True --eval_on_test=True| tee Qwen$MODEL_SIZE.log"
 
 
 gcloud compute tpus tpu-vm scp t_c4.py $TPU_NAME:/home/lishengping/projects/paxml/paxml/tasks/lm/params/c4.py  --zone=$ZONE  --worker=all  --project=llm-tpu
@@ -187,3 +185,9 @@ ZONE=us-central2-b
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; gsutil -m cp -r  gs://llm_projects_us-central2/llm_base_models/qwen/14B/projects  ./"
 STEP=0
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14B --job_log_dir=gs://llm_projects_us-central2/llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"
+
+
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+STEP=11000
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14BEval --job_log_dir=gs://llm_base_models/qwen/14B/paxml1127 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"

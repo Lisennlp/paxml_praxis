@@ -418,9 +418,11 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
             return
         else:
             # 开启一个进程删除
-            delete_process = Process(target=self._backend_del_directory, args=(step, ))
-            delete_process.daemon = True
-            delete_process.start()
+            # delete_process = Process(target=self._backend_del_directory, args=(step, ))
+            # delete_process.daemon = True
+            # delete_process.start()
+            # lsp
+            _backend_del_directory(step)
 
     def _backend_del_directory(self, step):
         options = typing.cast(CheckpointManagerOptions, self._options)

@@ -1634,7 +1634,7 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 40 # 100  500 steps/file
+    iter_file_nums: int = 20 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False

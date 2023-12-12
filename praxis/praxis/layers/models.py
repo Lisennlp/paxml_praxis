@@ -84,6 +84,7 @@ def compute_xent_loss_helper(
     return_predictions: bool,
     apply_eval_sample_weights: bool = False,
     report_strict_acc: bool = False,
+    acc_batch_mean: bool = False
 ) -> Tuple[WeightedScalars, Dict[str, Any]]:
     """Helper for computing the xent loss for Language model and Sequence model.
 
@@ -126,10 +127,25 @@ def compute_xent_loss_helper(
                 "provide the necessary `eval_sample_weights` field."
             )
         weights = _merge_per_token_and_per_example_weights(weights, input_batch.eval_sample_weights)
+    # predicted_labels: bsz * len, weights: bsz * len
     predicted_labels = predictions.per_example_argmax.astype(labels.dtype)
     num_preds = predictions.total_weight
+    logging.info(f'predicted_labels: {predicted_labels.shape}')
+    logging.info(f'weights: {weights.shape}')
+    logging.info(f'num_preds: {num_preds.shape}')
+    # mean_acc: constant
     mean_acc = jnp.sum((labels == predicted_labels) * weights) / jnp.maximum(num_preds, 1)
     metric_weight = jnp.array(num_preds, predictions.avg_xent.dtype)
+    logging.info(f'acc_batch_mean: {acc_batch_mean}')
+    # lsp: 在length维加和对的token数
+    batch_weights = jnp.sum(weights, axis=-1)
+    batch_weights = jnp.maximum(batch_weights, 1)
+    if acc_batch_mean:
+        batch_right = jnp.sum((labels == predicted_labels) * weights, axis=-1)
+        batch_mean_acc = jnp.mean(batch_right / batch_weights)
+        fraction_of_correct_next_step_preds = (batch_mean_acc, metric_weight)
+    else:
+        fraction_of_correct_next_step_preds = (mean_acc, metric_weight)
 
     if hasattr(predictions, "avg_xent_weight"):
         avg_xent_weight = predictions.avg_xent_weight
@@ -144,8 +160,9 @@ def compute_xent_loss_helper(
             jnp.array(1.0, predictions.aux_loss.dtype),
         ),
         log_pplx=(predictions.avg_xent, avg_xent_weight),
-        fraction_of_correct_next_step_preds=(mean_acc, metric_weight),
+        fraction_of_correct_next_step_preds=fraction_of_correct_next_step_preds,
         num_predictions=(num_preds, jnp.array(1.0, num_preds.dtype)),
+        # batch_mean_acc=batch_mean_acc,
     )
     if report_strict_acc:
         num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
@@ -167,7 +184,8 @@ def compute_xent_loss_helper(
     # The score for the sequence is the negative of the sum of per token cross
     # entropy, which is the (weighted) sum of log probs on the tokens.
     # __import__('ipdb').set_trace()
-    per_example_output = NestedMap(labels=labels, scores=-predictions.per_sequence_xent)
+    # lsp: clean scores 负号 and add acc
+    per_example_output = NestedMap(labels=labels, batch_weights=batch_weights, scores=predictions.log_probs)
     # apply_eval_sample_weights:false, hasattr(input_batch, "eval_sample_weights"):true
     if apply_eval_sample_weights and hasattr(input_batch, "eval_sample_weights"):
         per_example_output.eval_sample_weights = input_batch.eval_sample_weights
@@ -201,6 +219,7 @@ class LanguageModel(base_model.BaseModel):
     count_tokens: bool = False
     apply_eval_sample_weights: bool = False
     report_strict_acc: bool = False
+    acc_batch_mean: bool = False
 
     def setup(self) -> None:
         super().setup()
@@ -298,6 +317,7 @@ class LanguageModel(base_model.BaseModel):
             self.return_predictions,
             self.apply_eval_sample_weights,
             self.report_strict_acc,
+            self.acc_batch_mean
         )
 
     def _prepare_guidance_decode_data(self, decode_data: NestedMap) -> NestedMap:

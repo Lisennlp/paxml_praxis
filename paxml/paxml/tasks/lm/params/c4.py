@@ -1505,7 +1505,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    DATA_REPEAT = {'train': 1, 'test': 30}
+    DATA_REPEAT = {'train': 1, 'test': 10}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
@@ -1516,16 +1516,17 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     LOAD_SEQIO_ID = False
     KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     DATA_PATH = {
-                'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
-                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117'], 
-                'test':  ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
-                          'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
+                'train': ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
+                          'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208'], 
+                'test':  ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
+                          'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
                 }
-    # DATA_FUNC = extract_qwen_datapath
+                
+    DATA_FUNC = extract_qwen_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208
-    DATA_FUNC = extract_qwen_datapath1208_shuffled
+    # DATA_FUNC = extract_qwen_datapath1208_shuffled
     SAVE_ON_STEPS = list(range(1000, 1000000, 1000))
     ONLY_EVAL = False
 
@@ -1573,13 +1574,13 @@ class Qwen7BEval(BaseEval, Qwen7B):
 class Qwen14BEval(BaseEval, Qwen14B):
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # True: test while test dataset
-    ICI_MESH_SHAPE = [1, 8, 4]
+    ICI_MESH_SHAPE = [1, 16, 2]
     PERCORE_BATCH_SIZE = 4
     EVAL_LOOP_NUM_BATCHES = 20
     MAX_SEQ_LEN = 4097
     SHUFFLE = {"train": True, "test": True}
-    # KEY_MAP = {"targets": "input_ids", "masks": "labels"}
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
+    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     FPROP_DTYPE = jnp.bfloat16
     DATA_PATH = {
             'train': ['gs://jax_llm_data/xiaomeng/processed_en_data_qwen14B_KeepChapter1117/', 
@@ -1591,8 +1592,8 @@ class Qwen14BEval(BaseEval, Qwen14B):
     LM_HEAD_CHUNK_SIZE = None
     ROTARY_TYPE = 'qwen'
     # DATA_FUNC = extract_qwen_datapath
-    # DATA_FUNC = extract_qwen_datapath1208
-    DATA_FUNC = extract_qwen_datapath_shuffled
+    DATA_FUNC = extract_qwen_datapath1208
+    # DATA_FUNC = extract_qwen_datapath_shuffled
     TRAINING_NUM_BATCHES_TO_SKIP = 9000
 
 @experiment_registry.register

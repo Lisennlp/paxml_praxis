@@ -115,7 +115,7 @@ def c4_registry(task, mode):
         )
 
 
-def read_bucket(path, substrings=None, split='_'):
+def read_bucket(path, substrings=None, split='_b'):
     path = path.replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
@@ -180,7 +180,7 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
         files = [f for _, fs in newfiles.items() for f in fs]
         # 英文bookstart数据较多，去掉一部分
         if '_en_' in path:
-            filter_nums = int(0.2 * len(files))
+            filter_nums = int(0.6 * len(files))
             files = files[:filter_nums]
         total_files.extend(files)
     test, train = chunk_files(total_files, ratios=[task.TEST_RATIO, 1 - task.TEST_RATIO], shuffle=task.SHUFFLE['train'])
@@ -244,7 +244,7 @@ def extract_qwen_datapath1208_shuffled(task, mode):
     path = 'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208_shuffled'
     en_files = read_bucket(path, substrings=['_b'], split='_b')
     total_files = []
-    for key in range(0, 2000000, 10000):
+    for key in range(0, 10000, 10000):
         zh_file = zh_files.get(key, None)
         en_file = en_files.get(key, None)
         if zh_file is not None:

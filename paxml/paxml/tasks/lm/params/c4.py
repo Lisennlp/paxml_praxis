@@ -1527,7 +1527,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208
     # DATA_FUNC = extract_qwen_datapath1208_shuffled
-    SAVE_ON_STEPS = list(range(1000, 1000000, 1000))
+    SAVE_ON_STEPS = list(range(1000, 100000, 1000)) + [11800]
     ONLY_EVAL = False
 
    

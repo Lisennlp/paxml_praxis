@@ -179,7 +179,7 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
                 newfiles[step] = file
         files = [f for _, fs in newfiles.items() for f in fs]
         # 英文bookstart数据较多，去掉一部分
-        if '_en_' in path:
+        if 'en_data' in path:
             filter_nums = int(0.2 * len(files))
             files = files[:filter_nums]
         total_files.extend(files)

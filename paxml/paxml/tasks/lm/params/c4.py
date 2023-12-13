@@ -1286,7 +1286,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 1
+    PERCORE_BATCH_SIZE = 2
     ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 125696

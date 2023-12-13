@@ -1314,7 +1314,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     ADAM_BETA1 = 0.9
     ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
     CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+    WEIGHT_DECAY = 0.1  # baichuan2 finetune: 0.005  pretrain: 0.1
 
     TRAINING_NUM_BATCHES_TO_SKIP = None
     TRAINABLE_POSITION_EMB = False
@@ -1466,7 +1466,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
-    LEARNING_RATE = 1e-6
+    LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
     LR_LRED_WARMUP = 1000
     LR_LRED_DECAY_START = 1001

@@ -180,7 +180,7 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
         files = [f for _, fs in newfiles.items() for f in fs]
         # 英文bookstart数据较多，去掉一部分
         if '_en_' in path:
-            filter_nums = int(0.6 * len(files))
+            filter_nums = int(0.2 * len(files))
             files = files[:filter_nums]
         total_files.extend(files)
     test, train = chunk_files(total_files, ratios=[task.TEST_RATIO, 1 - task.TEST_RATIO], shuffle=task.SHUFFLE['train'])
@@ -195,7 +195,7 @@ def extract_pythia_datapath(task, mode):
    
 
 def extract_qwen_datapath(task, mode):
-    return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])
+    return extract_datapath(task, mode, substrings=['_R', 'E0_b'], remove_steps=[], keep_steps=[0])
 
 # def extract_qwen_datapath2(task, mode):
 #     train = extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])['train']

@@ -195,7 +195,7 @@ def extract_pythia_datapath(task, mode):
    
 
 def extract_qwen_datapath(task, mode):
-    return extract_datapath(task, mode, substrings=['_R', 'E0_b'], remove_steps=[], keep_steps=[0])
+    return extract_datapath(task, mode, substrings=['E0_b'], remove_steps=[], keep_steps=[0])
 
 # def extract_qwen_datapath2(task, mode):
 #     train = extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=[], keep_steps=[0])['train']

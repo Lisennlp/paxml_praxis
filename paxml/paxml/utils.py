@@ -211,6 +211,32 @@ def extract_zh_en_novel_datapath(task, mode):
     return extract_datapath(task, mode, substrings=['_R', '_F'], remove_steps=remove_steps)
     
 
+def extract_bc2_datapath1213(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+    path = 'gs://jax_llm_data/xiaomeng/zh_data_Baichuan2-13B-Base_1213'
+    zh_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
+    path = 'gs://jax_llm_data/xiaomeng/en_data_Baichuan2-13B-Base_1213'
+    en_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
+    total_files = []
+    for key in range(0, 10001, 10000):
+        zh_file = zh_files.get(key, None)
+        en_file = en_files.get(key, None)
+        if zh_file is None or en_file is None:
+            break
+        total_files.extend(zh_file)
+        total_files.extend(en_file)
+    random.seed(task.TRAINING_SEED)
+    random.shuffle(total_files)
+    test_nums = int(len(total_files) * task.TEST_RATIO)
+    test = total_files[: test_nums]
+    train = total_files[test_nums:]
+
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset
+
 def extract_qwen_datapath_shuffled(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset

@@ -1287,7 +1287,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 4096
     VOCAB_SIZE = 125696
 
@@ -1322,10 +1322,10 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     USE_ALIBI_POSITION_EMB = True
     ROTARY_TYPE = 'paxml'
 
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 102
+    CHECKPOINT_EVERY_N_STEPS = 200
+    EVAL_LOOP_NUM_BATCHES = 20
     EVAL_INTERVAL_STEPS = 100
-    CHECKPOINT_MAX_TO_KEEP = 2
+    CHECKPOINT_MAX_TO_KEEP = 3
 
     WANDB_PROJECT = "debug"
     LM_HEAD_NORM = True
@@ -1338,7 +1338,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TASK_NAME = "BC2Gpt13B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
+    SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
@@ -1370,16 +1370,18 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     #     "test": ["gs://jax_llm_data/data-baichuan/dreamily_translation_general.test.tfrecords"],
     # }
     # DATA_FUNC = tfids_registry
-
+    DATA_REPEAT = {'train': 1, 'test': 10}
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
     VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+    KEY_MAP = {"targets": "input_ids", "masks": "labels"}
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecord', 
-                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord', 
+                'train': ['gs://jax_llm_data/xiaomeng/zh_data_Baichuan2-13B-Base_1213',
+                          'gs://jax_llm_data/xiaomeng/en_data_Baichuan2-13B-Base_1213'], 
+                 'test': ['gs://jax_llm_data/xiaomeng/zh_data_Baichuan2-13B-Base_1213',
+                          'gs://jax_llm_data/xiaomeng/en_data_Baichuan2-13B-Base_1213'], 
                 }
-    DATA_FUNC = extract_pythia_datapath
+    DATA_FUNC = extract_bc2_datapath1213
 
 
 @experiment_registry.register

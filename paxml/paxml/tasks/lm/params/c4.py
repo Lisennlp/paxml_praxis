@@ -1288,7 +1288,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 4096
+    MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 125696
 
     LAYERNORM_EPSILON = 1e-06

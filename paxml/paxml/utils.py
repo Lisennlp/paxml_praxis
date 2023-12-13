@@ -222,10 +222,14 @@ def extract_bc2_datapath1213(task, mode):
     for key in range(0, 10001, 10000):
         zh_file = zh_files.get(key, None)
         en_file = en_files.get(key, None)
-        if zh_file is None or en_file is None:
-            break
-        total_files.extend(zh_file)
-        total_files.extend(en_file)
+        
+        if zh_file is not None:
+            total_files.extend(zh_file)
+        if en_file is not None:
+            if key == 10000:
+                en_file = random.sample(en_file, k=len(en_file) // 2)
+            total_files.extend(en_file)
+            
     random.seed(task.TRAINING_SEED)
     random.shuffle(total_files)
     test_nums = int(len(total_files) * task.TEST_RATIO)

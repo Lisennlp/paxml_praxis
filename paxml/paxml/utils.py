@@ -252,8 +252,8 @@ def extract_bc2_datapath1213_shuffled(task, mode):
         zh_en_file = zh_en_files.get(key, None)
         if zh_en_file is not None:
             total_files.extend(zh_en_file)
-    random.seed(task.TRAINING_SEED)
-    random.shuffle(total_files)
+    # random.seed(task.TRAINING_SEED)
+    # random.shuffle(total_files)
     test = total_files[: 10]
     train = total_files[10: ]
     logging.info(f'Train file: {len(train)},  test file: {len(test)}')

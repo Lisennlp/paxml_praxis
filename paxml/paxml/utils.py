@@ -229,7 +229,7 @@ def extract_bc2_datapath1213(task, mode):
             if key == 10000:
                 en_file = random.sample(en_file, k=len(en_file) // 2)
             total_files.extend(en_file)
-            
+
     random.seed(task.TRAINING_SEED)
     random.shuffle(total_files)
     test_nums = int(len(total_files) * task.TEST_RATIO)
@@ -240,6 +240,27 @@ def extract_bc2_datapath1213(task, mode):
     train_test_dataset = {"test": test, "train": train}
     setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
+
+
+def extract_bc2_datapath1213_shuffled(task, mode):
+    if hasattr(task, 'train_test_dataset'):
+        return task.train_test_dataset
+    path = f'gs://jax_llm_data/xiaomeng/zh_en_data_bc2_13b_1214_shuffled/zh_en_b0'
+    zh_en_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
+    total_files = []
+    for key in range(0, 10000000, 10000):
+        zh_en_file = zh_en_files.get(key, None)
+        if zh_en_file is not None:
+            total_files.extend(zh_en_file)
+    random.seed(task.TRAINING_SEED)
+    random.shuffle(total_files)
+    test = total_files[: 10]
+    train = total_files[10: ]
+    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset
+
 
 def extract_qwen_datapath_shuffled(task, mode):
     if hasattr(task, 'train_test_dataset'):

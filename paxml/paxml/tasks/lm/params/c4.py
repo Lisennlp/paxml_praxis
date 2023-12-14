@@ -1338,7 +1338,7 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TASK_NAME = "BC2Gpt13B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 200000
+    SHUFFLE_SIZE = 80000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
@@ -1381,7 +1381,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
                  'test': ['gs://jax_llm_data/xiaomeng/zh_data_Baichuan2-13B-Base_1213',
                           'gs://jax_llm_data/xiaomeng/en_data_Baichuan2-13B-Base_1213'], 
                 }
-    DATA_FUNC = extract_bc2_datapath1213
+    # DATA_FUNC = extract_bc2_datapath1213
+    DATA_FUNC = extract_bc2_datapath1213_shuffled
 
 
 @experiment_registry.register
@@ -1639,7 +1640,7 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 100 # 100  500 steps/file
+    iter_file_nums: int = 16 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False

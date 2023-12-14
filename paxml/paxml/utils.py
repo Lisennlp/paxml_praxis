@@ -245,7 +245,7 @@ def extract_bc2_datapath1213(task, mode):
 def extract_bc2_datapath1213_shuffled(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    path = f'gs://jax_llm_data/xiaomeng/zh_en_data_bc2_13b_1214_shuffled/zh_en_b0'
+    path = f'gs://jax_llm_data/xiaomeng/zh_en_data_bc2_13b_1214_shuffled/'
     zh_en_files = read_bucket(path, substrings=['zh_en_b'], split='_b')
     total_files = []
     for key in range(0, 10000000, 10000):

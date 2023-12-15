@@ -81,7 +81,7 @@ class DataProcessor:
         max_seq_len=2048,
         ratio=1.0,
         shuffle=True,
-        epoches=1000,
+        epoches=100,
     ):
         bucket = True
         if bucket:
@@ -250,7 +250,9 @@ def process_book_wrapper(args):
             "zh": "/nas2/xiaomeng/zh_data/69shuba.filelist.shuffled",
             "en": "/nas2/xiaomeng/en_data/allfile.filelist.shuffed",
         }
-    tokenizer_path = "Qwen/Qwen-14B"
+    # tokenizer_path = "Qwen/Qwen-14B"
+    tokenizer_path = "baichuan-inc/Baichuan2-13B-Base"
+
     model_name = os.path.basename(tokenizer_path)
     today = datetime.today()
     formatted_date = today.strftime("%m%d")
@@ -336,8 +338,9 @@ if __name__ == "__main__":
 
 # Usage:
 # TPU_NAME=llm-jax-v4-256-0; ZONE=us-central2-b; WORKERS=200; HOST_NUM=5; DATA_TYPE='zh'
-# TPU_NAME=llm-jax-v3-128-0; ZONE=us-east1-d; WORKERS=180; HOST_NUM=4; DATA_TYPE='en'
+# TPU_NAME=llm-jax-v3-128-10; ZONE=us-east1-d; WORKERS=180; HOST_NUM=4; DATA_TYPE='en'
 # gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken"
 # SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/xiaomeng_data_tokenize_WithMask.py
 # gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=llm-tpu
+# TPU_NAME=llm-jax-v3-128-10; ZONE=us-east1-d; WORKERS=180; HOST_NUM=4; DATA_TYPE='zh'
 # gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $WORKERS $HOST_NUM $DATA_TYPE| tee $DATA_TYPE_processed.log"

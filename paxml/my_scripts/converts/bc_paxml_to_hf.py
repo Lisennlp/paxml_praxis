@@ -310,10 +310,18 @@ save_model(no_repeat_state_dict, os.path.join(save_dir, filename), mode="torch")
 # save configs
 index_dict["metadata"] = {"total_size": param_count * 2}
 
-command = "gsutil cp gs://llm_base_models/baichuan-%s-hf/*.{py,model,json} %s" % (
-    model_size.lower(),
-    save_dir,
-)
+
+command = f'gsutil -m cp \
+  "gs://llm_base_models/baichuan/v2/13B/hf/config.json" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/configuration_baichuan.py" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/generation_utils.py" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/modeling_baichuan.py" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/quantizer.py" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/special_tokens_map.json" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/tokenization_baichuan.py" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/tokenizer.model" \
+  "gs://llm_base_models/baichuan/v2/13B/hf/tokenizer_config.json" \
+  {save_dir}'
 subprocess.run(command, stdout=subprocess.PIPE, shell=True)
 
 write_json(index_dict, os.path.join(save_dir, "pytorch_model.bin.index.json"))
@@ -321,4 +329,4 @@ write_json(index_dict, os.path.join(save_dir, "pytorch_model.bin.index.json"))
 print(f"Convert finished, take time: {time.time() - start}s...")
 
 # usage:
-#  python paxml_to_hf.py --read_dir gs://llm_base_models/baichuan_models/13b/2/paxml_1011/checkpoints --save_dir ./bc2_13b_step7040/ --version v2 --model_size 13b --step 7040
+#  python bc.py --read_dir gs://llm_base_models/baichuan/v2/13B/paxml1214/checkpoints --save_dir ./bc2_13b_step2000/ --version v2 --model_size 13b --step 3000

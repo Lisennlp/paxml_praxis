@@ -20,7 +20,7 @@ import jax
 
 
            
-def extract_train_skip_step(job_log_dir, step):
+def extract_train_skip_step(job_log_dir, step, only_eval=False):
     logging.info(f'job_log_dir: {job_log_dir} step: {step}')
     if job_log_dir is None:
         return {}
@@ -40,7 +40,8 @@ def extract_train_skip_step(job_log_dir, step):
         meta_dict = {}
 
     if jax.process_index() == 0:
-        back_meta_dict_path = job_log_dir / f'{meta_dict.get("checkpoint_step", None)}.json'
+        mode = 'train_break_steps' if not only_eval else 'eval_metric_steps'
+        back_meta_dict_path = job_log_dir / mode /f'{meta_dict.get("checkpoint_step", None)}.json'
         with back_meta_dict_path.open('w') as f1:
             json.dump(meta_dict, f1)
     return meta_dict

@@ -97,7 +97,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         LOAD_SEQIO_ID = getattr(self, 'LOAD_SEQIO_ID', False)
         LOAD_SEQIO_TEXT = getattr(self, 'LOAD_SEQIO_TEXT', True)
         if not LOAD_SEQIO_ID and not LOAD_SEQIO_TEXT: 
-            meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
+            meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP, only_eval=getattr(self, 'ONLY_EVAL', False),)
             num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
 
         if is_training:

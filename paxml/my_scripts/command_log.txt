@@ -186,8 +186,23 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd
 STEP=0
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14B --job_log_dir=gs://llm_projects_us-central2/llm_base_models/qwen/14B/paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"
 
-
+# eval
 TPU_NAME=llm-jax-v3-32-10
 ZONE=us-east1-d
 STEP=11000
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Qwen14BEval --job_log_dir=gs://llm_base_models/qwen/14B/paxml1127 2>&1 --enable_checkpoint_saving=False --eval_on_test=True | tee Qwen14BEval.step$STEP.log"
+
+# install
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+STEP=11000
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install google-cloud-storage"
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install -c conda-forge jupyter_contrib_nbextensions"
+
+conda install -c conda-forge jupyter_contrib_nbextensions
+
+
+gcloud compute instances set-boot-disk l4-0 --boot-disk DEVICE_NAME=l4-0
+
+gcloud compute instances reset l4-0 --boot-disk DEVICE_NAME=l4-0

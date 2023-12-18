@@ -32,7 +32,7 @@ chapter_en_pat = re.compile('Chapter ?\d+|^【\d+】|^\d+\.|^0\d+')
 novel_name_pat = re.compile('Novel name')
 novel_category_pat = re.compile('Novel category')
 ahthor_pat = re.compile(
-    "Qidian|Novel (status|words)|书友群|广大书友|求推荐票|-分[頁页]-|感谢.*(打赏|支持)|手机用户请到阅读|抱歉，更的晚|（群号|三更.{,2}第.更|推荐票|&amp;&amp;&amp;&amp|分割线"
+    "Qidian|Novel (status|words)|书友群|广大书友|求推荐票|-分[頁页]-|感谢.*(打赏|支持)|手机用户请到阅读|抱歉，更的晚|（群号|三更.{,2}第.更|推荐票|&amp;&amp;&amp;&amp|分割线|&[lg]t\;"
 )
 poison_content = re.compile(r'未 ?完待续|本章完')
 chapter_digit = re.compile('(^-?\d{1,6}$)')

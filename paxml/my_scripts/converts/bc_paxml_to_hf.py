@@ -329,4 +329,5 @@ write_json(index_dict, os.path.join(save_dir, "pytorch_model.bin.index.json"))
 print(f"Convert finished, take time: {time.time() - start}s...")
 
 # usage:
-#  python bc.py --read_dir gs://llm_base_models/baichuan/v2/13B/paxml1214/checkpoints --save_dir ./bc2_13b_step2000/ --version v2 --model_size 13b --step 3000
+# STEP=9800
+# python bc.py --read_dir gs://llm_base_models/baichuan/v2/13B/paxml1214/checkpoints --save_dir ./bc2_13b_step$STEP/ --version v2 --model_size 13b --step $STEP

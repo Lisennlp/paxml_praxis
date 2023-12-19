@@ -326,6 +326,11 @@ class FullSoftmax(base_layer.BaseLayer):
             logits, log_probs, per_example_xent, per_example_argmax, total_xent, total_weight, z_loss, batch_avg_xent = \
                 self._compute_logits_and_loss(inputs, class_weights, class_ids)
 
+        self.add_summary("[lsp]logits", log_probs, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]total_xent", total_xent, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]total_weight", total_weight, verbosity=self.user_summary_level)
+        self.add_summary("[lsp]per_example_xent", per_example_xent, verbosity=self.user_summary_level)
+
         output_nmap = NestedMap(
             logits=logits.astype(inputs_dtype) if logits is not None else None,
             log_probs=log_probs.astype(inputs_dtype) if log_probs is not None else None,

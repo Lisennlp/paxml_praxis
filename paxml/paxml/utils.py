@@ -95,7 +95,8 @@ def extract_pythia_datapath(task, mode):
     path = task.DATA_PATH[mode].replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
-    directory_path = '/'.join(path_parts[1:]) + '/'
+    directory_path = '/'.join(path_parts[1:])
+    directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
 
     logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
     step_map_path = {}

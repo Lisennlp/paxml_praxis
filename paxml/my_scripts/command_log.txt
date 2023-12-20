@@ -116,3 +116,32 @@ I1122 05:01:59.520355 139846637156352 executors.py:370] eval_metrics: [{'aux_los
 I1122 05:01:59.520754 139846637156352 executors.py:373] write_json: {'aux_loss': '0.0', 'avg_xent': '2.5775824', 'fraction_of_correct_next_step_preds': '0.4972553', 'log_pplx': '2.5775824', 'num_predictions': '2097152.0', 'total_loss': '2.5775824'}
 I1122 05:01:59.520973 139846637156352 executors.py:376] eval_result_path: gs://llm_base_models/pythia/pythia-6.9b-paxml/eval_metrics.Pile.train.3000.json
 is_training: True
+
+
+TPU_TYPE="v3-32"; ZONE="us-east1-d";
+ID="10"; TPU_NAME=llm-jax-${TPU_TYPE}-$ID;
+
+ while :; do tpu_status=$(gcloud alpha compute tpus describe $TPU_NAME --zone=$ZONE --format="value[terminator=''](state)"); if [ -z $tpu_status ] || [ $tpu_status != "READY" ]; then gcloud compute tpus tpu-vm delete ${TPU_NAME} --zone=${ZONE} --quiet; gcloud alpha compute tpus tpu-vm create $TPU_NAME --accelerator-type=$TPU_TYPE --zone=$ZONE --preemptible; gcloud compute tpus tpu-vm scp /home/lishengping/tpu/install_0812.sh ${TPU_NAME}:~/  --zone=$ZONE  --worker=all; gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker=all --command="bash install_0812.sh ${ZONE:0:-2} 2>&1 | tee install.log; /home/lishengping/miniconda3/bin/pip install google-cloud-storage"; fi; gcloud compute tpus tpu-vm scp utils.py ${TPU_NAME}:/home/lishengping/projects/paxml/paxml/ --zone=$ZONE  --worker all; if ! gcloud compute tpus tpu-vm scp c4.py ${TPU_NAME}:/home/lishengping/projects/paxml/paxml/tasks/lm/params/ --zone=$ZONE  --worker all; then continue; fi; EXP="PilePythia3BDynWFFN16HD128Win256Alignedv4"; gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker all --command="sudo rm -f /tmp/libtpu_lockfile; sudo chmod +777 -R /tmp/tpu_logs/; killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_projects/log/${EXP}_test --enable_checkpoint_saving=True 2>&1 | tee train_${EXP}_test.log"; done
+
+
+TPU_TYPE="v3-32"; ZONE="us-east1-d";
+ID="10"; TPU_NAME=llm-jax-${TPU_TYPE}-$ID;
+ gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker all --command="sudo rm -f /tmp/libtpu_lockfile; sudo chmod +777 -R /tmp/tpu_logs/; killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia3BDynWFFN16HD128Win256Aligned --job_log_dir=gs://llm_projects_us-central2/log/PilePythia3BDynWFFN16HD128Win256Alignedv4_test --enable_checkpoint_saving=False --eval_on_test=True 2>&1 | tee train_PilePythia3BDynWFFN16HD128Win256Aligned_test.log"
+
+
+
+TPU_TYPE="v3-32"; ZONE="us-east1-d";
+ID="10"; TPU_NAME=llm-jax-${TPU_TYPE}-$ID;
+EXP=PilePythiaXLDynWFFN8HD64Win256Aligned
+gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; gsutil -m cp -r gs://llm_projects/lsp/paxml .; gsutil -m cp -r gs://llm_projects/lsp/praxis .;"
+gcloud compute tpus tpu-vm scp  utils.py executors.py ${TPU_NAME}:/home/lishengping/projects/paxml/paxml --zone=$ZONE --worker all 
+gcloud compute tpus tpu-vm scp c4.py ${TPU_NAME}:/home/lishengping/projects/paxml/paxml/tasks/lm/params/ --zone=$ZONE --worker all 
+
+gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker all --command="killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia3BDynWFFN16HD128Win256Aligned --job_log_dir=gs://llm_projects_us-central2/log/PilePythia3BDynWFFN16HD128Win256Alignedv4_test --enable_checkpoint_saving=False --eval_on_test=True 2>&1 | tee PilePythia3BDynWFFN16HD128Win256Alignedv4_test.log"
+
+
+gsutil -m cp -r gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256Alignedv4/checkpoints/checkpoint_00043000  gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256Alignedv4_test/checkpoints/
+
+
+
+gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --worker all --command="killall main.py; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PilePythia3BDynWFFN16HD128Win256AlignedPileEval --job_log_dir=gs://llm_projects_us-central2/log/PilePythia3BDynWFFN16HD128Win256Alignedv4_test --enable_checkpoint_saving=False --eval_on_test=True 2>&1 | tee PilePythia3BDynWFFN16HD128Win256Alignedv4_test.log"

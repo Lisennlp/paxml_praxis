@@ -1518,7 +1518,7 @@ class FlanMiniEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 320
+    EVAL_LOOP_NUM_BATCHES = 80
 
 
 @experiment_registry.register
@@ -1541,7 +1541,7 @@ class Pythia1p4BPileEval(PileEval, Pythia1p4B):
 class Pythia2p8BPileEval(PileEval, Pythia2p8B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
     TASK_NAME = 'Pythia2p8BPile'
-
+    
 @experiment_registry.register
 class Pythia7BPileEval(PileEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
@@ -1568,6 +1568,12 @@ class Pythia1p4BFlanMiniEval(FlanMiniEval, Pythia1p4B):
     TASK_NAME = 'Pythia1p4BFlanMini'
     ICI_MESH_SHAPE = [1, 16, 2]
     PERCORE_BATCH_SIZE = 32
+
+
+@experiment_registry.register
+class Pythia2p8BFlanMiniEval(FlanMiniEval, Pythia2p8B):
+    TRAINING_NUM_BATCHES_TO_SKIP = 3000
+    TASK_NAME = 'Pythia2p8BFlanMini'
 
 
 @experiment_registry.register

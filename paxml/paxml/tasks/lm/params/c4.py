@@ -1513,10 +1513,15 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test3', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test3', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test2', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test2', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
+    # DATA_PATH = {
+    #             'train': 'gs://common_datasets/pythia_model_test/pile_test', 
+    #             'test':  'gs://common_datasets/pythia_model_test/pile_test', 
+    #             }
+    # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'FlanMini'
     EVAL_LOOP_NUM_BATCHES = 80
 

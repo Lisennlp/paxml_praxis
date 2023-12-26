@@ -1584,7 +1584,7 @@ class Pythia2p8BFlanMiniEval(FlanMiniEval, Pythia2p8B):
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia7BFlanMiniWhole'
+    TASK_NAME = 'Pythia7BFlanMini1226Again'
 
 
 @experiment_registry.register

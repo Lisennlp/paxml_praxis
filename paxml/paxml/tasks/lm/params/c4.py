@@ -55,6 +55,16 @@ from paxml import checkpoint_paths
 
 from paxml.utils import *
 
+from paxml.tasks.lm.params import global_cfg
+
+WeightInit = base_layer.WeightInit
+NestedMap = py_utils.NestedMap
+
+GPT_SPM_PATH = global_cfg.GPT_SPM_PATH
+GPT_EOS_ID = 1
+GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
+PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257)
+
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
@@ -96,9 +106,9 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     ) -> pax_fiddle.Config[base_input.BaseInput]:
         LOAD_SEQIO_ID = getattr(self, 'LOAD_SEQIO_ID', False)
         LOAD_SEQIO_TEXT = getattr(self, 'LOAD_SEQIO_TEXT', True)
-        if not LOAD_SEQIO_ID and not LOAD_SEQIO_TEXT: 
-            meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP, only_eval=getattr(self, 'ONLY_EVAL', False),)
-            num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
+        # if not LOAD_SEQIO_ID and not LOAD_SEQIO_TEXT: 
+        meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP, only_eval=getattr(self, 'ONLY_EVAL', False),)
+        num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
 
         if is_training:
             percore_batch_size = self.PERCORE_BATCH_SIZE
@@ -745,11 +755,11 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
 
 @experiment_registry.register
 class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
-    NUM_LAYERS = 2
-    MODEL_DIMS = 5120
-    # HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
-    HIDDEN_DIMS = 13696  # XD: MODEL_DIMS * 4 * 2 // 3
-    NUM_HEADS = 40
+    NUM_LAYERS = 32
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+    # HIDDEN_DIMS = 13696  # XD: MODEL_DIMS * 4 * 2 // 3
+    NUM_HEADS = 32
     # DIMS_PER_HEAD = 128
     COMBINE_QKV = False  # False 占用显存小于 True 1G+
     NUM_GROUPS = -1
@@ -769,7 +779,7 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
     ICI_MESH_SHAPE = [1, 8, 4]
     DCN_MESH_SHAPE = [1, 1, 1]  # lsp： [2, 1, 1] 表示2个node，但是会报错，不知道啥情况
 
-    MAX_SEQ_LEN = 4096
+    MAX_SEQ_LEN = 4096 * 2
     VOCAB_SIZE = 64000
     # VOCAB_SIZE = 125696
 
@@ -1278,6 +1288,75 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
     EVAL_INTERVAL_STEPS = 10
     SUMMARY_INTERVAL_STEPS = 5
     CHECKPOINT_EVERY_N_STEPS = 200
+
+
+@experiment_registry.register
+class Llama7B(C4SpmdGpt37BRoPE):
+    NUM_LAYERS = 48
+    MODEL_DIMS = 4096
+    HIDDEN_DIMS = 11008 // 2
+    NUM_HEADS = 32
+    # DIMS_PER_HEAD = 256
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192
+    VOCAB_SIZE = 50257
+
+    LAYERNORM_EPSILON = 1e-06
+    LEARNING_RATE = 1e-5
+    LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
+    LR_LRED_WARMUP = 2000
+    LR_LRED_DECAY_START = 2001
+    LR_LRED_DECAY_END = 200000
+    LR_LRED_MIN_RATIO = 1.0
+    LR_LRED_MAX = 1.0
+    Z_LOSS_WEIGHT = 0.0
+
+    ADAM_BETA2 = 0.95
+    ADAM_BETA1 = 0.9
+    ADAM_EPSILON = 1e-8  # baichuan2 use default 1e-8
+    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
+    WEIGHT_DECAY = 0.005  # baichuan2 finetune: 0.005  pretrain: 0.1
+
+    TRAINING_NUM_BATCHES_TO_SKIP = None
+    TRAINABLE_POSITION_EMB = False
+    USE_ROTARY_POSITION_EMB = True
+    USE_ALIBI_POSITION_EMB = False
+    ROTARY_TYPE = 'paxml'
+    NORMALIZATION_CLS = normalizations.RmsNorm
+    QKV_BIAS = True
+    O_BIAS = False
+    USE_BIAS = False
+    FPROP_DTYPE = jnp.bfloat16
+
+    CHECKPOINT_EVERY_N_STEPS = 20
+    EVAL_LOOP_NUM_BATCHES = 102
+    EVAL_INTERVAL_STEPS = 100
+    CHECKPOINT_MAX_TO_KEEP = 2
+
+    WANDB_PROJECT = "debug"
+    LM_HEAD_NORM = False
+
+    QUERY_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = 512
+    RESET_FOR_EVAL = False
+    TASK_NAME = "Llama7B"
+    TARGET_LOG_PPLX = -1
+    SHUFFLE = {"train": True, "test": True}
+    SHUFFLE_SIZE = 10000
+    TRAINING_SEED = 1234
+    TEST_RATIO = 0.02
+    RESET_FOR_EVAL = False # when True, eval whole eval dataset
+
+    LOAD_SEQIO_TEXT = True
+    KEY_MAP = {"inputs": None, "targets": "text"}
+    VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
+    DATA_PATH = {
+                'train': 'gs://common_datasets/', 
+                'test':  'gs://common_datasets/', 
+                }
+    DATA_FUNC = c4_registry
+
 
 
 @experiment_registry.register

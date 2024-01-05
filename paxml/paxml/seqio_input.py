@@ -527,6 +527,7 @@ class SeqIOInput(base_input.BaseInput):
     eval_num_examples: Optional[int] = None
     warm_start: bool = True
     eval_loop_num_batches: int = 100
+    only_eval:bool = False
 
     def __post_init__(self):
         # Modify hparams in-place before freezing hparams

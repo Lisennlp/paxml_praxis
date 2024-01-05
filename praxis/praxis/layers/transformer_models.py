@@ -328,6 +328,7 @@ class TransformerLm(base_layer.BaseLayer):
         w_dnh = [data_axis, mdl_axis, None]
         # w_emh: sharding for first MoE FFN weight, shape (e, m, h). The second MoE
         # ffn weight will be inferred from it.
+        # lsp：这个shard有问题吧？ 一般来说data_axis > e，这时候就不合理
         w_emh = [data_axis, None, mdl_axis]
         # w_vd: sharding of the embedding weight of (vocab_size, d).  -> 词向量embed: mp, fsdp
         w_vd = [mdl_axis, data_axis]

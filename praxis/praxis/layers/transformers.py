@@ -945,7 +945,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             prng_key = self.next_prng_key()
         gating = gshard_utils.compute_gating(
             paddings=reshaped_paddings,
-            logits=logits.astype(jnp.float32),
+            logits=logits.astype(jnp.float32), # gate use float32 compute
             experts_dim=self.num_experts,
             expert_capacity_dim=self.expert_capacity_dim,
             fprop_dtype=fprop_dtype,
@@ -959,7 +959,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             gating_logit_cap=self.gating_logit_cap,
         )
 
-        if self.gating_func == "top2":
+        if self.gating_func in ["top2", "topk"]:
             aux_loss, combine_tensor, dispatch_tensor, summary = gating
             over_capacity_1_ratio, over_capacity_2_ratio = summary
             self.add_summary("over_capacity_1_ratio", over_capacity_1_ratio)
@@ -971,9 +971,9 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             dispatch_tensor = dispatch_tensor.astype(fprop_dtype)
 
         # both tensors have shape [g, s, e, c]
-        if self.gating_func in ["top2", "expert_choice_v2"]:
-            combine_tensor = self._split(combine_tensor, ap.gsec)
-            dispatch_tensor = self._split(dispatch_tensor, ap.gsec)
+        if self.gating_func in ["top2", "expert_choice_v2", "topk"]:
+            combine_tensor = self._split(combine_tensor, ap.gsec) # dp
+            dispatch_tensor = self._split(dispatch_tensor, ap.gsec) 
             expert_inputs = jnp.einsum("gsec,gsm->egcm", dispatch_tensor, reshaped_inputs)
         elif self.gating_func == "expert_choice":
             combine_tensor = self._split(combine_tensor, ap.gec)
@@ -981,9 +981,11 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             expert_inputs = jnp.einsum("gecs,gsm->egcm", dispatch_tensor, reshaped_inputs)
         else:
             raise ValueError("Unsupported gating function: %s " % self.gating_func)
-        expert_inputs = self._split(expert_inputs, ap.egcm)
+        #  lsp: 不应该是None, dp, None, mp？ 为啥egcm = [data_axis, None, None, mdl_axis]
+        expert_inputs = self._split(expert_inputs, ap.egcm) 
 
         if self._is_ffn1_gated:
+            # e: expert    g:batch?   c: seleted token?  m: model dim?
             hidden0 = jnp.einsum("egcm,emh->egch", expert_inputs, theta_wi)
             hidden1 = jnp.einsum("egcm,emh->egch", expert_inputs, theta_wi_gated)
             if self.gating_func in ["top2", "expert_choice_v2"]:
@@ -1006,6 +1008,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         transposed_expert_output = jnp.einsum("egcm->gecm", expert_output)
         transposed_expert_output = self._split(transposed_expert_output, ap.gecm)
         if self.gating_func in ["top2", "expert_choice_v2"]:
+            # moe output * weights
             combined_output = jnp.einsum("gecm,gsec->gsm", transposed_expert_output, combine_tensor)
         elif self.gating_func == "expert_choice":
             combined_output = jnp.einsum(

@@ -1767,6 +1767,7 @@ class StackedTransformer(base_layer.BaseLayer):
             fprop = nn.remat(_fprop, policy=checkpoint_policy.custom_policy(self.checkpoint_policy))
         # lsp: if use_repeate, num_layers = 1
         # lsp forward-5, 如果repeat，self.num_layers=1
+        
         for i in range(self.num_layers):
             x_in = x_out
             x_out = fprop(

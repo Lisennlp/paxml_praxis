@@ -1379,7 +1379,6 @@ class Transformer(base_layer.BaseLayer):
             output = self.ff_layer(atten_output, paddings=padding_chunk)
             outputs.append(output)
         outputs = jnp.concatenate(outputs, axis=1)
-        outputs = self._shard_bld(outputs)
         # return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
         return outputs, None  # pytype: disable=bad-return-type  # jax-ndarray
 

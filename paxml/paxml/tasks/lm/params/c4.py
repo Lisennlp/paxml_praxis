@@ -1367,6 +1367,14 @@ class Llama7v32(Llama7B):
     LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
+class Llama7v512(Llama7B):
+    NUM_LAYERS = 48
+    ICI_MESH_SHAPE = [1, 512, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 * 2
+    QUERY_CHUNK_SIZE = 256
+    LM_HEAD_CHUNK_SIZE = 256
+
+@experiment_registry.register
 class BC2Gpt13B(C4SpmdGpt37BRoPE):
     NUM_LAYERS = 40
     MODEL_DIMS = 5120

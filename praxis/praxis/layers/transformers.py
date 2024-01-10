@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional, Sequence, Tuple, Union
+import math
 
 from absl import logging
 from flax import linen as nn
@@ -297,6 +298,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     residual_droppath_prob: float = 0.0
     norm_policy: str = "pre"
     internal_gshard_variance_scaling_fan_in_init: bool = False
+    chunk_size: int = None
 
     class WeightSharding(base_layer.BaseLayer.WeightSharding):
         """Represents how layer's learned parameters are partitioned across a mesh.
@@ -319,6 +321,12 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         ffn0: SplitDimsMapping = None
         ffn1: SplitDimsMapping = None
+
+    def create_ffn_layer(self, name, layer):
+        if self.chunk_size is None: 
+            self.create_child(name, layer)
+        else: 
+            self.create_children(name, [layer.clone() for _ in range(self.n_chunks)]) # XD
 
     def setup(self) -> None:
         output_dims = self.output_dims
@@ -357,22 +365,29 @@ class TransformerFeedForward(base_layer.BaseLayer):
             activation = self.activation_tpl.clone()
             gate_activation = None
 
+        if self.chunk_size is not None:
+            assert self.hidden_dims % self.chunk_size == 0, f'{self.hidden_dims} % {self.chunk_size} != 0'
+            self.n_chunks = self.hidden_dims // self.chunk_size
+            hidden_dims = self.chunk_size
+        else:
+            hidden_dims = self.hidden_dims
+
         # Create the first Feedforward layer mapping to hidden dims
         ffn1_p = self.fflayer_tpl.clone()
         ffn1_p.name = "ffn_layer1"
         ffn1_p.input_dims = self.input_dims
         ffn1_p.has_bias = self.has_bias
         ffn1_p.activation_tpl = activation
-        ffn1_p.output_dims = self.hidden_dims
+        ffn1_p.output_dims = hidden_dims # xd
         ffn1_p.weight_split_dims_mapping.wt = wp.ffn0
-        ffn1_p.activation_split_dims_mapping.out = (
-            ap.ffn0
-        )  # shard: a_blf: ((replica, data), None, mpl)
+        ffn1_p.activation_split_dims_mapping.out = (ap.ffn0)  
+        # shard: a_blf: ((replica, data), None, mpl)
         if self.internal_gshard_variance_scaling_fan_in_init:
             scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
             ffn1_p.linear_tpl.params_init = WeightInit.Uniform(scale)
-        self.create_child("ffn_layer1", ffn1_p)
-
+        # lsp
+        self.create_ffn_layer('ffn_layer1', ffn1_p)
+    
         if self._is_ffn1_gated:
             # This is a gated ffw network, corresponding to gshard_builder's wi0
             gate_p = self.fflayer_tpl.clone()
@@ -380,7 +395,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
             gate_p.input_dims = self.input_dims
             gate_p.has_bias = self.has_bias
             gate_p.activation_tpl = gate_activation
-            gate_p.output_dims = self.hidden_dims
+            gate_p.output_dims = hidden_dims
             gate_p.weight_split_dims_mapping.wt = wp.ffn0
             gate_p.activation_split_dims_mapping.out = (
                 ap.ffn0
@@ -388,7 +403,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
             if self.internal_gshard_variance_scaling_fan_in_init:
                 scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
                 gate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
-            self.create_child("ffn_layer1_gate", gate_p)
+            
+            # lsp
+            self.create_ffn_layer('ffn_layer1_gate', gate_p)
+            # self.create_child("ffn_layer1_gate", gate_p)
 
         # Create RELU dropout layer
         relu_dropout_p = self.relu_dropout_tpl.clone()
@@ -398,7 +416,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
         # Create the second Feedforward layer mapping to input dims
         ffn2_p = self.fflayer_tpl.clone()
         ffn2_p.name = "ffn_layer2"
-        ffn2_p.input_dims = self.hidden_dims
+        ffn2_p.input_dims = hidden_dims
         ffn2_p.has_bias = self.has_bias
         ffn2_p.activation_tpl = pax_fiddle.Config(activations_lib.Identity)
         ffn2_p.output_dims = output_dims
@@ -410,7 +428,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
         if self.internal_gshard_variance_scaling_fan_in_init:
             scale = (1.0 / self.hidden_dims) ** 0.5 * (3.0**0.5)
             ffn2_p.linear_tpl.params_init = WeightInit.Uniform(scale)
-        self.create_child("ffn_layer2", ffn2_p)
+        # lsp
+        # self.create_child("ffn_layer2", ffn2_p)
+        self.create_ffn_layer('ffn_layer2', ffn2_p)
+
 
         # Create residual dropout layer
         residual_dropout_p = self.residual_dropout_tpl.clone()
@@ -425,6 +446,26 @@ class TransformerFeedForward(base_layer.BaseLayer):
                 survival_prob=1.0 - self.residual_droppath_prob,
             )
             self.create_child("residual_droppath", droppath_p)
+
+    # # lsp： ffn层forward
+    # def __call__(
+    #     self,
+    #     inputs: JTensor,
+    #     paddings: Optional[JTensor] = None,
+    #     segment_ids: Optional[JTensor] = None,
+    # ) -> JTensor:
+    #     w = 512
+    #     t = inputs.shape[1]
+    #     # assert t % w == 0, f"{t} % {w} != 0"
+    #     encoded = [
+    #         self._call(
+    #             inputs=inputs[:, i * w: (i + 1) * w], 
+    #             paddings=paddings[:, i * w: (i + 1) * w], 
+    #             ) 
+    #                 for i in range(math.ceil(t / w))
+    #             ]
+    #     encoded = jnp.concatenate(encoded, axis=1)
+    #     return encoded
 
     # lsp： ffn层forward
     def __call__(
@@ -446,24 +487,12 @@ class TransformerFeedForward(base_layer.BaseLayer):
             inputs = self.pre_layer_norm(inputs)
         elif self.norm_policy == "pre":
             inputs = self.layer_norm(inputs)
-        # if self.norm_policy in ('primer_hybrid', 'pre'):
-        # self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
-
-        self.add_summary("[lsp]ffn_input_norm", inputs[1], verbosity=self.user_summary_level)
         # lsp:  x = self.w2(nn.silu(self.w1(x)) * self.w3(x))
         # Apply first FFN layer
         if self._is_ffn1_gated:
             # theta.ffn_layer1_gate corresponds to gshard_builder's wi0
             gate_value = self.ffn_layer1_gate(inputs)
-            # theta.ffn_layer1 corresponds to gshard_builder's wi1
-            # lsp： 直接 * 和mesh一样
-            self.add_summary(
-                "[lsp]ffn1_gate_value", gate_value[1], verbosity=self.user_summary_level
-            )
             activations = gate_value * self.ffn_layer1(inputs)
-            self.add_summary(
-                "[lsp]ffn1_activations", activations[1], verbosity=self.user_summary_level
-            )
         else:
             activations = self.ffn_layer1(inputs)
             activations = checkpoint_name(activations, "ffn1")
@@ -473,33 +502,23 @@ class TransformerFeedForward(base_layer.BaseLayer):
             # lsp: apply_padding_first:false
             activations *= 1.0 - paddings
 
-        self.add_summary("activation_rms", _rms(activations), verbosity=4)
-
         # Apply RELU dropout
         activations = self.relu_dropout(activations)
 
         # Apply second FFN layer
         outputs = self.ffn_layer2(activations)
-        self.add_summary("[lsp]ffn2_outputs", outputs[1], verbosity=self.user_summary_level)
         outputs = checkpoint_name(outputs, "ffn2")
         # Apply paddings if not None # lsp: apply_padding_first: False || paddings: not None
         if not self.apply_padding_first and paddings is not None:
             # lsp
             outputs *= 1.0 - paddings
-        self.add_summary("output_rms", _rms(outputs), verbosity=4)
-
         # Apply Primer normalization before dropout.
         if self.norm_policy == "primer_hybrid":
             outputs = self.post_layer_norm(outputs)
         elif self.norm_policy == "post":
             outputs = self.layer_norm(outputs)
-
-        # if self.norm_policy in ('primer_hybrid', 'post'):
-        # self.add_summary('output_norm_rms', _rms(outputs), verbosity=4)
-        self.add_summary("[lsp]ffn2_outputs_norm", outputs[1], verbosity=self.user_summary_level)
         # Apply residual dropout
         outputs = self.residual_dropout(outputs)
-        self.add_summary("[lsp]ffn2_output_drop", outputs[1], verbosity=self.user_summary_level)
         # Apply skip connection lsp: True
         if self.add_skip_connection:
             logging.info(f"self.add_skip_connection: {self.add_skip_connection}")
@@ -507,15 +526,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
                 outputs = self.residual_droppath(residual, outputs)
             else:
                 outputs = residual + outputs * self.residual_weight
-            # lsp：是否需要处理后norm
-            # if self.norm_policy == 'post_skip':
-            #   outputs = self.layer_norm(outputs)
-
-            # if self.input_dims == self.output_dims:
-            #   # Cosine similarity between inputs (residual) and outputs.
-            self.add_summary("output_rel_cos", _rel_cos(residual, outputs), verbosity=4)
-        self.add_summary("[lsp]ffn_outputs", outputs[1], verbosity=self.user_summary_level)
-
         return outputs
 
     def extend_step(self, inputs: JTensor, *, time_step: JTensor) -> JTensor:
@@ -1080,10 +1090,8 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
         if self.norm_policy in ("primer_hybrid", "post"):
             self.add_summary("output_norm_rms", _rms(outputs), verbosity=4)
-        self.add_summary("[lsp]inputs_norm", outputs[1], verbosity=self.user_summary_level)
         # Residual dropout.
         outputs = self.residual_dropout(outputs)
-        self.add_summary("[lsp]inputs_norm_drop", outputs[1], verbosity=self.user_summary_level)
 
         if self.add_skip_connection:
             if self.residual_droppath_prob:
@@ -1323,93 +1331,59 @@ class Transformer(base_layer.BaseLayer):
             inputs_normalized = self.layer_norm(inputs)
         else:
             inputs_normalized = inputs
-
-        self.add_summary(
-            "[lsp]inputs_normalized", inputs_normalized[1], verbosity=self.user_summary_level
-        )
-
         # Compute self-attention, key/value vectors are the input itself
         # lsp:  q_proj + attn + post
-        atten_output, self_atten_probs = self.self_attention(
-            inputs_normalized,
-            inputs_normalized,
-            inputs_normalized,
-            atten_mask=attention_mask,
-            query_segment_pos=segment_pos,
-            key_segment_pos=segment_pos,
-            alibi_mask=alibi_mask,
-        )
-        self.add_summary("[lsp]atten_output", atten_output[1], verbosity=self.user_summary_level)
-
-        atten_probs = NestedMap(self_atten=self_atten_probs)
-
-        self.add_summary("attention_output_rms", _rms(atten_output), verbosity=4)
-        # attention layernorm 策略的选择: pre
-        if self.norm_policy == "primer_hybrid":
-            atten_output = self.post_layer_norm(atten_output)
-        elif self.norm_policy == "post":
-            atten_output = self.layer_norm(atten_output)
-
-        self.add_summary("[lsp]atten_output", atten_output[1], verbosity=self.user_summary_level)
-
-        # Residual dropout and connection
-        # lsp: attention dropout
-        atten_output = self.residual_dropout(atten_output)
-        self.add_summary(
-            "[lsp]atten_output_drop", atten_output[1], verbosity=self.user_summary_level
-        )
-
-        # Apply skip connection
-        if self.residual_droppath_prob > 0.0:  # 0
-            atten_output = self.residual_droppath(inputs, atten_output)
-        else:
-            # lsp:
-            atten_output += inputs
-
-        if self.norm_policy == "post_skip":
-            atten_output = self.layer_norm(atten_output)
-
-        self.add_summary("attention_output_rel_cos", _rel_cos(inputs, atten_output), verbosity=4)
-
-        # Apply cross attention if applicable
-        # lsp 注释掉
-        if self.use_cross_attention and (
-            not self.allow_skip_cross_attention or cross_inputs is not None
-        ):
-            assert cross_inputs is not None
-            assert cross_attention_mask is not None
-            if self.norm_policy == "pre":
-                atten_output_normalized = self.cross_layer_norm(atten_output)
-            elif self.norm_policy == "primer_hybrid":
-                atten_output_normalized = self.pre_cross_layer_norm(atten_output)
-            elif self.norm_policy in ("post", "post_skip"):
-                atten_output_normalized = atten_output
-
-            cross_atten_output, cross_atten_probs = self.cross_attention(
-                atten_output_normalized, cross_inputs, cross_inputs, atten_mask=cross_attention_mask
+        query_chunks = 64
+        query_size = inputs_normalized.shape[1] // query_chunks
+        logging.info(f'query_size: {query_size}=========segment_pos: {segment_pos.shape}')
+        assert inputs_normalized.shape[1] % query_chunks == 0
+        # bsz * length * dim
+        # outputs = jnp.zero_likes(inputs_normalized.shape)
+        outputs = []
+        # key_cache = None
+        # value_cache = None
+        for query_chunk in range(query_chunks):
+            start = query_size * query_chunk
+            end = query_size * (query_chunk + 1)
+            inputs = inputs_normalized[:, start: end]
+            query_segment_pos = segment_pos[:, start: end]
+            atten_output, _ = self.self_attention(
+                inputs,
+                inputs_normalized,
+                inputs_normalized,
+                atten_mask=attention_mask,
+                query_segment_pos=query_segment_pos,
+                key_segment_pos=segment_pos,
+                alibi_mask=alibi_mask,
+                # key_cache=key_cache,
+                # value_cache=value_cache,
             )
-            atten_probs.cross_atten = cross_atten_probs
-
-            if self.norm_policy == "post":
-                cross_atten_output = self.cross_layer_norm(cross_atten_output)
-            elif self.norm_policy == "primer_hybrid":
-                cross_atten_output = self.post_cross_layer_norm(cross_atten_output)
-
+            # key_cache, value_cache = kv_cache
+            # atten_probs = NestedMap(self_atten=self_atten_probs)
+            # attention layernorm 策略的选择: pre
+            if self.norm_policy == "primer_hybrid":
+                atten_output = self.post_layer_norm(atten_output)
+            elif self.norm_policy == "post":
+                atten_output = self.layer_norm(atten_output)
             # Residual dropout and connection
-            cross_atten_output = self.residual_dropout(cross_atten_output)
-
-            if self.residual_droppath_prob > 0.0:
-                atten_output = self.residual_droppath(atten_output, cross_atten_output)
+            # lsp: attention dropout
+            atten_output = self.residual_dropout(atten_output)
+            # Apply skip connection
+            if self.residual_droppath_prob > 0.0:  # 0
+                atten_output = self.residual_droppath(inputs, atten_output)
             else:
-                atten_output += cross_atten_output
-
+                # lsp:
+                atten_output += inputs
             if self.norm_policy == "post_skip":
-                atten_output = self.cross_layer_norm(atten_output)
-        self.add_summary("[lsp]ffn_input", atten_output[1], verbosity=self.user_summary_level)
-        # Apply FFN layer
-        output = self.ff_layer(atten_output, paddings=paddings)
-        self.add_summary("[lsp]ffn_out", output[1], verbosity=self.user_summary_level)
-        return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
+                atten_output = self.layer_norm(atten_output)
+            # Apply cross attention if applicable
+            # Apply FFN layer
+            output = self.ff_layer(atten_output, paddings=paddings[:, start: end])
+            outputs.append(output)
+        outputs = jnp.concatenate(outputs, axis=1)
+        # return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
+        return outputs, None  # pytype: disable=bad-return-type  # jax-ndarray
+
 
     def extend_step(
         self,
@@ -1726,16 +1700,18 @@ class StackedTransformer(base_layer.BaseLayer):
             if self.packed_input:
                 assert cross_segment_mask is not None
 
-        attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
-            inputs,
-            paddings,
-            self.mask_self_attention,
-            segment_mask,
-            cross_inputs,
-            cross_paddings,
-            cross_segment_mask,
-            fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
-        )
+        # attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
+        #     inputs,
+        #     paddings,
+        #     self.mask_self_attention,
+        #     segment_mask,
+        #     cross_inputs,
+        #     cross_paddings,
+        #     cross_segment_mask,
+        #     fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
+        # )
+        attention_mask = None
+        cross_attention_mask = None
 
         x_out = inputs
         if self.input_dropout_prob > 0.0:

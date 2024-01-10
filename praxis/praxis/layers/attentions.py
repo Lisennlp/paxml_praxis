@@ -1367,14 +1367,17 @@ class DotProductAttention(base_layer.BaseLayer):
         alibi_mask: Optional[JTensor] = None,
     ) -> Tuple[JTensor, JTensor]:
         # logits = self._atten_logits(query, key)
-        logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
+        # logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
+        logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
 
         if self.scale_logits_by_head_dims:
             logits = jnp.multiply(logits, 1.0 / np.sqrt(query.shape[-1]))
 
         logits = self._cap_logits(logits)
         logits = logits.astype(jnp.float32)
-        padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
+        # lsp
+        padded_logits = logits
+        # padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
         # lsp
         if alibi_mask is not None:
             padded_logits += alibi_mask
@@ -1385,8 +1388,10 @@ class DotProductAttention(base_layer.BaseLayer):
             probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(value.dtype)
 
         probs = self.atten_dropout(probs)
-        encoded = self.pv_einsum(f"BNTS,BNSH->BNTH", probs, value)
-        return encoded, probs
+        encoded = self.pv_einsum(f"BNTS,BSNH->BTNH", probs, value)
+        # return encoded, probs
+        return encoded
+
 
     # lsp attn
     def _dot_atten(
@@ -1428,13 +1433,10 @@ class DotProductAttention(base_layer.BaseLayer):
         # source tokens. In this case tiling is inefficient and unnecessary.
         # If there is no padding mask, and only causal mask then the shape can be
         # [1, 1, T, S]
-        base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
-        asserts.in_set(atten_mask.shape[2], [t, 1])
-        asserts.in_set(atten_mask.shape[0], [b, 1])
-
-        self.add_summary("[lsp]before_scale_query", query[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]before_key", key[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]before_value", value[1], verbosity=self.user_summary_level)
+        
+        # base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
+        # asserts.in_set(atten_mask.shape[2], [t, 1])
+        # asserts.in_set(atten_mask.shape[0], [b, 1])
 
         query = self._scale_query(query)  # scale query,  internal_enable_query_scale为True生效
 
@@ -1445,68 +1447,26 @@ class DotProductAttention(base_layer.BaseLayer):
         if atten_mask is not None:
             logging.info(f"atten_mask: {atten_mask.shape}")
         # =====================================xd: block attention====================================================
-        query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]]  # btnh->bnth
+        # query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]]  # btnh->bnth
         if self.query_chunk_size is None:
-            encoded, probs = self._atten_context(query, key, value, atten_mask, alibi_mask)
+            encoded = self._atten_context(query, key, value, atten_mask, alibi_mask)
         else:
             w = self.query_chunk_size
             # assert t % w == 0, f"{t} % {w} != 0"
-            encoded = jnp.zeros((b, n, t, h), dtype=value.dtype)
-            # for i in range(t // w):
-            N = math.ceil(t / w)
-            for i in range(N):
-                start, stop = i * w, (i + 1) * w
-                _query = query[:, :, start:stop, :]
-                _key, _value = key[:, :, :stop, :], value[:, :, :stop, :]
-               
-                _atten_mask = atten_mask[:, :, start:stop, :stop]
-                if alibi_mask is not None:
-                    # n * qlen * klen
-                    _alibi_mask = alibi_mask[:, start:stop, :stop]
-                else:
-                    _alibi_mask = None
-
-                _encoded, _ = self._atten_context(_query, _key, _value, _atten_mask, _alibi_mask)
-                encoded = encoded.at[:, :, start:stop, :].set(_encoded)
-        encoded = encoded.transpose(0, 2, 1, 3)  # bnth->btnh
+            encoded = [
+                self._atten_context(
+                    query=query[:, i * w: (i + 1) * w], 
+                    key=key[:, :(i + 1) * w], 
+                    value=value[:, :(i + 1) * w], 
+                    atten_mask=None if atten_mask is None else atten_mask[:, :, start:stop, :stop],
+                    alibi_mask=None if alibi_mask is None else alibi_mask[:, start:stop, :stop],
+                    ) 
+                        for i in range(math.ceil(t / w))
+                    ]
+            encoded = jnp.concatenate(encoded, axis=1)
+        encoded = self._shard_blnh(encoded)
         # =========================================================================================
-
-        # logits = self._atten_logits(query, key)  # q * k
-        # if relative_bias is not None:
-        #     # The relative_bias has shape [1, n, t, s] or [b, n, t, s].
-        #     base_layer.assert_has_shape(relative_bias, [-1, n, t, s])
-        #     logits += relative_bias
-        # logits = checkpoint_name(logits, "logits")
-        # if self.scale_logits_by_head_dims:  # 根号h
-        #     logits = jnp.multiply(logits, 1.0 / np.sqrt(h))
-        # # lsp
-        # logits = self._cap_logits(logits) # 对attention logit 的值做相应策略的处理
-        # # Attention softmax is always carried out in fp32.
-        # logits = logits.astype(jnp.float32)
-        # # Apply attention masking
-        # padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)  # attention mask
-        # logging.info(f"padded_logits: {padded_logits.shape}")
-        # if alibi_mask is not None:
-        #     logging.info(f"alibi_mask: {alibi_mask.shape}")
-        #     padded_logits += alibi_mask
-        # # lsp: alibi -> 在attn logits基础上加一个位置分数
-        # if self.attention_extra_logit is None:
-        #     probs = jax.nn.softmax(padded_logits, axis=-1).astype(key.dtype)  # softmax -> score
-        # else:
-        #     probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(key.dtype)
-        # # Apply attention dropout. lsp:
-        # # Compute the attention context. # lsp: 其实就是einsum
-        # encoded = self.pv_einsum("BNTS,BSNH->BTNH", probs, value)  # w
-        # if self.zero_fully_masked:
-        #     # Return zeros for tokens which don't attend anything.
-        #     fully_masked = jnp.all(
-        #         atten_mask < py_utils.get_large_negative_number(jnp.float32) / 2,
-        #         axis=-1,
-        #     )[:, 0, :, jnp.newaxis, jnp.newaxis]
-        #     encoded *= 1 - fully_masked
-        # encoded = checkpoint_name(encoded, "context")
-        # encoded = self._shard_blnh(encoded)
-        return encoded, probs if self.query_chunk_size is None else None
+        return encoded, None
 
     def decoding_state_sequence_length(self):
         """Returns the length of full decoding sequences."""
@@ -1640,22 +1600,18 @@ class DotProductAttention(base_layer.BaseLayer):
             key_proj = self.key(key_vec)
             value_proj = self.value(value_vec)
 
-        self.add_summary("[lsp]query_proj", query_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]key_proj", key_proj[1], verbosity=self.user_summary_level)
-        self.add_summary("[lsp]value_proj", value_proj[1], verbosity=self.user_summary_level)
-
-        self._fprop_update_decode_state("key_state", key_proj)
-        self._fprop_update_decode_state("value_state", value_proj)
+        # self._fprop_update_decode_state("key_state", key_proj)
+        # self._fprop_update_decode_state("value_state", value_proj)
 
         # Apply depth-wise convolution as in Primer.
         # Paper: https://arxiv.org/abs/2109.08668.
-        if self.dconv_qkv:
-            self._fprop_update_decode_state("query_state", query_proj)
-            query_proj = self.dconv_q(query_proj, axis=1, segment_pos=query_segment_pos)
-            key_proj = self.dconv_k(key_proj, axis=1, segment_pos=key_segment_pos)
-            self._fprop_update_decode_state("key_post_dconv", key_proj)
-            value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
-            self._fprop_update_decode_state("value_post_dconv", value_proj)
+        # if self.dconv_qkv:
+        #     self._fprop_update_decode_state("query_state", query_proj)
+        #     query_proj = self.dconv_q(query_proj, axis=1, segment_pos=query_segment_pos)
+        #     key_proj = self.dconv_k(key_proj, axis=1, segment_pos=key_segment_pos)
+        #     self._fprop_update_decode_state("key_post_dconv", key_proj)
+        #     value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
+        #     self._fprop_update_decode_state("value_post_dconv", value_proj)
 
         # Apply rotary position embeddings.
         # Paper: https://arxiv.org/abs/2104.09864.
@@ -1663,11 +1619,8 @@ class DotProductAttention(base_layer.BaseLayer):
             query_proj = self.rotary_position_emb(query_proj, query_segment_pos)
             key_proj = self.rotary_position_emb(key_proj, key_segment_pos)
             # query_proj, key_proj = query_proj.astype(jnp.float32), key_proj.astype(jnp.float32)  # XD
-            self._fprop_update_decode_state("key_post_rotary_pos_emb", key_proj)
             assert alibi_mask is None
 
-        # self.add_summary("[lsp]query_proj_rotary", query_proj[1], verbosity=3)
-        # self.add_summary("[lsp]key_proj_rotary", key_proj[1], verbosity=3)
         # # Apply relative bias.
         # Paper: https://aclanthology.org/N18-2074.pdf.
         if self.relative_bias_tpl:
@@ -1696,13 +1649,11 @@ class DotProductAttention(base_layer.BaseLayer):
         # Post projection
         # lsp: attention出来之后过线性层
         encoded = self.post(encoded)
-        self.add_summary("[lsp]encoded_post", encoded[1], verbosity=self.user_summary_level)
-
         encoded = self._shard_bld(encoded)  # bsz * len * model -shard-> (replica, data), None, mdl
         encoded = checkpoint_name(encoded, "out_proj")
         # lsp
         encoded = self.atten_dropout(encoded)
-        return encoded, atten_probs
+        return encoded, None
 
     def init_states(self, target_batch_size: int, target_max_length: int) -> None:
         """Initializes cache for autoregressive cached decoding.

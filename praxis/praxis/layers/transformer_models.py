@@ -582,9 +582,6 @@ class TransformerLm(base_layer.BaseLayer):
                 class_ids = labels.class_ids[:, :, jnp.newaxis]
             if "class_probabilities" in labels:
                 class_probabilities = labels.class_probabilities
-            self.add_summary(
-                "[lsp]class_weights", labels.class_weights, verbosity=self.user_summary_level
-            )
             class_weights = labels.class_weights[:, :, jnp.newaxis]
             xent_output = self.softmax(
                 activations,
@@ -739,12 +736,9 @@ class TransformerLm(base_layer.BaseLayer):
             segment_ids = jnp.asarray(1 - paddings, jnp.int32)
             segment_pos = jnp.tile(jnp.arange(seq_length, dtype=jnp.int32)[None, :], [batch, 1])
         # lsp: id -> emebd
-        self.add_summary("[lsp]input_ids", inputs, verbosity=self.user_summary_level)
         inputs = self._prepare_input(inputs, paddings, segment_pos=segment_pos, **input_kwargs)
         # lsp: add embed dropout
-        self.add_summary("[lsp]inputs", inputs, verbosity=self.user_summary_level)
         inputs = self.embed_dropout(inputs)
-        self.add_summary("[lsp]inputs_drop", inputs, verbosity=self.user_summary_level)
 
         if self.ngrammer_tpl is not None:
             ngrammer_prefix = jnp.zeros([batch, 1], dtype=jnp.int32)
@@ -772,7 +766,6 @@ class TransformerLm(base_layer.BaseLayer):
 
         if self.use_alibi_position_emb:
             alibi_mask = self.alibi_position_emb(seq_length)
-            self.add_summary("[lsp]alibi_mask", alibi_mask, verbosity=self.user_summary_level)
         else:
             alibi_mask = None
 
@@ -785,12 +778,10 @@ class TransformerLm(base_layer.BaseLayer):
             segment_pos=segment_pos,
             alibi_mask=alibi_mask,
         )
-        self.add_summary("[lsp]last_output", output[1], verbosity=self.user_summary_level)
         # Final layer norm : lsp
         if self.final_ln_tpl is not None:
             output = self.final_ln(output)
 
-        self.add_summary("[lsp]last_output_norm", output[1], verbosity=self.user_summary_level)
         if self.skip_compute_loss:
             return output
         else:

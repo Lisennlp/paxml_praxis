@@ -206,3 +206,16 @@ conda install -c conda-forge jupyter_contrib_nbextensions
 gcloud compute instances set-boot-disk l4-0 --boot-disk DEVICE_NAME=l4-0
 
 gcloud compute instances reset l4-0 --boot-disk DEVICE_NAME=l4-0
+
+
+TPU_NAME=llm-jax-v3-8-10
+ZONE=us-east1-d
+EXP=Llama7B
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee $EXP.log
+
+
+
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+EXP=Llama7B
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee $EXP.log"

@@ -203,13 +203,10 @@ class FeedForward(base_layer.BaseLayer):
         self.create_child("activation", self.activation_tpl.clone())
 
     def __call__(self, inputs: JTensor) -> JTensor:
-        # self.add_summary("[lsp]linear_input", inputs[1], verbosity=self.user_summary_level)
         projected_inputs = self.linear(inputs)
-        # self.add_summary("[lsp]linear_proj", projected_inputs[1], verbosity=self.user_summary_level)
         if self.has_bias:
             projected_inputs = self.bias(projected_inputs)
         output = self.activation(projected_inputs)
-        # self.add_summary("[lsp]linear_proj_activ", output[1], verbosity=self.user_summary_level)
         return output
 
 

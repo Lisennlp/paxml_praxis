@@ -417,7 +417,6 @@ class FullSoftmax(base_layer.BaseLayer):
     #         dtype=jnp.float32,
     #     )
     #     total_weight = jnp.sum(class_weights, dtype=jnp.float32)
-    #     self.add_summary('[lsp]per_example_xent', per_example_xent, verbosity=self.user_summary_level)
     #     # lsp
     #     total_xent_batch = jnp.sum(
     #         jnp.expand_dims(per_example_xent, axis=-1) * class_weights,
@@ -1274,7 +1273,6 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
     ) -> JTensor:
         logging.info(f'inputs: {inputs.shape} position: {position.shape}')
 
-        self.add_summary("[lsp]rotary_inputs", inputs, verbosity=self.user_summary_level)
         if len(inputs.shape) != 4:
             raise ValueError(
                 "Input is assumed to be a rank 4 tensor of shape[batch, sequence, heads, dims]."
@@ -1310,18 +1308,13 @@ class RotaryPythiaPositionalEmbedding(PositionalEmbedding):
             
         sin = jnp.sin(sinusoid_inp)
         cos = jnp.cos(sinusoid_inp)
-        self.add_summary("[lsp]cos", cos, verbosity=self.user_summary_level)
-        self.add_summary("[lsp]sin", sin, verbosity=self.user_summary_level)
-        self.add_summary(f"[lsp]rotary_inputs_{name}", inputs, verbosity=self.user_summary_level)
         inputs_rot, inputs_pass = (inputs[..., :rotary_ndims], inputs[..., rotary_ndims :], )
-        self.add_summary(f"[lsp]inputs_rot_{name}", inputs_rot, verbosity=self.user_summary_level)
         inputs_layer = apply_rotary_pos_emb(inputs_rot, cos, sin, offset=offset)
         inputs_layer = jnp.concatenate((inputs_layer, inputs_pass), axis=-1)
 
         if self.cast_as_fprop_dtype:
             inputs_layer = inputs_layer.astype(self.fprop_dtype)
 
-        self.add_summary(f"[lsp]rotary_inputs_layer_{name}", inputs_layer, verbosity=self.user_summary_level)
         return inputs_layer
 
 

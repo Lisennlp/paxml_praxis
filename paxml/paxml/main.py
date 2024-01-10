@@ -291,7 +291,7 @@ flags.DEFINE_integer("host_idx", None, help="index of current host")
 
 
 @py_utils.benchmark("[PAX STATUS]: ")
-def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
+def get_experiment(experiment_name: str) -> base_experiment.BaseExperiment:
     """Retrieves an experiment config from the global registry."""
     # experiment_name: --exp : tasks.lm.params.c4.C4SpmdGpt37BRoPE # experiment_class: None
     experiment_class = experiment_registry.get(experiment_name)

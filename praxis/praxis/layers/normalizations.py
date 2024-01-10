@@ -411,17 +411,11 @@ class RmsNorm(BaseNormalization):
     )
   def _norm(self, x: jnp.ndarray) -> jnp.ndarray:
     x_square = jnp.square(x)
-    # self.add_summary('[lsp]x_square', x_square[1], verbosity=self.user_summary_level)
     x_mean = x_square.mean(-1, keepdims=True)
-    # self.add_summary('[lsp]x_mean', x_mean[1], verbosity=self.user_summary_level)
     x_eps = x_mean + self.epsilon
-    # self.add_summary('[lsp]x_eps', x_eps[1], verbosity=self.user_summary_level)
     x_rsqrt = jax.lax.rsqrt(x_eps)
-    # self.add_summary('[lsp]x_rsqrt', x_rsqrt[1], verbosity=self.user_summary_level)
     x_cheng = x * x_rsqrt
-    # self.add_summary('[lsp]x_cheng', x_cheng[1], verbosity=self.user_summary_level)
     return x_cheng
-    # return x * jax.lax.rsqrt(jnp.square(x).mean(-1, keepdims=True) + self.epsilon)
 
   def __call__(self,
                inputs: JTensor,

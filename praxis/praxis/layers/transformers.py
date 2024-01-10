@@ -1333,54 +1333,53 @@ class Transformer(base_layer.BaseLayer):
             inputs_normalized = inputs
         # Compute self-attention, key/value vectors are the input itself
         # lsp:  q_proj + attn + post
-        query_chunks = 64
-        query_size = inputs_normalized.shape[1] // query_chunks
-        logging.info(f'query_size: {query_size}=========segment_pos: {segment_pos.shape}')
-        assert inputs_normalized.shape[1] % query_chunks == 0
+       
         # bsz * length * dim
-        # outputs = jnp.zero_likes(inputs_normalized.shape)
+        atten_outputs, _ = self.self_attention(
+            inputs_normalized,
+            inputs_normalized,
+            inputs_normalized,
+            atten_mask=attention_mask,
+            query_segment_pos=segment_pos,
+            key_segment_pos=segment_pos,
+            alibi_mask=alibi_mask,
+        )
+        # outputs = atten_outputs
+        # if not isinstance(atten_outputs, list):
+        #     atten_outputs = [atten_outputs]
+        logging.info(f'atten_outputs length: {len(atten_outputs)}')
         outputs = []
-        # key_cache = None
-        # value_cache = None
-        for query_chunk in range(query_chunks):
+        query_size = 8192
+        n = atten_outputs.shape[1] // query_size
+        for query_chunk in range(n):
             start = query_size * query_chunk
             end = query_size * (query_chunk + 1)
-            inputs = inputs_normalized[:, start: end]
-            query_segment_pos = segment_pos[:, start: end]
-            atten_output, _ = self.self_attention(
-                inputs,
-                inputs_normalized,
-                inputs_normalized,
-                atten_mask=attention_mask,
-                query_segment_pos=query_segment_pos,
-                key_segment_pos=segment_pos,
-                alibi_mask=alibi_mask,
-                # key_cache=key_cache,
-                # value_cache=value_cache,
-            )
-            # key_cache, value_cache = kv_cache
-            # atten_probs = NestedMap(self_atten=self_atten_probs)
+            inputs_chunk = inputs[:, start: end]
+            padding_chunk = paddings[:, start: end]
+            atten_output = atten_outputs[:, start: end]
+            logging.info(f'atten_output: {atten_output.shape}')
+
+            logging.info(f'inputs_chunk: {inputs_chunk.shape}')
+
             # attention layernorm 策略的选择: pre
             if self.norm_policy == "primer_hybrid":
                 atten_output = self.post_layer_norm(atten_output)
             elif self.norm_policy == "post":
                 atten_output = self.layer_norm(atten_output)
             # Residual dropout and connection
-            # lsp: attention dropout
             atten_output = self.residual_dropout(atten_output)
             # Apply skip connection
-            if self.residual_droppath_prob > 0.0:  # 0
-                atten_output = self.residual_droppath(inputs, atten_output)
+            if self.residual_droppath_prob > 0.0:  # is 0
+                atten_output = self.residual_droppath(inputs_chunk, atten_output)
             else:
-                # lsp:
-                atten_output += inputs
+                atten_output += inputs_chunk
             if self.norm_policy == "post_skip":
                 atten_output = self.layer_norm(atten_output)
-            # Apply cross attention if applicable
             # Apply FFN layer
-            output = self.ff_layer(atten_output, paddings=paddings[:, start: end])
+            output = self.ff_layer(atten_output, paddings=padding_chunk)
             outputs.append(output)
         outputs = jnp.concatenate(outputs, axis=1)
+        outputs = self._shard_bld(outputs)
         # return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
         return outputs, None  # pytype: disable=bad-return-type  # jax-ndarray
 

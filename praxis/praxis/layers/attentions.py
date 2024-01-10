@@ -685,9 +685,13 @@ class AttentionProjection(base_layer.BaseLayer):
         if self.is_output_projection:
             logging.info(f"self.num_heads: {self.num_heads}")
             logging.info(f"self.dim_per_head: {self.dim_per_head}")
+            # bsz * length * n * head_dim
             logging.info(f"shape: {shape}")
+            logging.info(f"use_nhd_shape: {self.use_nhd_shape}")
+
             assert shape[-2:] == (self.num_heads, self.dim_per_head)
             batch_eqn = eqn_sym[: (rank - 2)]
+            # false
             if self.use_nhd_shape:
                 eqn = f"{batch_eqn}NH,NHD->{batch_eqn}D"
             else:
@@ -1369,7 +1373,7 @@ class DotProductAttention(base_layer.BaseLayer):
         # logits = self._atten_logits(query, key)
         # logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
         logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
-
+        # 不占用激活值
         if self.scale_logits_by_head_dims:
             logits = jnp.multiply(logits, 1.0 / np.sqrt(query.shape[-1]))
 
@@ -1389,6 +1393,8 @@ class DotProductAttention(base_layer.BaseLayer):
 
         probs = self.atten_dropout(probs)
         encoded = self.pv_einsum(f"BNTS,BSNH->BTNH", probs, value)
+        encoded = self._shard_blnh(encoded)
+        # lsp
         # return encoded, probs
         return encoded
 
@@ -1454,17 +1460,17 @@ class DotProductAttention(base_layer.BaseLayer):
             w = self.query_chunk_size
             # assert t % w == 0, f"{t} % {w} != 0"
             encoded = [
-                self._atten_context(
+                    self.atten_dropout(self.post(self._atten_context(
                     query=query[:, i * w: (i + 1) * w], 
                     key=key[:, :(i + 1) * w], 
                     value=value[:, :(i + 1) * w], 
                     atten_mask=None if atten_mask is None else atten_mask[:, :, start:stop, :stop],
                     alibi_mask=None if alibi_mask is None else alibi_mask[:, start:stop, :stop],
-                    ) 
+                    )))
                         for i in range(math.ceil(t / w))
                     ]
             encoded = jnp.concatenate(encoded, axis=1)
-        encoded = self._shard_blnh(encoded)
+        encoded = self._shard_bld(encoded)
         # =========================================================================================
         return encoded, None
 
@@ -1647,12 +1653,12 @@ class DotProductAttention(base_layer.BaseLayer):
             )
 
         # Post projection
-        # lsp: attention出来之后过线性层
-        encoded = self.post(encoded)
-        encoded = self._shard_bld(encoded)  # bsz * len * model -shard-> (replica, data), None, mdl
-        encoded = checkpoint_name(encoded, "out_proj")
+        # lsp: attention出来之后过线性层，移到Attention里面了
+        # encoded = self.post(encoded)
+        # encoded = self._shard_bld(encoded)  # bsz * len * model -shard-> (replica, data), None, mdl
+        # encoded = checkpoint_name(encoded, "out_proj")
         # lsp
-        encoded = self.atten_dropout(encoded)
+        # encoded = self.atten_dropout(encoded)
         return encoded, None
 
     def init_states(self, target_batch_size: int, target_max_length: int) -> None:

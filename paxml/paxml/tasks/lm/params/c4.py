@@ -1292,13 +1292,13 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 48
+    NUM_LAYERS = 16
     MODEL_DIMS = 4096
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192
     VOCAB_SIZE = 50257
 
@@ -1338,7 +1338,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     LM_HEAD_NORM = False
 
     QUERY_CHUNK_SIZE = None
-    LM_HEAD_CHUNK_SIZE = 512
+    LM_HEAD_CHUNK_SIZE = None
     RESET_FOR_EVAL = False
     TASK_NAME = "Llama7B"
     TARGET_LOG_PPLX = -1
@@ -1358,6 +1358,13 @@ class Llama7B(C4SpmdGpt37BRoPE):
     DATA_FUNC = c4_registry
 
 
+@experiment_registry.register
+class Llama7v32(Llama7B):
+    NUM_LAYERS = 48
+    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 * 2
+    QUERY_CHUNK_SIZE = 1024
+    LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class BC2Gpt13B(C4SpmdGpt37BRoPE):

@@ -203,7 +203,7 @@ class FeedForward(base_layer.BaseLayer):
         self.create_child("activation", self.activation_tpl.clone())
 
     def __call__(self, inputs: JTensor) -> JTensor:
-        chunk_size = 1
+        chunk_size = inputs.shape[1]
         n = inputs.shape[1] // chunk_size
         # output = jnp.empty(inputs.shape, dtype=inputs.dtype)
         output = []

@@ -203,10 +203,21 @@ class FeedForward(base_layer.BaseLayer):
         self.create_child("activation", self.activation_tpl.clone())
 
     def __call__(self, inputs: JTensor) -> JTensor:
-        projected_inputs = self.linear(inputs)
-        if self.has_bias:
-            projected_inputs = self.bias(projected_inputs)
-        output = self.activation(projected_inputs)
+        chunk_size = 1
+        n = inputs.shape[1] // chunk_size
+        # output = jnp.empty(inputs.shape, dtype=inputs.dtype)
+        output = []
+        for i in range(n):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size
+            inputs_chunk = inputs[:, start: end]
+            projected_inputs = self.linear(inputs_chunk)
+            if self.has_bias:
+                projected_inputs = self.bias(projected_inputs)
+            output_chunk = self.activation(projected_inputs)
+            output.append(output_chunk)
+        output = jnp.concatenate(output, axis=1)  
+            # output = output.at[:, start: end].set(output_chunk)
         return output
 
 

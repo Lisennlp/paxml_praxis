@@ -1348,8 +1348,9 @@ class Transformer(base_layer.BaseLayer):
         # if not isinstance(atten_outputs, list):
         #     atten_outputs = [atten_outputs]
         logging.info(f'atten_outputs length: {len(atten_outputs)}')
-        outputs = []
-        query_size = 8192
+        outputs = jnp.empty(atten_outputs.shape, dtype=atten_outputs.dtype)
+        query_size = atten_outputs.shape[1] // 1
+        # query_size = 1024
         n = atten_outputs.shape[1] // query_size
         for query_chunk in range(n):
             start = query_size * query_chunk
@@ -1358,7 +1359,7 @@ class Transformer(base_layer.BaseLayer):
             padding_chunk = paddings[:, start: end]
             atten_output = atten_outputs[:, start: end]
             logging.info(f'atten_output: {atten_output.shape}')
-
+            logging.info(f'inputs_chunk: {inputs_chunk.shape}')
             logging.info(f'inputs_chunk: {inputs_chunk.shape}')
 
             # attention layernorm 策略的选择: pre
@@ -1377,8 +1378,9 @@ class Transformer(base_layer.BaseLayer):
                 atten_output = self.layer_norm(atten_output)
             # Apply FFN layer
             output = self.ff_layer(atten_output, paddings=padding_chunk)
-            outputs.append(output)
-        outputs = jnp.concatenate(outputs, axis=1)
+            outputs = outputs.at[:, start: end].set(output)
+            # outputs.append(output)
+        # outputs = jnp.concatenate(outputs, axis=1)
         # return output, atten_probs  # pytype: disable=bad-return-type  # jax-ndarray
         return outputs, None  # pytype: disable=bad-return-type  # jax-ndarray
 

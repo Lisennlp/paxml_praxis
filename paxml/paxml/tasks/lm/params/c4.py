@@ -586,6 +586,9 @@ def configure_gpt3_task(
     transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
     if cls.ACTIVATION_CLS == layers.GELU:
         transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
+    
+    # lsp
+    transformer_layer_p.tr_fflayer_tpl.chunk_size = getattr(cls, 'FFN_CHUNK_SIZE', None)  # XD: add if
 
     for atten_p in (
         transformer_layer_p.tr_atten_tpl,
@@ -1292,7 +1295,7 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 16
+    NUM_LAYERS = 34
     MODEL_DIMS = 4096
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32
@@ -1337,8 +1340,9 @@ class Llama7B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "debug"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = None
+    QUERY_CHUNK_SIZE = 2048
     LM_HEAD_CHUNK_SIZE = None
+    FFN_CHUNK_SIZE = HIDDEN_DIMS // 4
     RESET_FOR_EVAL = False
     TASK_NAME = "Llama7B"
     TARGET_LOG_PPLX = -1

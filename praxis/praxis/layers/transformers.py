@@ -322,12 +322,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
         ffn0: SplitDimsMapping = None
         ffn1: SplitDimsMapping = None
 
-    def create_ffn_layer(self, name, layer):
-        if self.chunk_size is None: 
-            self.create_child(name, layer)
-        else: 
-            self.create_children(name, [layer.clone() for _ in range(self.n_chunks)]) # XD
-
     def setup(self) -> None:
         output_dims = self.output_dims
         if output_dims == 0:
@@ -365,12 +359,16 @@ class TransformerFeedForward(base_layer.BaseLayer):
             activation = self.activation_tpl.clone()
             gate_activation = None
 
-        if self.chunk_size is not None:
-            assert self.hidden_dims % self.chunk_size == 0, f'{self.hidden_dims} % {self.chunk_size} != 0'
-            self.n_chunks = self.hidden_dims // self.chunk_size
-            hidden_dims = self.chunk_size
-        else:
+        if self.chunk_size is None:
+              # 不能改属性
+            # self.chunk_size = self.hidden_dims
             hidden_dims = self.hidden_dims
+        else:
+            hidden_dims = self.chunk_size
+
+
+        assert self.hidden_dims % hidden_dims == 0, f'{self.hidden_dims} % {hidden_dims} != 0'
+        self.n_chunks = self.hidden_dims // hidden_dims
 
         # Create the first Feedforward layer mapping to hidden dims
         ffn1_p = self.fflayer_tpl.clone()
@@ -386,7 +384,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
             scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
             ffn1_p.linear_tpl.params_init = WeightInit.Uniform(scale)
         # lsp
-        self.create_ffn_layer('ffn_layer1', ffn1_p)
+        self.create_children('ffn_layer1', [ffn1_p.clone() for _ in range(self.n_chunks)])
     
         if self._is_ffn1_gated:
             # This is a gated ffw network, corresponding to gshard_builder's wi0
@@ -405,7 +403,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
                 gate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
             
             # lsp
-            self.create_ffn_layer('ffn_layer1_gate', gate_p)
+            self.create_children('ffn_layer1_gate', [gate_p.clone() for _ in range(self.n_chunks)])
             # self.create_child("ffn_layer1_gate", gate_p)
 
         # Create RELU dropout layer
@@ -430,8 +428,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
             ffn2_p.linear_tpl.params_init = WeightInit.Uniform(scale)
         # lsp
         # self.create_child("ffn_layer2", ffn2_p)
-        self.create_ffn_layer('ffn_layer2', ffn2_p)
-
+        self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)])
 
         # Create residual dropout layer
         residual_dropout_p = self.residual_dropout_tpl.clone()
@@ -447,26 +444,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
             )
             self.create_child("residual_droppath", droppath_p)
 
-    # # lsp： ffn层forward
-    # def __call__(
-    #     self,
-    #     inputs: JTensor,
-    #     paddings: Optional[JTensor] = None,
-    #     segment_ids: Optional[JTensor] = None,
-    # ) -> JTensor:
-    #     w = 512
-    #     t = inputs.shape[1]
-    #     # assert t % w == 0, f"{t} % {w} != 0"
-    #     encoded = [
-    #         self._call(
-    #             inputs=inputs[:, i * w: (i + 1) * w], 
-    #             paddings=paddings[:, i * w: (i + 1) * w], 
-    #             ) 
-    #                 for i in range(math.ceil(t / w))
-    #             ]
-    #     encoded = jnp.concatenate(encoded, axis=1)
-    #     return encoded
-
     # lsp： ffn层forward
     def __call__(
         self,
@@ -477,7 +454,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
         # Expand paddings to last dim if not None to have shape [batch, time, 1]
         if paddings is not None:
             paddings = jnp.expand_dims(paddings, axis=-1)
-
         if self.apply_padding_first and paddings is not None:
             inputs *= 1.0 - paddings
 
@@ -487,32 +463,25 @@ class TransformerFeedForward(base_layer.BaseLayer):
             inputs = self.pre_layer_norm(inputs)
         elif self.norm_policy == "pre":
             inputs = self.layer_norm(inputs)
-        # lsp:  x = self.w2(nn.silu(self.w1(x)) * self.w3(x))
-        # Apply first FFN layer
-        if self._is_ffn1_gated:
-            # theta.ffn_layer1_gate corresponds to gshard_builder's wi0
-            gate_value = self.ffn_layer1_gate(inputs)
-            activations = gate_value * self.ffn_layer1(inputs)
-        else:
-            activations = self.ffn_layer1(inputs)
-            activations = checkpoint_name(activations, "ffn1")
 
-        # Apply paddings if not None
-        if not self.apply_padding_first and paddings is not None:
-            # lsp: apply_padding_first:false
-            activations *= 1.0 - paddings
+        outputs = None
+        print(f'self.n_chunks:{self.n_chunks}')
+        for i in range(self.n_chunks):
+            if self._is_ffn1_gated:
+                gate_value = self.ffn_layer1_gate[i](inputs)
+                activations = gate_value * self.ffn_layer1[i](inputs)
+            else:
+                activations = self.ffn_layer1[i](inputs)
+            activations = checkpoint_name(activations, f"ffn1_{i}")
+            if not self.apply_padding_first and paddings is not None: # False
+                activations *= 1.0 - paddings
+            activations = self.relu_dropout(activations)
+            output = self.ffn_layer2[i](activations)
+            outputs = output if outputs is None else outputs + output
 
-        # Apply RELU dropout
-        activations = self.relu_dropout(activations)
-
-        # Apply second FFN layer
-        outputs = self.ffn_layer2(activations)
         outputs = checkpoint_name(outputs, "ffn2")
-        # Apply paddings if not None # lsp: apply_padding_first: False || paddings: not None
-        if not self.apply_padding_first and paddings is not None:
-            # lsp
+        if not self.apply_padding_first and paddings is not None: # here
             outputs *= 1.0 - paddings
-        # Apply Primer normalization before dropout.
         if self.norm_policy == "primer_hybrid":
             outputs = self.post_layer_norm(outputs)
         elif self.norm_policy == "post":

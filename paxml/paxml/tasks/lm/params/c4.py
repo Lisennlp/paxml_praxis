@@ -1301,7 +1301,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192
     VOCAB_SIZE = 50257
 
@@ -1342,7 +1342,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
 
     QUERY_CHUNK_SIZE = 2048
     LM_HEAD_CHUNK_SIZE = None
-    FFN_CHUNK_SIZE = HIDDEN_DIMS // 4
+    FFN_CHUNK_SIZE = HIDDEN_DIMS // 1
     RESET_FOR_EVAL = False
     TASK_NAME = "Llama7B"
     TARGET_LOG_PPLX = -1

@@ -273,6 +273,8 @@ def adjust_input_params_for_small_batch(
     batch_size = fdl.get_callable(input_p).get_batch_size(
         input_p
     )  # pytype: disable=attribute-error
+    logging.info(f"batch_size: {batch_size}===")
+    logging.info(f"local_device_count: {local_device_count}===")
 
     if batch_size % local_device_count == 0 and input_p.num_infeed_hosts == jax.process_count():
         return input_p
@@ -280,7 +282,8 @@ def adjust_input_params_for_small_batch(
     # Determine correct padding amount.
     copy = input_p.clone()
     if batch_size <= local_device_count:
-        copy.batch_padding_size = local_device_count - batch_size
+        # copy.batch_padding_size = local_device_count - batch_size
+        copy.batch_padding_size = 0
     else:
         if batch_size % local_device_count != 0:
             if jax.process_count() > 1:
@@ -295,6 +298,7 @@ def adjust_input_params_for_small_batch(
                 copy.batch_padding_size = (
                     (batch_size + local_device_count) // local_device_count * local_device_count
                 ) - batch_size
+    logging.info(f"batch_padding_size: {copy.batch_padding_size}===")
 
     assert input_p.num_infeed_hosts <= jax.process_count()
     if jax.process_count() == 1:
@@ -326,6 +330,8 @@ def adjust_input_params_for_small_batch(
         else:
             used_cores.append(global_device_idx)
     copy.custom_device_order = used_cores + unused_cores
+    logging.info(f"custom_device_order: {copy.custom_device_order}===")
+
     return copy
 
 

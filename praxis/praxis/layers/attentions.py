@@ -1456,6 +1456,7 @@ class DotProductAttention(base_layer.BaseLayer):
         # query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]]  # btnh->bnth
         if self.query_chunk_size is None:
             encoded = self._atten_context(query, key, value, atten_mask, alibi_mask)
+            encoded = self.post(encoded)
         else:
             w = self.query_chunk_size
             # assert t % w == 0, f"{t} % {w} != 0"

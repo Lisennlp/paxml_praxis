@@ -1445,6 +1445,8 @@ def shard_on_batch_dim_partition_spec(
     # Assume the first dim is batch, and fully shard the batch dim over the entire
     # mesh.
     sharding[0] = tuple(mesh_names)
+    logging.info(f'sharding: {sharding}')
+    logging.info(f'mesh_names: {mesh_names}')
     return base_layer.to_partition_spec(sharding, mesh_names)
 
 
@@ -1505,6 +1507,7 @@ def get_input_partition_specs(mesh_axis_names, inputs_shape_dtype):
     #     inputs_shape_dtype)
     # Compute inputs PartitionSpec from inputs_shape_dtype
     inputs_partition_spec_fn = functools.partial(shard_on_batch_dim_partition_spec, mesh_axis_names)
+    logging.info(f'inputs_shape_dtype: {inputs_shape_dtype}')
     return jax.tree_util.tree_map(inputs_partition_spec_fn, inputs_shape_dtype)
 
 

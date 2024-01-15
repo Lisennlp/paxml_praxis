@@ -764,8 +764,9 @@ class PjitPartitioner(Partitioner):
 
         # Creates global mesh.  lsp: LanguageModel
         model = task.model
-        # ['replica', 'data', 'mdl']
-        self._mesh_names = model.mesh_axis_names
+        # lsp: if full shard: ['replica', 'data', 'mdl'] else ['replica', 'data']
+        self.data_full_shard = model.data_full_shard
+        self._mesh_names = model.mesh_axis_names if self.data_full_shard else model.mesh_axis_names[:2]
         # lsp: device_mesh: none
         if device_mesh is None:
             logging.info("creating mesh with py_utils.create_device_mesh")
@@ -969,12 +970,10 @@ class PjitPartitioner(Partitioner):
         # lsp: input_partition_spec 输入的shard {'ids': PartitionSpec(('replica', 'data', 'mdl'), None),
         #  'labels': PartitionSpec(('replica', 'data', 'mdl'), None),
         #  'paddings': PartitionSpec(('replica', 'data', 'mdl'), None),...}
+        #lsp: self._mesh_names修改为[]'replica', 'data']
         input_partition_spec = trainer_lib.get_input_partition_specs(
             self._mesh_names, inputs_shape_dtype
         )
-        # input_partition_spec = trainer_lib.get_input_partition_specs(
-        #     ['replica', 'data'], inputs_shape_dtype
-        # )
         logging.info("step_fn inputs_partition_spec=%s", input_partition_spec)
         # Step function to be pjit-ed.
         wrapped_step_fn = self._get_step_fn(

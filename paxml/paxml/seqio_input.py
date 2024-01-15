@@ -53,7 +53,6 @@ import seqio
 import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
 
-from jax.experimental import PartitionSpec as P
 
 # from jax.experimental.multihost_utils import host_local_array_to_global_array, global_array_to_host_local_array
 

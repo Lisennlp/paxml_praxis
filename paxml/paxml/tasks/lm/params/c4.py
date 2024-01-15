@@ -1305,7 +1305,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192 * 2
     VOCAB_SIZE = 50257
-    DATA_FULL_SHARD = False
+    DATA_FULL_SHARD = True
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
@@ -1365,15 +1365,17 @@ class Llama7B(C4SpmdGpt37BRoPE):
 
 
 @experiment_registry.register
-class Llama7v32(Llama7B):
+class Llama7Bv32(Llama7B):
     NUM_LAYERS = 48
-    ICI_MESH_SHAPE = [1, 32, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 8192 * 2
-    QUERY_CHUNK_SIZE = 1024
+    ICI_MESH_SHAPE = [1, 16, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 * 3
+    QUERY_CHUNK_SIZE = 2048
     LM_HEAD_CHUNK_SIZE = None
+    DATA_FULL_SHARD = False
+    PERCORE_BATCH_SIZE = 0.5
 
 @experiment_registry.register
-class Llama7v64(Llama7B):
+class Llama7Bv64(Llama7B):
     NUM_LAYERS = 48
     ICI_MESH_SHAPE = [1, 64, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192 * 2

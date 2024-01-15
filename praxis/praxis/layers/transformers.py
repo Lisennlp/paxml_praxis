@@ -1669,18 +1669,18 @@ class StackedTransformer(base_layer.BaseLayer):
             if self.packed_input:
                 assert cross_segment_mask is not None
 
-        # attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
-        #     inputs,
-        #     paddings,
-        #     self.mask_self_attention,
-        #     segment_mask,
-        #     cross_inputs,
-        #     cross_paddings,
-        #     cross_segment_mask,
-        #     fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
-        # )
-        attention_mask = None
-        cross_attention_mask = None
+        attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
+            inputs,
+            paddings,
+            self.mask_self_attention,
+            segment_mask,
+            cross_inputs,
+            cross_paddings,
+            cross_segment_mask,
+            fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
+        )
+        # attention_mask = None
+        # cross_attention_mask = None
 
         x_out = inputs
         if self.input_dropout_prob > 0.0:

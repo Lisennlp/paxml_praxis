@@ -1441,8 +1441,8 @@ class DotProductAttention(base_layer.BaseLayer):
         # [1, 1, T, S]
         
         # base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
-        # asserts.in_set(atten_mask.shape[2], [t, 1])
-        # asserts.in_set(atten_mask.shape[0], [b, 1])
+        asserts.in_set(atten_mask.shape[2], [t, 1])
+        asserts.in_set(atten_mask.shape[0], [b, 1])
 
         query = self._scale_query(query)  # scale query,  internal_enable_query_scale为True生效
 
@@ -1607,18 +1607,17 @@ class DotProductAttention(base_layer.BaseLayer):
             key_proj = self.key(key_vec)
             value_proj = self.value(value_vec)
 
-        # self._fprop_update_decode_state("key_state", key_proj)
-        # self._fprop_update_decode_state("value_state", value_proj)
-
+        self._fprop_update_decode_state("key_state", key_proj)
+        self._fprop_update_decode_state("value_state", value_proj)
         # Apply depth-wise convolution as in Primer.
         # Paper: https://arxiv.org/abs/2109.08668.
-        # if self.dconv_qkv:
-        #     self._fprop_update_decode_state("query_state", query_proj)
-        #     query_proj = self.dconv_q(query_proj, axis=1, segment_pos=query_segment_pos)
-        #     key_proj = self.dconv_k(key_proj, axis=1, segment_pos=key_segment_pos)
-        #     self._fprop_update_decode_state("key_post_dconv", key_proj)
-        #     value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
-        #     self._fprop_update_decode_state("value_post_dconv", value_proj)
+        if self.dconv_qkv:
+            self._fprop_update_decode_state("query_state", query_proj)
+            query_proj = self.dconv_q(query_proj, axis=1, segment_pos=query_segment_pos)
+            key_proj = self.dconv_k(key_proj, axis=1, segment_pos=key_segment_pos)
+            self._fprop_update_decode_state("key_post_dconv", key_proj)
+            value_proj = self.dconv_v(value_proj, axis=1, segment_pos=key_segment_pos)
+            self._fprop_update_decode_state("value_post_dconv", value_proj)
 
         # Apply rotary position embeddings.
         # Paper: https://arxiv.org/abs/2104.09864.

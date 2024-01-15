@@ -589,7 +589,7 @@ def configure_gpt3_task(
     # lsp
     transformer_layer_p.tr_fflayer_tpl.chunk_size = getattr(cls, 'FFN_CHUNK_SIZE', None)  # XD: add if
     # lsp: default True
-    model_p.data_full_shard = getattr(cls, 'data_full_shard', True)
+    model_p.data_full_shard = getattr(cls, 'DATA_FULL_SHARD', True)
 
     for atten_p in (
         transformer_layer_p.tr_atten_tpl,

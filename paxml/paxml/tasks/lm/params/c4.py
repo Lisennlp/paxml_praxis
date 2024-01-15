@@ -395,7 +395,6 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
         transformer_layer_p.tr_atten_tpl.o_bias = getattr(self, 'O_BIAS', False)
         # lsp
         task_p = set_adam_and_learning_rate_schedule(cls=self, task_p=task_p)
-        # model_p.data_mesh_axis_names = self.data_mesh_axis_names
         return task_p
 
 
@@ -589,7 +588,8 @@ def configure_gpt3_task(
     
     # lsp
     transformer_layer_p.tr_fflayer_tpl.chunk_size = getattr(cls, 'FFN_CHUNK_SIZE', None)  # XD: add if
-    model_p.data_full_shard = getattr(cls, 'DATA_FULL_SHARD', False)
+    # lsp: default True
+    model_p.data_full_shard = getattr(cls, 'data_full_shard', True)
 
     for atten_p in (
         transformer_layer_p.tr_atten_tpl,
@@ -1301,9 +1301,9 @@ class Llama7B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
-    PERCORE_BATCH_SIZE = 0.125
-    ICI_MESH_SHAPE = [1, 1, 8]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 8192 * 3
+    PERCORE_BATCH_SIZE = 0.5
+    ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 * 2
     VOCAB_SIZE = 50257
     DATA_FULL_SHARD = False
 

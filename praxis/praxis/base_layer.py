@@ -1516,6 +1516,7 @@ class BaseLayer(nn.Module):
     contiguous_submeshes: Optional[bool] = None
     mesh_axis_names: Optional[Sequence[str]] = None
     shared_weight_layer_id: Optional[str] = None
+    data_full_shard: Optional[bool] = True
     # TODO(b/249483164): Change these to use instance_field rather than
     # template_field after the Fiddle migration.
     weight_split_dims_mapping: pax_fiddle.Config[BaseLayer.WeightSharding] = template_field(

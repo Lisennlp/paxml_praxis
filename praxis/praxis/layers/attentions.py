@@ -1380,8 +1380,7 @@ class DotProductAttention(base_layer.BaseLayer):
         logits = self._cap_logits(logits)
         logits = logits.astype(jnp.float32)
         # lsp
-        padded_logits = logits
-        # padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
+        padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
         # lsp
         if alibi_mask is not None:
             padded_logits += alibi_mask
@@ -1439,8 +1438,7 @@ class DotProductAttention(base_layer.BaseLayer):
         # source tokens. In this case tiling is inefficient and unnecessary.
         # If there is no padding mask, and only causal mask then the shape can be
         # [1, 1, T, S]
-        
-        # base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
+        base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
         asserts.in_set(atten_mask.shape[2], [t, 1])
         asserts.in_set(atten_mask.shape[0], [b, 1])
 
@@ -1465,8 +1463,8 @@ class DotProductAttention(base_layer.BaseLayer):
                     query=query[:, i * w: (i + 1) * w], 
                     key=key[:, :(i + 1) * w], 
                     value=value[:, :(i + 1) * w], 
-                    atten_mask=None if atten_mask is None else atten_mask[:, :, start:stop, :stop],
-                    alibi_mask=None if alibi_mask is None else alibi_mask[:, start:stop, :stop],
+                    atten_mask=None if atten_mask is None else atten_mask[:, :, i * w: (i + 1) * w, :(i + 1) * w],
+                    alibi_mask=None if alibi_mask is None else alibi_mask[:, i * w: (i + 1) * w, :(i + 1) * w],
                     )))
                         for i in range(math.ceil(t / w))
                     ]

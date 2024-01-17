@@ -305,7 +305,7 @@ class BaseTrainProgram(Program):
         model_inputs = self._partitioner.preprocess_inputs(
             self._train_input,  # train_input SeqIOInput
             model_inputs,  ## First two args can be consolidated
-            self.train_input_partition_spec(model_inputs), # lsp: 数据shard方式
+            self.train_input_partition_spec(model_inputs), # shard方式
         )
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieved inputs.", 5)
 

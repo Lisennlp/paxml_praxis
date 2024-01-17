@@ -360,7 +360,7 @@ def put_to_devices(host_array: np.ndarray,
 # We use Any types to allow nested data structures. They are defined in pytypes
 # which would cause a circular dependency.
 # TODO(pax-dev): Rename globally into e.g. create_jax_array()
-def make_array(
+def make_array2(
     host_arrays: Union[np.ndarray, Any],
     global_shapes: Union[jax.ShapeDtypeStruct, Any],
     global_mesh: jax.sharding.Mesh,
@@ -379,6 +379,7 @@ def make_array(
   Returns:
     A Jax Array with x as the host-local data.
   """
+
 
   local_devices = global_mesh.local_devices
 
@@ -403,15 +404,19 @@ from jax.experimental.multihost_utils import (
     global_array_to_host_local_array,
 )
 
-def make_array2(
+def make_array(
     host_arrays: Union[np.ndarray, Any],
     global_shapes: Union[jax.ShapeDtypeStruct, Any],
     global_mesh: jax.sharding.Mesh,
     pspecs: Any,
 ) -> Any:
-  def _jax_array(global_shape, pspec, dbs):
-    return jax.experimental.multihost_utils.host_local_array_to_global_array(dbs, global_mesh, pspec)
-  return jax.tree_map(_jax_array, global_shapes, pspecs, host_arrays)
+  logging.info(f'global_mesh: {global_mesh}')
+  logging.info(f'host_arrays: {host_arrays}')
+  logging.info(f'local_mesh: {global_mesh.local_mesh}')
+
+  def _jax_array(array, pspec):
+    return jax.experimental.multihost_utils.host_local_array_to_global_array(array, global_mesh, pspec)
+  return jax.tree_map(_jax_array, host_arrays, pspecs)
 
 
 def convert_fully_replicated_array_to_pmap_array(arr):

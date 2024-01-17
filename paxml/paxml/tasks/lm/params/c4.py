@@ -1296,14 +1296,14 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 48
+    NUM_LAYERS = 4
     MODEL_DIMS = 4096
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
-    PERCORE_BATCH_SIZE = 0.25
-    ICI_MESH_SHAPE = [1, 1, 8]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 8192 * 2
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 // 2
     VOCAB_SIZE = 50257
     DATA_FULL_SHARD = True
 

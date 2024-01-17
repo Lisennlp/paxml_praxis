@@ -606,5 +606,5 @@ if __name__ == "__main__":
     jax.config.config_with_absl()
 
     flags.mark_flag_as_required("job_log_dir")
-    jax.distributed.initialize()
+    # jax.distributed.initialize()
     app.run(main, flags_parser=absl_flags.flags_parser)

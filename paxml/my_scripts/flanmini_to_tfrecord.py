@@ -10,6 +10,7 @@ import tensorflow as tf
 
 
 path = 'gs://common_datasets/pythia_model_test/flan_test/flan_mini_filtered_v2.jsonl'
+path = 'gs://common_datasets/pythia_model_test/pile_test/flan_mini_filtered_v2.jsonl'
 path = epath.Path(path)
 
 lines = []

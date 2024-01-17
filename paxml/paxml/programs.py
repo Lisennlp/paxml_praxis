@@ -302,11 +302,11 @@ class BaseTrainProgram(Program):
             self._partitioner.check_input_spec(model_inputs)
         
         # # lsp: shared model_inputs, 要仔细看下怎么shard的
-        # model_inputs = self._partitioner.preprocess_inputs(
-        #     self._train_input,  # train_input SeqIOInput
-        #     model_inputs,  ## First two args can be consolidated
-        #     self.train_input_partition_spec(model_inputs),
-        # )
+        model_inputs = self._partitioner.preprocess_inputs(
+            self._train_input,  # train_input SeqIOInput
+            model_inputs,  ## First two args can be consolidated
+            self.train_input_partition_spec(model_inputs), # lsp: 数据shard方式
+        )
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieved inputs.", 5)
 
         # Waits if it reaches max inflight steps. We do this after retrieving the
@@ -504,11 +504,11 @@ class BaseTrainProgram(Program):
                 logging.debug("  Retrieved eval model_inputs.")
                 logging.debug("  Performing eval_step() runs on training split.")
                 # lsp: full shard，在初始的时候，我们将输入的shard修改为[replica, data]
-                # eval_inputs = self._partitioner.preprocess_inputs(
-                #     self._train_input,
-                #     eval_inputs,
-                #     self.train_input_partition_spec(eval_inputs),
-                # )
+                eval_inputs = self._partitioner.preprocess_inputs(
+                    self._train_input,
+                    eval_inputs,
+                    self.train_input_partition_spec(eval_inputs),
+                )
 
                 eval_state = get_eval_train_state(
                     self._task, new_state, self._task.train.eval_use_ema_states
@@ -875,8 +875,10 @@ class BaseEvalProgram(Program):
                 supported_input_partition_spec,
             ) = xla_passthrough.split_out_xla_unsupported_batch(
                 eval_inputs,
+                # lsp：获取最初设置的数据shard
                 partitioning_spec=self.eval_input_partition_spec(eval_inputs),
             )
+            # lsp： full shard
             eval_inputs = self._partitioner.preprocess_inputs(
                 self.eval_input, eval_inputs, supported_input_partition_spec
             )

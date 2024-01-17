@@ -764,8 +764,8 @@ class PjitPartitioner(Partitioner):
 
         # Creates global mesh.  lsp: LanguageModel
         model = task.model
-        # lsp: if full shard: ['replica', 'data', 'mdl'] else ['replica', 'data']
-        self._mesh_names = model.mesh_axis_names if model.data_full_shard else model.mesh_axis_names[:2]
+        self._mesh_names = model.mesh_axis_names if getattr(model, 'data_full_shard', True) else  model.mesh_axis_names[:2]
+
         logging.info(f'data mesh names: {self._mesh_names}')
         # lsp: device_mesh: none
         if device_mesh is None:

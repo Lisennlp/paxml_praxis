@@ -397,6 +397,23 @@ def make_array(
   return jax.tree_map(_jax_array, global_shapes, pspecs, device_buffers)
 
 
+# ===========================================================================
+from jax.experimental.multihost_utils import (
+    host_local_array_to_global_array,
+    global_array_to_host_local_array,
+)
+
+def make_array2(
+    host_arrays: Union[np.ndarray, Any],
+    global_shapes: Union[jax.ShapeDtypeStruct, Any],
+    global_mesh: jax.sharding.Mesh,
+    pspecs: Any,
+) -> Any:
+  def _jax_array(global_shape, pspec, dbs):
+    return jax.experimental.multihost_utils.host_local_array_to_global_array(dbs, global_mesh, pspec)
+  return jax.tree_map(_jax_array, global_shapes, pspecs, host_arrays)
+
+
 def convert_fully_replicated_array_to_pmap_array(arr):
   """Converts a fully replicated Array to Array with PmapSharding.
 

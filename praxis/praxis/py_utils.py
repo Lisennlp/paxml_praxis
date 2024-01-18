@@ -723,6 +723,7 @@ def create_device_mesh(
         raise ValueError('Setting a nontrivial dcn_mesh_shape requires '
                          'multiple slices') from e
   else:
+    # lsp: here
     device_mesh = mesh_utils.create_device_mesh(
         ici_mesh_shape, contiguous_submeshes=contiguous_submeshes
     )

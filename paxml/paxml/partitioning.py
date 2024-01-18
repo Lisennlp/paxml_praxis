@@ -770,16 +770,18 @@ class PjitPartitioner(Partitioner):
         # lsp: device_mesh: none
         if device_mesh is None:
             logging.info("creating mesh with py_utils.create_device_mesh")
-            # 142
-            device_mesh = py_utils.create_device_mesh(
-                model.ici_mesh_shape,
-                model.dcn_mesh_shape,
-                contiguous_submeshes=model.contiguous_submeshes,
-            )
+            # 创建Mesh，但是这个函数出来的是无序的类似于[1, 3, 4, 7, 0, 2, 6]，如果这个无序Mesh传入host_local_array_to_global_array
+            # 会报错
+            # device_mesh = py_utils.create_device_mesh(
+            #     model.ici_mesh_shape,
+            #     model.dcn_mesh_shape,
+            #     contiguous_submeshes=model.contiguous_submeshes,
+            # )
+            device_mesh = np.array(jax.devices()).reshape(model.ici_mesh_shape)
         else:
             logging.info("Using provided mesh for PjitPartitioner")
+
         logging.info("device_mesh: %s", device_mesh)
-        # 其实就是我们设置的Mesh
         self._global_mesh = jax.sharding.Mesh(device_mesh, model.mesh_axis_names)
 
         # Pjit'ed function to preprocess the prng key.

@@ -53,6 +53,8 @@ from jax.experimental.multihost_utils import (
     host_local_array_to_global_array,
     global_array_to_host_local_array,
 )
+from jax.sharding import PartitionSpec as P
+
 
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor
@@ -296,19 +298,21 @@ class BaseTrainProgram(Program):
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieving inputs.", 5)
         # dict: 'ids', 'labels', 'weights', 'paddings', 'segment_ids', 'segment_pos', ' ....
         model_inputs = self._train_input.get_next_padded()
+
         # Verify user-provided spec matches the first batch's structure.
         # train_p.enforce_input_specs: false
         if step == self._initial_step and train_p.enforce_input_specs:
             self._partitioner.check_input_spec(model_inputs)
         
-        # lsp: shared model_inputs, 要仔细看下怎么shard的
+        # lsp:full shard data to local devices and make global array
         # model_inputs = self._partitioner.preprocess_inputs(
         #     self._train_input,  # train_input SeqIOInput
         #     model_inputs,  ## First two args can be consolidated
         #     self.train_input_partition_spec(model_inputs), # shard方式
         # )
+        # lsp: 兼容full shard and (replica, data) shard
+        model_inputs = host_local_array_to_global_array(model_inputs, self._partitioner.global_mesh, P(self._partitioner._mesh_names, None))
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieved inputs.", 5)
-
         # Waits if it reaches max inflight steps. We do this after retrieving the
         # inputs to maximize efficiency.
         self._pending_train_losses.wait_for_next()
@@ -358,10 +362,10 @@ class BaseTrainProgram(Program):
         eval_train_metrics = None
         if train_p.eval_interval_steps and new_step % train_p.eval_interval_steps == 0:
             eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
-        if jax.process_index() == 0:
-            pickle.dump(train_outputs.summary_tensors, open(f'remove_debug_global{new_step}.pkl', 'wb'))
-        if new_step == 10:
-            exit(0)
+        # if jax.process_index() == 0:
+        #     pickle.dump(train_outputs.summary_tensors, open(f'remove_debug_global{new_step}.pkl', 'wb'))
+        # if new_step == 10:
+        #     exit(0)
         return TrainProgramOutput(
             new_state,
             loss=train_outputs.loss,

@@ -1304,7 +1304,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 2, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192 // 2
     VOCAB_SIZE = 50257
     DATA_FULL_SHARD = False

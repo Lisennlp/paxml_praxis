@@ -86,6 +86,14 @@ gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:/home/lishengping/projects/paxml/
 Cleaning up existing temporary directories at gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256Alignedv4/checkpoints.
 
 
+Pile v4-16-10  2.8B
+TPU_NAME=llm-jax-v4-16-10
+STEP=143000
+ZONE=us-central2-b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Pythia2p8BFlanMiniEval --job_log_dir=gs://llm_base_models/pythia/pythia-2.8b-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True| tee Pythia2p8BFlanMiniEval.Step$STEP.log"
+
+
 
 Pile v3-64-10  7B
 TPU_NAME=llm-jax-v3-64-10

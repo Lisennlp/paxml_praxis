@@ -198,7 +198,9 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
                 batch_size=int(batch_size_per_process),  # lsp
                 drop_remainder=True if is_training else False,
                 num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
+                # num_infeed_hosts=num_infeed_hosts,
                 num_infeed_hosts=num_infeed_hosts,
+
                 # reset_for_eval=False if is_training else True, # eval的时候为True
                 reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),  # eval的时候为True -> False
                 annotate_padding_fields=True,
@@ -1302,10 +1304,10 @@ class Llama7B(C4SpmdGpt37BRoPE):
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 2, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192 // 2
     VOCAB_SIZE = 50257
-    DATA_FULL_SHARD = True
+    DATA_FULL_SHARD = False
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
@@ -1334,9 +1336,9 @@ class Llama7B(C4SpmdGpt37BRoPE):
     USE_BIAS = False
     FPROP_DTYPE = jnp.bfloat16
 
-    CHECKPOINT_EVERY_N_STEPS = 20
+    CHECKPOINT_EVERY_N_STEPS = 200000
     EVAL_LOOP_NUM_BATCHES = 102
-    EVAL_INTERVAL_STEPS = 100
+    EVAL_INTERVAL_STEPS = 10000
     CHECKPOINT_MAX_TO_KEEP = 2
 
     WANDB_PROJECT = "debug"
@@ -1814,6 +1816,7 @@ class MyDatasets(base_input.BaseInput):
         seq_len = self.seq_len
         model_needed_inputs = NestedMap()
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
+        logging.info(f'process index {jax.process_index()} load input_ids: {model_needed_inputs.ids}')
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
             if self.label_flag == 0:
@@ -1836,7 +1839,7 @@ class MyDatasets(base_input.BaseInput):
         # shard host data
         process_index = jax.process_index()
         # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
-        ds = ds.shard(self.num_infeed_hosts, process_index)
+        # ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
             logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')

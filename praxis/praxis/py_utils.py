@@ -360,7 +360,7 @@ def put_to_devices(host_array: np.ndarray,
 # We use Any types to allow nested data structures. They are defined in pytypes
 # which would cause a circular dependency.
 # TODO(pax-dev): Rename globally into e.g. create_jax_array()
-def make_array2(
+def make_array(
     host_arrays: Union[np.ndarray, Any],
     global_shapes: Union[jax.ShapeDtypeStruct, Any],
     global_mesh: jax.sharding.Mesh,
@@ -404,7 +404,7 @@ from jax.experimental.multihost_utils import (
     global_array_to_host_local_array,
 )
 
-def make_array(
+def make_array2(
     host_arrays: Union[np.ndarray, Any],
     global_shapes: Union[jax.ShapeDtypeStruct, Any],
     global_mesh: jax.sharding.Mesh,

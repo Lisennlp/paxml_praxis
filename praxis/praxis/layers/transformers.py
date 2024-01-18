@@ -1313,6 +1313,7 @@ class Transformer(base_layer.BaseLayer):
             key_segment_pos=segment_pos,
             alibi_mask=alibi_mask,
         )
+        self.add_summary("atten_outputs", atten_outputs, verbosity=self.user_summary_level)
         # outputs = atten_outputs
         # if not isinstance(atten_outputs, list):
         #     atten_outputs = [atten_outputs]

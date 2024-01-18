@@ -301,12 +301,12 @@ class BaseTrainProgram(Program):
         if step == self._initial_step and train_p.enforce_input_specs:
             self._partitioner.check_input_spec(model_inputs)
         
-        # # lsp: shared model_inputs, 要仔细看下怎么shard的
-        model_inputs = self._partitioner.preprocess_inputs(
-            self._train_input,  # train_input SeqIOInput
-            model_inputs,  ## First two args can be consolidated
-            self.train_input_partition_spec(model_inputs), # shard方式
-        )
+        # lsp: shared model_inputs, 要仔细看下怎么shard的
+        # model_inputs = self._partitioner.preprocess_inputs(
+        #     self._train_input,  # train_input SeqIOInput
+        #     model_inputs,  ## First two args can be consolidated
+        #     self.train_input_partition_spec(model_inputs), # shard方式
+        # )
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieved inputs.", 5)
 
         # Waits if it reaches max inflight steps. We do this after retrieving the
@@ -358,9 +358,10 @@ class BaseTrainProgram(Program):
         eval_train_metrics = None
         if train_p.eval_interval_steps and new_step % train_p.eval_interval_steps == 0:
             eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
-        # if jax.process_index() == 0:
-        #     pickle.dump(train_outputs.summary_tensors, open('debug.pkl', 'wb'))
-        #     exit(0)
+        if jax.process_index() == 0:
+            pickle.dump(train_outputs.summary_tensors, open(f'remove_debug_global{new_step}.pkl', 'wb'))
+        if new_step == 10:
+            exit(0)
         return TrainProgramOutput(
             new_state,
             loss=train_outputs.loss,

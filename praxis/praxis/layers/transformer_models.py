@@ -735,8 +735,15 @@ class TransformerLm(base_layer.BaseLayer):
             # Fold the paddings with the segment mask
             segment_ids = jnp.asarray(1 - paddings, jnp.int32)
             segment_pos = jnp.tile(jnp.arange(seq_length, dtype=jnp.int32)[None, :], [batch, 1])
+
+        self.add_summary("[lsp]inputs_ids", inputs, verbosity=self.user_summary_level)
+        print(f'inputs_ids devices: {inputs.devices}')
+        
         # lsp: id -> emebd
         inputs = self._prepare_input(inputs, paddings, segment_pos=segment_pos, **input_kwargs)
+        self.add_summary("[lsp]inputs", inputs, verbosity=self.user_summary_level)
+        print(f'inputs devices: {inputs.devices}')
+
         # lsp: add embed dropout
         inputs = self.embed_dropout(inputs)
 

@@ -248,11 +248,13 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     unpadded = self.get_next()
     pad_size = self.batch_padding_size
     if pad_size == 0:
-      return unpadded
-    return jax.tree_util.tree_map(
+      d = unpadded
+    else:
+      d =  jax.tree_util.tree_map(
         lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
         unpadded,
-    )
+      )
+    return d
 
   def peek_padded(self) -> Optional[NestedJTensor]:
     """Peeks into the current input data pipeline."""

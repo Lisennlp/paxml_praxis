@@ -54,7 +54,8 @@ import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
 
 
-# from jax.experimental.multihost_utils import host_local_array_to_global_array, global_array_to_host_local_array
+from jax.experimental.multihost_utils import host_local_array_to_global_array, global_array_to_host_local_array
+from jax.experimental import PartitionSpec as P
 
 NestedMap = py_utils.NestedMap
 NestedNpTensor = pytypes.NestedNpTensor
@@ -574,9 +575,9 @@ class SeqIOInput(base_input.BaseInput):
         self._cached_targets_with_enum_key: Optional[Mapping[str, NestedMap]] = None
 
         self.is_targets_init = False
-        # self.ici_mesh_shape = [1, 8, 4]
-        # devices = np.array(jax.devices()).reshape(self.ici_mesh_shape)
-        # self.mesh = jax.sharding.Mesh(devices, ('replica', 'data', 'mdl'))
+        self.ici_mesh_shape = [1, 2, 4]
+        devices = np.array(jax.devices()).reshape(self.ici_mesh_shape)
+        self.mesh = jax.sharding.Mesh(devices, ('replica', 'data', 'mdl'))
 
     def _validate_deterministic(self):
         """Validates deterministic input settings and creates the shard info."""
@@ -878,8 +879,8 @@ class SeqIOInput(base_input.BaseInput):
         self,
     ) -> NestedNpTensor:  # pytype: disable=signature-mismatch  # jax-ndarray
         x = next(self._iter)
-        # if self.num_infeed_hosts > 1:
-        #   x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data', 'mdl'), None))
+        if self.num_infeed_hosts > 1:
+          x = host_local_array_to_global_array(x, self.mesh, P(('replica', 'data'), None))
         return x
 
     def reset(self) -> None:

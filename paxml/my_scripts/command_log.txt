@@ -169,7 +169,7 @@ I1122 05:01:59.520973 139846637156352 executors.py:376] eval_result_path: gs://l
 is_training: True
 
 
-
+TFDS_DATA_DIR=gs://jax_llm_data/dcformer_compare_experiments/vit/
 
 TPU_NAME=llm-jax-v3-32-10
 ZONE=us-east1-d
@@ -211,7 +211,7 @@ gcloud compute instances reset l4-0 --boot-disk DEVICE_NAME=l4-0
 TPU_NAME=llm-jax-v3-8-10
 ZONE=us-east1-d
 EXP=Llama7B
-python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee $EXP.log
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L34_QP2048_Fscan2048_LMn_8192x1.log
 
 
 
@@ -219,3 +219,124 @@ TPU_NAME=llm-jax-v3-32-10
 ZONE=us-east1-d
 EXP=Llama7B
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee $EXP.log"
+
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; gsutil -m cp -r  gs://llm_base_models/lsp_test/Llama7B/paxml gs://llm_base_models/lsp_test/Llama7B/praxis  projects/"
+
+
+TPU_NAME=llm-jax-v3-64-10
+ZONE=us-east1-d
+EXP=Llama7v64
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L48_C1_QP1024_Fn_LM1024_16k.log"
+
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; gsutil -m cp -r  gs://llm_base_models/lsp_test/paxml gs://llm_base_models/lsp_test/praxis  projects/"
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L48_C1_QP1024_Fn_LM1024_16k.log"
+
+
+export TFDS_DATA_DIR=gs://jax_llm_data/dcformer_compare_experiments/vit/test
+python3 -m big_vision.tools.download_tfds_datasets imagenet_v2
+python3 -m big_vision.tools.download_tfds_datasets cifar10
+
+
+gcloud alpha compute tpus tpu-vm create llm-jax-v3-8-10 --zone us-east1-d --accelerator-type='v3-8' --version='v2-alpha' --scopes=https://www.googleapis.com/auth/cloud-platform
+
+
+gcloud compute instances create instance-test \
+    --machine-type n1-standard-8 \
+    --zone us-east1-d \
+    --boot-disk-size 200GB \
+    --scopes https://www.googleapis.com/auth/cloud-platform
+
+
+# imagenet2012
+export TFDS_DATA_DIR=gs://jax_llm_data/dcformer_compare_experiments/vit/
+WORKDIR=gs://jax_llm_data/dcformer_compare_experiments/vit/big_vision/`date '+%m-%d_%H%M'`
+python -m big_vision.train --config big_vision/configs/bit_i1k.py  --workdir $WORKDIR
+
+
+python -m big_vision.train --config big_vision/configs/vit_s16_i1k.py --workdir workdirs/`date '+%m-%d_%H%M'`
+
+
+
+sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9
+sudo rm -f /tmp/libtpu_lockfile
+sudo chmod +777 -R /tmp/tpu_logs/
+
+
+TPU_NAME=llm-jax-v4-8-10
+ZONE=us-central2-b
+WOKRDIR=gs://jax_llm_data/dcformer_compare_experiments/logs_self/wmt_256/
+CODEDIR=/home/lishengping/projects/flax/examples/wmt
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python $CODEDIR/main.py --workdir=$WOKRDIR --config=$CODEDIR/configs/default.py $FLAGS| tee train.log"
+
+
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-east1-d
+WOKRDIR=gs://jax_llm_data/dcformer_compare_experiments/logs_self/wmt_256/
+CODEDIR=/home/lishengping/projects/flax/examples/wmt
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python $CODEDIR/main.py --workdir=$WOKRDIR --config=$CODEDIR/configs/default.py $FLAGS| tee train.log"
+
+
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.Llama7B --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L48_QP2048_Fn_LMn_16k.log
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.PileDCSlimLlama7B8Kx1x512x1Win256_4K --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L48_QP128_Fn_LM512_8k.log
+
+
+
+
+TPU_NAME=llm-jax-v3-32-10
+ZONE=us-central1-a
+EXP=Llama7Bv32
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/python -c 'import jax; print(jax.devices())'"
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git; mv paxml_praxis/*  projects/;sudo rm -r paxml_praxis"
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L48_QP2048_Fn_LMn_24k_B0.5_M1x16x2.log"
+
+
+
+TPU_NAME=llm-jax-v4-16-10
+ZONE=us-central2-b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+EXP=Llama7B
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee test.log"
+
+
+
+ func(*args, **kwargs)
+  File "/home/lishengping/projects/paxml/paxml/main.py", line 582, in _main
+    run(
+  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
+    result = func(*args, **kwargs)
+  File "/home/lishengping/projects/paxml/paxml/main.py", line 511, in run
+    run_experiment(
+  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
+    result = func(*args, **kwargs)
+  File "/home/lishengping/projects/paxml/paxml/main.py", line 371, in run_experiment
+    train.train_and_evaluate(
+  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
+    result = func(*args, **kwargs)
+  File "/home/lishengping/projects/paxml/paxml/train.py", line 319, in train_and_evaluate
+    executor.start()
+  File "/home/lishengping/projects/paxml/paxml/executors.py", line 278, in start
+    _train_and_evaluate_common(
+  File "/home/lishengping/projects/paxml/paxml/executors.py", line 463, in _train_and_evaluate_common
+    program_output = train_program.run(partitioned_train_state, step_i)
+  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
+    result = func(*args, **kwargs)
+  File "/home/lishengping/projects/paxml/paxml/programs.py", line 305, in run
+    model_inputs = self._partitioner.preprocess_inputs(
+  File "/home/lishengping/projects/paxml/paxml/partitioning.py", line 925, in preprocess_inputs
+    return input_pipeline.reshard_for_spmd(
+  File "/home/lishengping/projects/praxis/praxis/base_input.py", line 347, in reshard_for_spmd
+    return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)
+  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 414, in make_array
+    logging.info(f'local_mesh: {global_mesh.local_mesh}')
+  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 278, in local_mesh
+    return self._local_mesh(xb.process_index())
+  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 281, in _local_mesh
+    return _get_local_mesh(self, process_index)
+  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 119, in _get_local_mesh
+    raise ValueError(
+ValueError: When passing host local inputs to pjit or xmap, devices connected to a single host must form a contiguous subcube of the global device mesh
+wandb: WARNING Ensure read and write access to run files dir: /home/lishengping/wandb/run-20240117_114811-nx14rx2l/files, control this via the WANDB_DIR env var. See https://docs.wandb.ai/guides/track/environment-variables

@@ -1477,8 +1477,8 @@ class Pythia12B(Pythia):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 16, 2]
-    PERCORE_BATCH_SIZE = 32
+    ICI_MESH_SHAPE = [1, 32, 2]
+    PERCORE_BATCH_SIZE = 16
     LM_HEAD_CHUNK_SIZE = None
     FPROP_DTYPE = jnp.float32
 
@@ -1509,12 +1509,12 @@ class PileEval(BaseEval):
 @experiment_registry.register
 class FlanMiniEval(BaseEval):
     ZERO_LOSS = False
-    LOSS_BATCH_MEAN = True
-    ACC_BATCH_MEAN = True
+    LOSS_BATCH_MEAN = False
+    ACC_BATCH_MEAN = False
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test2', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test2', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test3', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test3', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     # DATA_PATH = {
@@ -1523,7 +1523,7 @@ class FlanMiniEval(BaseEval):
     #             }
     # KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 320
 
 
 @experiment_registry.register
@@ -1578,19 +1578,19 @@ class Pythia1p4BFlanMiniEval(FlanMiniEval, Pythia1p4B):
 @experiment_registry.register
 class Pythia2p8BFlanMiniEval(FlanMiniEval, Pythia2p8B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia2p8BFlanMini'
+    TASK_NAME = 'Pythia2p8BFlanMiniWholeTM'
 
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia7BFlanMini1226Again'
+    TASK_NAME = 'Pythia7BFlanMiniWholeTM'
 
 
 @experiment_registry.register
 class Pythia12BFlanMiniEval(FlanMiniEval, Pythia12B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia12BFlanMiniWhole'
+    TASK_NAME = 'Pythia12BFlanMiniWholeTM'
 
 
 class MyDatasets(base_input.BaseInput):

@@ -344,7 +344,6 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
         py_utils.get_global_input_shape_dtype, arrays
     )
     device_order = self.custom_device_order
-    logging.info(f'device_order: {device_order}')
     # lsp: None
     if device_order is None:
       return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)

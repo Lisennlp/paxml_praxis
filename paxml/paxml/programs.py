@@ -304,14 +304,23 @@ class BaseTrainProgram(Program):
         if step == self._initial_step and train_p.enforce_input_specs:
             self._partitioner.check_input_spec(model_inputs)
         
-        # lsp:full shard data to local devices and make global array
-        # model_inputs = self._partitioner.preprocess_inputs(
-        #     self._train_input,  # train_input SeqIOInput
-        #     model_inputs,  ## First two args can be consolidated
-        #     self.train_input_partition_spec(model_inputs), # shard方式
-        # )
-        # lsp: 兼容full shard and (replica, data) shard
-        model_inputs = host_local_array_to_global_array(model_inputs, self._partitioner.global_mesh, P(self._partitioner._mesh_names, None))
+        if len(self._partitioner._mesh_names) == 3:
+            # lsp: full shard data to local devices and make global array
+            model_inputs = self._partitioner.preprocess_inputs(
+                self._train_input,  # train_input SeqIOInput
+                model_inputs,  ## First two args can be consolidated
+                self.train_input_partition_spec(model_inputs), # shard方式
+            )
+        elif len(self._partitioner._mesh_names) == 2:
+            # lsp: 兼容full shard and (replica, data) shard, 但是速度相比于 full shard 稍微慢0.2%
+            model_inputs = host_local_array_to_global_array(
+                                                        model_inputs, 
+                                                        self._partitioner.global_mesh, 
+                                                        P(tuple(self._partitioner._mesh_names), None)
+                                                        )
+        else:
+            raise ValueError('‘_mesh_names’ attribute array length is not equal 2 or 3......')
+
         logging.log_first_n(logging.INFO, "[PAX STATUS]:  Retrieved inputs.", 5)
         # Waits if it reaches max inflight steps. We do this after retrieving the
         # inputs to maximize efficiency.

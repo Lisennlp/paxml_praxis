@@ -1307,7 +1307,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 8192 // 2
     VOCAB_SIZE = 50257
-    DATA_FULL_SHARD = False
+    DATA_FULL_SHARD = True
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5

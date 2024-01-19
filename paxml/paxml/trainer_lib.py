@@ -331,7 +331,6 @@ def adjust_input_params_for_small_batch(
         else:
             used_cores.append(global_device_idx)
     copy.custom_device_order = used_cores + unused_cores
-    logging.info(f"custom_device_order: {copy.custom_device_order}===")
 
     return copy
 

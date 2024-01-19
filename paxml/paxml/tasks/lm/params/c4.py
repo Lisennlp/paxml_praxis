@@ -702,6 +702,10 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
+
+    if hasattr(cls, 'FFN_CHUKN_SIZE'):
+      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
+
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -2881,6 +2885,12 @@ class DCSlimLlama7B(_DC, _SlimLlama7B):
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
 
+class DCSlimLlama7BNG4(DCSlimLlama7B):
+  NUM_GROUPS = 4
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+  # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
+
 class DCLlama13B(_DC, _Llama13B):  # TODO: add init
   DYNAMIC_SQUEEZE_RATIO = 20
   DYNAMIC_W_HIDDEN_DIM = 160
@@ -2889,8 +2899,9 @@ class DCLlama33B(_DC, _Llama33B):  # TODO: add init
   DYNAMIC_SQUEEZE_RATIO = 52
   DYNAMIC_W_HIDDEN_DIM = 208
 
+
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG4):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2905,12 +2916,16 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192
+  MAX_SEQ_LEN = 8192 * 2
   WINDOW_SIZE = [256, 4096]
   # 超显存10G
-  PERCORE_BATCH_SIZE = 2
-  QUERY_CHUNK_SIZE = 128
+  PERCORE_BATCH_SIZE = 0.5
+  QUERY_CHUNK_SIZE = 2048
   LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 16, 4]
+  DATA_FULL_SHARD = False
+  # FFN_CHUKN_SIZE = 5504 // 2
+
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):

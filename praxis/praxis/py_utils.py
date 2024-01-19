@@ -380,11 +380,9 @@ def make_array(
     A Jax Array with x as the host-local data.
   """
 
-
   local_devices = global_mesh.local_devices
 
   def _put_to_devices(x):
-    # lsp: 把数据放到当前host的每个core上
     return put_to_devices(x, local_devices)
 
   device_buffers = jax.tree_map(_put_to_devices, host_arrays)
@@ -396,27 +394,6 @@ def make_array(
     return jax.make_array_from_single_device_arrays(global_shape.shape, s, dbs)
 
   return jax.tree_map(_jax_array, global_shapes, pspecs, device_buffers)
-
-
-# ===========================================================================
-from jax.experimental.multihost_utils import (
-    host_local_array_to_global_array,
-    global_array_to_host_local_array,
-)
-
-def make_array2(
-    host_arrays: Union[np.ndarray, Any],
-    global_shapes: Union[jax.ShapeDtypeStruct, Any],
-    global_mesh: jax.sharding.Mesh,
-    pspecs: Any,
-) -> Any:
-  logging.info(f'global_mesh: {global_mesh}')
-  logging.info(f'host_arrays: {host_arrays}')
-  logging.info(f'local_mesh: {global_mesh.local_mesh}')
-
-  def _jax_array(array, pspec):
-    return jax.experimental.multihost_utils.host_local_array_to_global_array(array, global_mesh, pspec)
-  return jax.tree_map(_jax_array, host_arrays, pspecs)
 
 
 def convert_fully_replicated_array_to_pmap_array(arr):
@@ -475,7 +452,6 @@ def get_global_input_shape_dtype(x: jnp.ndarray) -> jax.ShapeDtypeStruct:
   """Get global input shape/dtype assuming fully sharded batch dim."""
   assert len(x.shape) >= 1
   # Assume fully sharded batch dim.
-  # lsp：第一个维度乘以host数量
   x_shape = (x.shape[0] * jax.process_count(),) + tuple(x.shape[1:])
   return jax.ShapeDtypeStruct(x_shape, x.dtype)
 
@@ -723,7 +699,6 @@ def create_device_mesh(
         raise ValueError('Setting a nontrivial dcn_mesh_shape requires '
                          'multiple slices') from e
   else:
-    # lsp: here
     device_mesh = mesh_utils.create_device_mesh(
         ici_mesh_shape, contiguous_submeshes=contiguous_submeshes
     )
@@ -764,9 +739,7 @@ def apply_mask_to_logits(logits: JTensor, mask: JTensor) -> JTensor:
     Masked logits.
   """
 
-  # min_value = get_large_negative_number(logits.dtype)
-  # lsp
-  min_value = jnp.finfo(jnp.bfloat16).min
+  min_value = get_large_negative_number(logits.dtype)
   return jnp.where((mask >= min_value * 0.5), logits, min_value)
 
 

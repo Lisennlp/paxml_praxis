@@ -390,6 +390,7 @@ class RmsNorm(BaseNormalization):
   epsilon: float = 1e-6
   direct_scale: bool = True
   intermediate_dtype: Optional[jnp.dtype] = None
+  skip_weight_decay: bool = True  # XD
 
   def setup(self) -> None:
     """Creates RMS normalization variables."""
@@ -407,15 +408,11 @@ class RmsNorm(BaseNormalization):
             init=WeightInit.Constant(init_value),
             mesh_shape=self.mesh_shape,
             tensor_split_dims_mapping=wp_scale,
+            collections=None if not self.skip_weight_decay else [
+                base_layer.WeightHParamsCollection.SKIP_LP_REGULARIZATION  # XD
+            ],
         ),
     )
-  def _norm(self, x: jnp.ndarray) -> jnp.ndarray:
-    x_square = jnp.square(x)
-    x_mean = x_square.mean(-1, keepdims=True)
-    x_eps = x_mean + self.epsilon
-    x_rsqrt = jax.lax.rsqrt(x_eps)
-    x_cheng = x * x_rsqrt
-    return x_cheng
 
   def __call__(self,
                inputs: JTensor,
@@ -429,24 +426,16 @@ class RmsNorm(BaseNormalization):
     Returns:
       Output after applying RMS normalization, with the same shape as 'inputs'.
     """
-    # del paddings  # Unused.
-    # if self.intermediate_dtype is not None: # lsp： float32
-    #   inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
-    # var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
-    # normed_inputs = jnp.asarray(
-    #     inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
-    # )
-    # scale = self.theta.scale if self.direct_scale elsxe 1 + self.theta.scale
-    # normed_inputs *= scale
-    # return normed_inputs
-    # return inputs
-    # self.add_summary('[lsp]theta_scale', self.theta.scale)
-    # self.add_summary('[lsp]_norm_inputs', inputs[1])
-    output = self._norm(inputs.astype(self.fprop_dtype)).astype(self.fprop_dtype)
-    # print(f'fprop_dtype: {self.fprop_dtype}========== self.eps: {self.epsilon}')
-    # self.add_summary('[lsp]norm_input', output[1])
-    weight = jnp.asarray(self.theta.scale, self.fprop_dtype)
-    return output * weight
+    del paddings  # Unused.
+    if self.intermediate_dtype is not None:
+      inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
+    var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
+    normed_inputs = jnp.asarray(
+        inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
+    )
+    scale = self.theta.scale if self.direct_scale else 1 + self.theta.scale
+    normed_inputs *= scale
+    return normed_inputs
 
 
 class RmsNormNoScale(BaseNormalization):
@@ -456,9 +445,11 @@ class RmsNormNoScale(BaseNormalization):
     epsilon: Tiny value to guard rsqrt.
   """
   epsilon: float = 1e-6
+  axis: int = -1  # XD -2 for dynamic w1 (BTGMI) normalization on M dim
 
   def __call__(self,
                inputs: JTensor,
+               bias: Optional[JTensor] = None,  # XD
                paddings: Optional[JTensor] = None) -> JTensor:
     """Applies RMS norm to inputs.
 
@@ -472,8 +463,9 @@ class RmsNormNoScale(BaseNormalization):
     """
     del paddings  # Unused.
     var = jnp.mean(
-        jnp.square(inputs), axis=[-1], keepdims=True, dtype=jnp.float32)
-    normed_inputs = (inputs * jax.lax.rsqrt(var + self.epsilon)).astype(
+        jnp.square(inputs), axis=[self.axis], keepdims=True, dtype=jnp.float32)  # XD -1 -> self.axis
+    if bias is None: bias = 0.  # XD
+    normed_inputs = (inputs * jax.lax.rsqrt(var + self.epsilon + bias)).astype(
         inputs.dtype
     )
     return normed_inputs

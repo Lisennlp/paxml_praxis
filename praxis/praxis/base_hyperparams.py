@@ -1154,7 +1154,6 @@ def instantiate(config: Union[BaseParameterizable.HParams, fdl.Buildable],
     An instance constructed from the provided configuration object `config`.
   """
   if isinstance(config, fdl.Buildable):
-    # lsp here
     return pax_fiddle.instantiate(config, **kwargs)
   if isinstance(config, BaseParameterizable.HParams):
     return config.Instantiate(**kwargs)

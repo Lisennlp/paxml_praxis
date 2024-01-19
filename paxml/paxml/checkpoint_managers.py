@@ -19,11 +19,11 @@ import dataclasses
 import os
 import typing
 from typing import Any, Mapping, Optional, Sequence, Union
+from multiprocessing import Process
 
 from absl import logging
 from etils import epath
 import jax
-import jax.numpy as jnp
 import orbax.checkpoint
 from orbax.checkpoint import utils
 from paxml import checkpoint_metadata
@@ -31,15 +31,12 @@ from paxml import checkpoint_paths
 from paxml import checkpoint_types
 from paxml import checkpoint_version
 from praxis import base_input
+from praxis import py_utils  # XD
 from praxis import pytypes
 import tensorflow.compat.v2 as tf
 
 from paxml import preemption  # mapped to internal
-from praxis import py_utils
-from praxis import base_layer
 
-
-from multiprocessing import Process
 
 Nested = pytypes.Nested
 # TODO(pax-dev): pytyping doesn't like either
@@ -61,558 +58,579 @@ def _get_checkpoint_version(
     step: int,
     use_digit_step_subdirectory: bool = False,
 ) -> float:
-    """Gets checkpoint version from saved metadata."""
-    checkpoint_step_dir = checkpoint_paths.make_checkpoint_step_dir(
-        directory,
-        step,
-        checkpoint_type=checkpoint_type,
-        use_digit_step_subdirectory=use_digit_step_subdirectory,
-    )
-    version = 0.0
-    # Necessary because some checkpoints do not conform to Orbax directory
-    # structure. Could rely exclusively on actual version if all checkpoints
-    # conformed.
-    if checkpoint_metadata.metadata_exists(checkpoint_step_dir):
-        version = checkpoint_metadata.restore_metadata(checkpoint_step_dir)[
-            checkpoint_version.get_version_key()
-        ]
-    return version
+  """Gets checkpoint version from saved metadata."""
+  checkpoint_step_dir = checkpoint_paths.make_checkpoint_step_dir(
+      directory,
+      step,
+      checkpoint_type=checkpoint_type,
+      use_digit_step_subdirectory=use_digit_step_subdirectory,
+  )
+  version = 0.0
+  # Necessary because some checkpoints do not conform to Orbax directory
+  # structure. Could rely exclusively on actual version if all checkpoints
+  # conformed.
+  if checkpoint_metadata.metadata_exists(checkpoint_step_dir):
+    version = checkpoint_metadata.restore_metadata(checkpoint_step_dir)[
+        checkpoint_version.get_version_key()
+    ]
+  return version
 
 
 def _update_args_with_version(item_kwargs, version):
-    kwargs = {STATE_ITEM_NAME: {checkpoint_version.get_version_key(): version}}
-    if item_kwargs is not None:
-        kwargs[STATE_ITEM_NAME].update(item_kwargs)
-    return kwargs
+  kwargs = {STATE_ITEM_NAME: {checkpoint_version.get_version_key(): version}}
+  if item_kwargs is not None:
+    kwargs[STATE_ITEM_NAME].update(item_kwargs)
+  return kwargs
 
 
 def _create_items_dict_with_metadata(
     train_state,
     train_state_unpadded_shape_dtype_struct,
     version,
-    tensorstore_use_ocdbt: Optional[bool] = None,
+    tensorstore_use_ocdbt: Optional[bool] = None
 ):
-    """Returns items dict with metadata."""
-    # (padded) train_state
-    items = {STATE_ITEM_NAME: train_state}
+  """Returns items dict with metadata."""
+  # (padded) train_state
+  items = {STATE_ITEM_NAME: train_state}
 
-    if version > 0:
-        metadata = checkpoint_metadata.make_metadata(
-            version,
-            train_state,
-            train_state_unpadded_shape_dtype_struct,
-            tensorstore_use_ocdbt=tensorstore_use_ocdbt,
-        )
-        items.update({METADATA_ITEM_NAME: metadata})
+  if version > 0:
+    metadata = checkpoint_metadata.make_metadata(
+        version,
+        train_state,
+        train_state_unpadded_shape_dtype_struct,
+        tensorstore_use_ocdbt=tensorstore_use_ocdbt,
+    )
+    items.update({METADATA_ITEM_NAME: metadata})
 
-    return items
+  return items
 
 
 def _is_legacy_flax_checkpoint(path: epath.Path) -> bool:
-    """Returns whether the checkpoint is a legacy Flax checkpoint format.
+  """Returns whether the checkpoint is a legacy Flax checkpoint format.
 
-    Old-format Flax checkpoint conforming to
-    'path/to/dir/checkpoints/checkpoint_100'.
-    Contrast with 'standard' old-format Flax checkpoint conforming to
-    'path/to/dir/checkpoints/checkpoint_100/checkpoint'.
-    The former is not considered a valid checkpoint by Orbax because it is not a
-    directory. It thus requires special handling.
+  Old-format Flax checkpoint conforming to
+  'path/to/dir/checkpoints/checkpoint_100'.
+  Contrast with 'standard' old-format Flax checkpoint conforming to
+  'path/to/dir/checkpoints/checkpoint_100/checkpoint'.
+  The former is not considered a valid checkpoint by Orbax because it is not a
+  directory. It thus requires special handling.
 
-    Args:
-      path: the checkpoint path.
+  Args:
+    path: the checkpoint path.
 
-    Returns:
-      Boolean indicating whether the path is legacy Flax checkpoint or not.
-    """
-    return checkpoint_paths.is_checkpoint_asset(path) and (
-        not checkpoint_paths.is_tmp_checkpoint_asset(path) and path.is_file()
-    )
+  Returns:
+    Boolean indicating whether the path is legacy Flax checkpoint or not.
+  """
+  return checkpoint_paths.is_checkpoint_asset(path) and (
+      not checkpoint_paths.is_tmp_checkpoint_asset(path) and path.is_file()
+  )
 
 
 def _has_digit_step_subdirectory(directory) -> bool:
-    """Indicates whether the checkpoints have digit-like step subdirectories."""
-    return False  # mapped to internal digit step impl.
+  """Indicates whether the checkpoints have digit-like step subdirectories."""
+  return False  # mapped to internal digit step impl.
 
 
 @dataclasses.dataclass
 class CheckpointManagerOptions(orbax.checkpoint.CheckpointManagerOptions):
-    """Options for constructing OrbaxCheckpointManager.
+  """Options for constructing OrbaxCheckpointManager.
 
-    See superclass.
+  See superclass.
 
-    Attributes:
-      todelete_subdir: If set, checkpoints to be deleted will be only renamed into
-        a subdirectory with the provided string. Otherwise, they will be directly
-        deleted from the file system. Useful if checkpoint deletion is time
-        consuming. By default, delete the checkpoint assets. TODO(b/278901950):
-        Remove this option when it is available in Orbax OSS.
-      cleanup_tmp_directories: if True, cleans up any existing temporary
-        directories on CheckpointManager creation. Set to False by default and
-        overridden in select places (like train.py). Otherwise, the
-        CheckpointManager is typically a one-off and does not need to concern
-        itself with much directory management.
-    """
+  Attributes:
+    todelete_subdir: If set, checkpoints to be deleted will be only renamed into
+      a subdirectory with the provided string. Otherwise, they will be directly
+      deleted from the file system. Useful if checkpoint deletion is time
+      consuming. By default, delete the checkpoint assets. TODO(b/278901950):
+      Remove this option when it is available in Orbax OSS.
+    cleanup_tmp_directories: if True, cleans up any existing temporary
+      directories on CheckpointManager creation. Set to False by default and
+      overridden in select places (like train.py). Otherwise, the
+      CheckpointManager is typically a one-off and does not need to concern
+      itself with much directory management.
+  """
 
-    todelete_subdir: Optional[str] = None
-    cleanup_tmp_directories: bool = False
+  todelete_subdir: Optional[str] = None
+  cleanup_tmp_directories: bool = False
 
 
 class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
-    """Provides Pax-specific logic for orbax.checkpoint.CheckpointManager.
+  """Provides Pax-specific logic for orbax.checkpoint.CheckpointManager.
 
-    Pax only supports a single checkpointable item (TrainState) and checkpoints
-    are saved under a different folder name in a flat manner (no per-item
-    sub-directories).
+  Pax only supports a single checkpointable item (TrainState) and checkpoints
+  are saved under a different folder name in a flat manner (no per-item
+  sub-directories).
 
-    Additionally, Pax supports extra options provided via CheckpointManagerOptions
-    (see above).
+  Additionally, Pax supports extra options provided via CheckpointManagerOptions
+  (see above).
 
-    An instance of this class can be created on several JAX processes.
-    All public APIs may be called by all processes.
-    """
+  An instance of this class can be created on several JAX processes.
+  All public APIs may be called by all processes.
+  """
 
-    def __init__(
-        self,
-        directory: epath.PathLike,
-        *args,
-        checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
-        tensorstore_use_ocdbt: Optional[bool] = None,
-        **kwargs,
-    ):
-        if checkpoint_type == CheckpointType.UNSPECIFIED:
-            raise ValueError("Must specify checkpoint type.")
-        self._checkpoint_type = checkpoint_type
+  def __init__(
+      self,
+      directory: epath.PathLike,
+      *args,
+      checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
+      tensorstore_use_ocdbt: Optional[bool] = None,
+      **kwargs,
+  ):
+    if checkpoint_type == CheckpointType.UNSPECIFIED:
+      raise ValueError('Must specify checkpoint type.')
+    self._checkpoint_type = checkpoint_type
 
-        self._version = checkpoint_version.get_version(tensorstore_use_ocdbt)
-        # Check for existing checkpoints and retrieve version information. The
-        # specific version may impact the checkpoint format, so it must be known in
-        # advance of any operations.
-        self._directory = epath.Path(directory)
-        self._use_digit_step_subdirectory = _has_digit_step_subdirectory(self._directory)
-        if self._directory.exists():
-            step = self.any_step() # 存在的任何一个step目录
-            if step is not None:
-                # 为什么要判断版本号?
-                version = _get_checkpoint_version(
-                    self._checkpoint_type,
-                    self._directory,
-                    step,
-                    use_digit_step_subdirectory=self._use_digit_step_subdirectory,
-                )
-                logging.info(
-                    "Found existing checkpoint with version: %s, step: %s",
-                    version,
-                    step,
-                )
-                if version != self._version:
-                    logging.warning(
-                        (
-                            "Found existing checkpoints with old version %s, compared to "
-                            "latest version %s. Use version of existing checkpoints for "
-                            "restoring and saving future checkpoints."
-                        ),
-                        version,
-                        self._version,
-                    )
-                    self._version = version
-
-        super().__init__(directory, *args, **kwargs)
-        # Set to 1 if not provided or set to 0.
-        self._options.save_interval_steps = self._options.save_interval_steps or 1
-        self._options.step_prefix = checkpoint_paths.checkpoint_prefix(self._checkpoint_type)
-        self._options.step_format_fixed_length = checkpoint_paths.checkpoint_name_fixed_length(
-            self._checkpoint_type
-        )
-
-    @property
-    def version(self) -> float:
-        return self._version
-
-    def all_steps(self, read: bool = False) -> Sequence[int]:
-        steps = list(super().all_steps(read=read))
-        if read:
-            for path in self.directory.iterdir():
-                if _is_legacy_flax_checkpoint(path):
-                    steps.append(checkpoint_paths.get_step_from_checkpoint_asset(path))
-        return steps
-
-    def any_step(self) -> Optional[int]:
-        """Returns any step tracked by the checkpoint manager.
-
-        Returns:
-          A step (integer) or None.
-        """
-        any_step = utils.any_checkpoint_step(self.directory)
-        if any_step is not None:
-            return any_step
-
-        for path in self.directory.iterdir():
-            if _is_legacy_flax_checkpoint(path):
-                return checkpoint_paths.get_step_from_checkpoint_asset(path)
-        return None
-
-    def _checkpoint_name(self, step: int) -> str:
-        return checkpoint_paths.checkpoint_name(
+    self._version = checkpoint_version.get_version(tensorstore_use_ocdbt)
+    # Check for existing checkpoints and retrieve version information. The
+    # specific version may impact the checkpoint format, so it must be known in
+    # advance of any operations.
+    self._directory = epath.Path(directory)
+    self._use_digit_step_subdirectory = _has_digit_step_subdirectory(
+        self._directory
+    )
+    if self._directory.exists():
+      step = self.any_step()
+      if step is not None:
+        version = _get_checkpoint_version(
+            self._checkpoint_type,
+            self._directory,
             step,
-            checkpoint_type=self._checkpoint_type,
             use_digit_step_subdirectory=self._use_digit_step_subdirectory,
         )
-
-    def reached_preemption(self, step: int) -> bool:
-        """Returns True if a preemption sync point has been reached."""
-        return preemption.reached_preemption_sync_point(step)
-
-    def should_save(self, step: int) -> bool:
-        """Indicates whether there is a need to save a checkpoint."""
-        if self._use_digit_step_subdirectory:
-            raise NotImplementedError(
-                "Checkpoints with digit step subdirectories do not support the saving mode."
-            )
-
-        # Whether to save an on-demand checkpoint due to preemption
-        if self.reached_preemption(step):
-            return True
-        last_checkpoint_step = self._last_checkpoint.step if self._last_checkpoint else None
-        # Ensure current step is between the last step and next step (accounting for
-        # save interval). The `last_checkpoint_step` may not be initialized, in
-        # which case we should save. Otherwise, step must fall on the specified
-        # save interval. This condition accounts for the possibility of saving
-        # on preemption, in which case we want to maintain the same save period as
-        # if preemption had not happened.
-        return last_checkpoint_step is None or (
-            last_checkpoint_step < step
-            and step % self._options.save_interval_steps == 0
-            or step in self._options.save_on_steps
+        logging.info(
+            'Found existing checkpoint with version: %s, step: %s',
+            version,
+            step,
         )
+        if version != self._version:
+          logging.warning(
+              (
+                  'Found existing checkpoints with old version %s, compared to '
+                  'latest version %s. Use version of existing checkpoints for '
+                  'restoring and saving future checkpoints.'
+              ),
+              version,
+              self._version,
+          )
+          self._version = version
 
-    def delete(self, step: int):
-        """Deletes a step checkpoint."""
-        if self._use_digit_step_subdirectory:
-            raise NotImplementedError(
-                "Checkpoints with digit step subdirectories do not support deletions."
-            )
-        super().delete(step)
+    super().__init__(directory, *args, **kwargs)
+    # Set to 1 if not provided or set to 0.
+    self._options.save_interval_steps = self._options.save_interval_steps or 1
+    self._options.step_prefix = checkpoint_paths.checkpoint_prefix(
+        self._checkpoint_type
+    )
+    self._options.step_format_fixed_length = (
+        checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
+    )
 
-    def _remove_old_checkpoints(
-        self,
-    ):  # XD: copied from orbax/checkpoint/checkpoint_manager.py:795 (CheckpointManager)
-        """Keeps the `max_to_keep` most recent checkpoint steps."""
-        # Must have set max_to_keep in order to remove any checkpoints.
-        if self._options.max_to_keep is None:
-            return
-        # Not enough checkpoints accumulated to consider deletion.
-        if len(self._checkpoints) <= self._options.max_to_keep:
-            return
-        if self._track_best:
-            # Best steps (to keep) are at the end, after sorting.
-            (
-                checkpoints_without_metrics,
-                sorted_checkpoints,
-            ) = self._sort_checkpoints_by_metrics(self._checkpoints)
-        else:
-            # checkpoints already sorted by ascending step
-            checkpoints_without_metrics = []
-            sorted_checkpoints = self._checkpoints
+  @property
+  def version(self) -> float:
+    return self._version
 
-        keep = int(self._options.max_to_keep)
-        if self._options.keep_checkpoints_without_metrics:
-            maybe_delete = sorted_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
-            active_checkpoints = (
-                checkpoints_without_metrics + sorted_checkpoints[-keep:] if keep > 0 else []
-            )
-        else:
-            all_checkpoints = checkpoints_without_metrics + sorted_checkpoints
-            maybe_delete = all_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
-            active_checkpoints = all_checkpoints[-keep:] if keep > 0 else []
-        maybe_delete = [
-            info for info in maybe_delete if info.step not in self._options.save_on_steps
-        ]  # XD
-        logging.info(f'maybe_delete: {maybe_delete}')
-        logging.info(f'save_on_steps: {self._options.save_on_steps}')
+  def all_steps(self, read: bool = False) -> Sequence[int]:
+    steps = list(super().all_steps(read=read))
+    if read:
+      for path in self.directory.iterdir():
+        if _is_legacy_flax_checkpoint(path):
+          steps.append(checkpoint_paths.get_step_from_checkpoint_asset(path))
+    return steps
 
-        kept_checkpoints = []
-        for info in maybe_delete:
-            if utils.is_locked(self.directory, info.step):
-                logging.info(
-                    "Preserving %s: (Reason: checkpoint is locked).",
-                    info,
-                )
-            if (
-                self._options.keep_time_interval is not None
-                and self._interval_preserved_checkpoints
-            ):
-                if info in self._interval_preserved_checkpoints:
-                    logging.info(
-                        "Preserving %s: (Reason: older falling on keep_time_interval).",
-                        info,
-                    )
-                    kept_checkpoints.append(info)
-                    continue
-                elif (
-                    info.time
-                    >= self._interval_preserved_checkpoints[-1].time
-                    + self._options.keep_time_interval
-                ):
-                    self._interval_preserved_checkpoints.append(info)
-                    logging.info(
-                        "Preserving %s: (Reason: latest falling on keep_time_interval).",
-                        info,
-                    )
-                    kept_checkpoints.append(info)
-                    continue
+  def any_step(self) -> Optional[int]:
+    """Returns any step tracked by the checkpoint manager.
 
-            if self._options.keep_period is not None and info.step % self._options.keep_period == 0:
-                logging.info("Preserving %s: (Reason: on keep_period).", info)
-                kept_checkpoints.append(info)
-                continue
+    Returns:
+      A step (integer) or None.
+    """
+    any_step = utils.any_checkpoint_step(self.directory)
+    if any_step is not None:
+      return any_step
 
-            reason = "worse metric" if self._track_best else "old checkpoint"
-            logging.info("Deleting %s: (Reason: %s).", info, reason)
-            self._delete_directory(info.step)
+    for path in self.directory.iterdir():
+      if _is_legacy_flax_checkpoint(path):
+        return checkpoint_paths.get_step_from_checkpoint_asset(path)
+    return None
 
-        kept_checkpoints += active_checkpoints
-        if self._track_best:
-            # Maintain in ascending step order.
-            self._checkpoints = sorted(kept_checkpoints, key=lambda info: info.step)
-        else:
-            self._checkpoints = kept_checkpoints
+  def _checkpoint_name(self, step: int) -> str:
+    return checkpoint_paths.checkpoint_name(
+        step,
+        checkpoint_type=self._checkpoint_type,
+        use_digit_step_subdirectory=self._use_digit_step_subdirectory,
+    )
 
-    def save(self, *args, **kwargs) -> bool:
-        """Saves the provided items."""
-        if self._use_digit_step_subdirectory:
-            raise NotImplementedError(
-                "Checkpoints with digit step subdirectories do not support the saving mode."
-            )
-        return super().save(*args, **kwargs)
+  def reached_preemption(self, step: int) -> bool:
+    """Returns True if a preemption sync point has been reached."""
+    return preemption.reached_preemption_sync_point(step)
 
-    def _get_save_directory(
-        self,
-        step: int,
-        directory: epath.Path,
-        key_name: Optional[str] = None,
-        tmp_directory: Optional[epath.Path] = None,
-    ) -> epath.Path:
-        """Returns the standardized path to a save directory for a single item."""
-        if tmp_directory is None:
-            step_dir = checkpoint_paths.make_checkpoint_step_dir(
-                directory,
-                step,
-                checkpoint_type=self._checkpoint_type,
-                use_digit_step_subdirectory=self._use_digit_step_subdirectory,
-            )
-        else:
-            step_dir = tmp_directory
-        if self._version < 1 or key_name is None:
-            return step_dir
-        return step_dir / key_name
+  def should_save(self, step: int) -> bool:
+    """Indicates whether there is a need to save a checkpoint."""
+    if self._use_digit_step_subdirectory:
+      raise NotImplementedError(
+          'Checkpoints with digit step subdirectories do not support the '
+          'saving mode.'
+      )
 
-    def _create_tmp_directory(self, directory: epath.Path) -> epath.Path:
-        if self._version < 1:
-            # Construct the path without returning. This is because Checkpointer must
-            # be allowed to create the path. Only needed for legacy compatibility.
-            return orbax.checkpoint.utils.get_tmp_directory(directory)
-        return super()._create_tmp_directory(directory)
+    # Whether to save an on-demand checkpoint due to preemption
+    if self.reached_preemption(step):
+      return True
+    last_checkpoint_step = (
+        self._last_checkpoint.step if self._last_checkpoint else None
+    )
+    # Ensure current step is between the last step and next step (accounting for
+    # save interval). The `last_checkpoint_step` may not be initialized, in
+    # which case we should save. Otherwise, step must fall on the specified
+    # save interval. This condition accounts for the possibility of saving
+    # on preemption, in which case we want to maintain the same save period as
+    # if preemption had not happened.
+    return last_checkpoint_step is None or (
+        last_checkpoint_step < step
+        and (step % self._options.save_interval_steps == 0
+            or step in self._options.save_on_steps)  # # XD: copied from orbax/checkpoint/checkpoint_manager.py:362
+    )
 
-    def _delete_directory(self, step: int):
-        if jax.process_index() != 0:
-            return
-        else:
-            # 开启一个进程删除
-            # delete_process = Process(target=self._backend_del_directory, args=(step, ))
-            # delete_process.daemon = True
-            # delete_process.start()
-            # lsp
-            self._backend_del_directory(step)
+  def delete(self, step: int):
+    """Deletes a step checkpoint."""
+    if self._use_digit_step_subdirectory:
+      raise NotImplementedError(
+          'Checkpoints with digit step subdirectories do not support deletions.'
+      )
+    super().delete(step)
 
-    def _backend_del_directory(self, step):
-        options = typing.cast(CheckpointManagerOptions, self._options)
-        todelete_subdir = options.todelete_subdir
-        checkpoint_name = self._checkpoint_name(step)
-        if todelete_subdir:
-            rename_dir = self.directory / todelete_subdir
-            if not rename_dir.exists():
-                rename_dir.mkdir(parents=True)
-            src = self.directory / checkpoint_name
-            dst = rename_dir / checkpoint_name
-            # TODO(pax-team): Check if dst already exists?
-            tf.io.gfile.rename(src, dst)
-        else:
-            super()._delete_directory(step)
+  def _remove_old_checkpoints(self):  # XD: copied from orbax/checkpoint/checkpoint_manager.py:795 (CheckpointManager)
+    """Keeps the `max_to_keep` most recent checkpoint steps."""
+    # Must have set max_to_keep in order to remove any checkpoints.
+    if self._options.max_to_keep is None:
+      return
+    # Not enough checkpoints accumulated to consider deletion.
+    if len(self._checkpoints) <= self._options.max_to_keep:
+      return
+    if self._track_best:
+      # Best steps (to keep) are at the end, after sorting.
+      (
+          checkpoints_without_metrics,
+          sorted_checkpoints,
+      ) = self._sort_checkpoints_by_metrics(self._checkpoints)
+    else:
+      # checkpoints already sorted by ascending step
+      checkpoints_without_metrics = []
+      sorted_checkpoints = self._checkpoints
 
-    def structure(self) -> Union[Any, Mapping[str, Any]]:
-        if self._checkpoint_type == CheckpointType.FLAX:
-            raise ValueError("`structure` not supported for Flax format checkpoints.")
-        return super().structure()
+    keep = int(self._options.max_to_keep)
+    if self._options.keep_checkpoints_without_metrics:
+      maybe_delete = (
+          sorted_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      )
+      active_checkpoints = (
+          checkpoints_without_metrics + sorted_checkpoints[-keep:]
+          if keep > 0
+          else []
+      )
+    else:
+      all_checkpoints = checkpoints_without_metrics + sorted_checkpoints
+      maybe_delete = all_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      active_checkpoints = all_checkpoints[-keep:] if keep > 0 else []
+    maybe_delete = [info for info in maybe_delete if info.step not in self._options.save_on_steps]  # XD
 
+    kept_checkpoints = []
+    for info in maybe_delete:
+      if utils.is_locked(self.directory, info.step):
+        logging.info(
+            'Preserving %s: (Reason: checkpoint is locked).',
+            info,
+        )
+      if (
+          self._options.keep_time_interval is not None
+          and self._interval_preserved_checkpoints
+      ):
+        if info in self._interval_preserved_checkpoints:
+          logging.info(
+              'Preserving %s: (Reason: older falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.append(info)
+          continue
+        elif (
+            info.time
+            >= self._interval_preserved_checkpoints[-1].time
+            + self._options.keep_time_interval
+        ):
+          self._interval_preserved_checkpoints.append(info)
+          logging.info(
+              'Preserving %s: (Reason: latest falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.append(info)
+          continue
 
+      if (
+          self._options.keep_period is not None
+          and info.step % self._options.keep_period == 0
+      ):
+        logging.info('Preserving %s: (Reason: on keep_period).', info)
+        kept_checkpoints.append(info)
+        continue
+
+      reason = 'worse metric' if self._track_best else 'old checkpoint'
+      logging.info('Deleting %s: (Reason: %s).', info, reason)
+      with py_utils.timeit() as period: self._delete_directory(info.step)  # XD
+      logging.info('_delete_directory() took %f seconds.', period.elapsed)
+
+    kept_checkpoints += active_checkpoints
+    if self._track_best:
+      # Maintain in ascending step order.
+      self._checkpoints = sorted(kept_checkpoints, key=lambda info: info.step)
+    else:
+      self._checkpoints = kept_checkpoints
+
+  def save(self, *args, **kwargs) -> bool:
+    """Saves the provided items."""
+    if self._use_digit_step_subdirectory:
+      raise NotImplementedError(
+          'Checkpoints with digit step subdirectories do not support the '
+          'saving mode.'
+      )
+    return super().save(*args, **kwargs)
+
+  def _get_save_directory(
+      self,
+      step: int,
+      directory: epath.Path,
+      key_name: Optional[str] = None,
+      tmp_directory: Optional[epath.Path] = None,
+  ) -> epath.Path:
+    """Returns the standardized path to a save directory for a single item."""
+    if tmp_directory is None:
+      step_dir = checkpoint_paths.make_checkpoint_step_dir(
+          directory,
+          step,
+          checkpoint_type=self._checkpoint_type,
+          use_digit_step_subdirectory=self._use_digit_step_subdirectory,
+      )
+    else:
+      step_dir = tmp_directory
+    if self._version < 1 or key_name is None:
+      return step_dir
+    return step_dir / key_name
+
+  def _create_tmp_directory(self, directory: epath.Path) -> epath.Path:
+    if self._version < 1:
+      # Construct the path without returning. This is because Checkpointer must
+      # be allowed to create the path. Only needed for legacy compatibility.
+      return orbax.checkpoint.utils.get_tmp_directory(directory)
+    return super()._create_tmp_directory(directory)
+
+  def _delete_directory(self, step: int):
+    if jax.process_index() != 0:
+      return  
+    else:
+        # lsp: 开启一个进程后台删除
+      delete_process = Process(target=self._backend_del_directory, args=(step,))
+      delete_process.daemon = True
+      delete_process.start()
+
+  def _backend_del_directory(self, step):
+      options = typing.cast(CheckpointManagerOptions, self._options)
+      todelete_subdir = options.todelete_subdir
+      checkpoint_name = self._checkpoint_name(step)
+      if todelete_subdir:
+        rename_dir = self.directory / todelete_subdir
+        if not rename_dir.exists():
+          rename_dir.mkdir(parents=True)
+        src = self.directory / checkpoint_name
+        dst = rename_dir / checkpoint_name
+        # TODO(pax-team): Check if dst already exists?
+        tf.io.gfile.rename(src, dst)
+      else:
+        # super()._delete_directory(step)
+        try:
+          super()._delete_directory(step)
+        except Exception as e:  # XD
+          logging.error('Error deleting directory at step %d: %s', step, e)
+
+  def structure(self) -> Union[Any, Mapping[str, Any]]:
+    if self._checkpoint_type == CheckpointType.FLAX:
+      raise ValueError('`structure` not supported for Flax format checkpoints.')
+    return super().structure()
+
+import numpy as np  # XD
+from tensorflow.python.lib.io import file_io  # XD
+from paxml.tasks.lm.params import global_cfg  # XD
 class OrbaxCheckpointManager:
-    """Wrapper class for overridden _CheckpointManagerImpl."""
+  """Wrapper class for overridden _CheckpointManagerImpl."""
 
-    def __init__(
-        self,
-        directory: epath.Path,
-        checkpointer: orbax.checkpoint.AbstractCheckpointer,
-        train_input_checkpointer: Optional[orbax.checkpoint.Checkpointer] = None,
-        options: Optional[CheckpointManagerOptions] = None,
-        checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
-        tensorstore_use_ocdbt: Optional[bool] = None,
-    ):
-        self._tensorstore_use_ocdbt = tensorstore_use_ocdbt
-        checkpointers = {
-            STATE_ITEM_NAME: checkpointer,
-            METADATA_ITEM_NAME: orbax.checkpoint.Checkpointer(
-                orbax.checkpoint.JsonCheckpointHandler()
-            ),
-        }
+  def __init__(
+      self,
+      directory: epath.Path,
+      checkpointer: orbax.checkpoint.AbstractCheckpointer,
+      train_input_checkpointer: Optional[orbax.checkpoint.Checkpointer] = None,
+      options: Optional[CheckpointManagerOptions] = None,
+      checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
+      tensorstore_use_ocdbt: Optional[bool] = None,
+  ):
+    self._tensorstore_use_ocdbt = tensorstore_use_ocdbt
+    checkpointers = {
+        STATE_ITEM_NAME: checkpointer,
+        METADATA_ITEM_NAME: orbax.checkpoint.Checkpointer(
+            orbax.checkpoint.JsonCheckpointHandler()
+        ),
+    }
 
-        if train_input_checkpointer:
-            checkpointers[INPUT_ITEM_NAME] = train_input_checkpointer
+    if train_input_checkpointer:
+      checkpointers[INPUT_ITEM_NAME] = train_input_checkpointer
 
-        # Internal Orbax infra configuration
+# Internal Orbax infra configuration
 
-        self._manager = _CheckpointManagerImpl(
-            directory,
-            checkpointers,
-            options=options,
-            checkpoint_type=checkpoint_type,
-            tensorstore_use_ocdbt=tensorstore_use_ocdbt,
-        )
+    self._manager = _CheckpointManagerImpl(
+        directory,
+        checkpointers,
+        options=options,
+        checkpoint_type=checkpoint_type,
+        tensorstore_use_ocdbt=tensorstore_use_ocdbt,
+    )
 
-    @property
-    def version(self) -> float:
-        return self._manager.version
+  @property
+  def version(self) -> float:
+    return self._manager.version
 
-    @property
-    def directory(self) -> epath.Path:
-        return self._manager.directory
+  @property
+  def directory(self) -> epath.Path:
+    return self._manager.directory
 
-    def all_steps(self) -> Sequence[int]:
-        return self._manager.all_steps()
+  def all_steps(self) -> Sequence[int]:
+    return self._manager.all_steps()
 
-    def latest_step(self) -> Optional[int]:
-        return self._manager.latest_step()
+  def latest_step(self) -> Optional[int]:
+    return self._manager.latest_step()
 
-    def check_for_errors(self):
-        self._manager.check_for_errors()
+  def check_for_errors(self):
+    self._manager.check_for_errors()
 
-    def wait_until_finished(self):
-        self._manager.wait_until_finished()
+  def wait_until_finished(self):
+    self._manager.wait_until_finished()
 
-    def reached_preemption(self, step: int) -> bool:
-        return self._manager.reached_preemption(step)
+  def reached_preemption(self, step: int) -> bool:
+    return self._manager.reached_preemption(step)
 
-    def should_save(self, step: int) -> bool:
-        return self._manager.should_save(step)
+  def should_save(self, step: int) -> bool:
+    return self._manager.should_save(step)
 
-    def _train_checkpoint_exists(self, step: int) -> bool:
-        path = self._manager._get_save_directory(  # pylint: disable=protected-access
-            step, self.directory, INPUT_ITEM_NAME
-        )
-        return path.exists()
+  def _train_checkpoint_exists(self, step: int) -> bool:
+    path = self._manager._get_save_directory(  # pylint: disable=protected-access
+        step, self.directory, INPUT_ITEM_NAME
+    )
+    return path.exists()
 
-    def save(
-        self,
-        step: int,
-        train_state: Any,
-        train_state_unpadded_shape_dtype_struct: OptionalNestedShapeDtypeStruct = None,
-        train_input_pipeline: Optional[base_input.BaseInput] = None,
-        force: Optional[bool] = False,
-    ) -> bool:
-        """See superclass documentation."""
-        if self.version > 1.0 and train_state_unpadded_shape_dtype_struct is None:
-            raise ValueError(
-                """For checkpoint version > 1.0, we require users to provide
+  def save(
+      self,
+      step: int,
+      train_state: Any,
+      train_state_unpadded_shape_dtype_struct: OptionalNestedShapeDtypeStruct = None,
+      train_input_pipeline: Optional[base_input.BaseInput] = None,
+      force: Optional[bool] = False,
+  ) -> bool:
+    """See superclass documentation."""
+    if self.version > 1.0 and train_state_unpadded_shape_dtype_struct is None:
+      raise ValueError(
+          """For checkpoint version > 1.0, we require users to provide
           `train_state_unpadded_shape_dtype_struct` during checkpoint
           saving/restoring, to avoid potential silent bugs when loading
           checkpoints to incompatible unpadded shapes of TrainState."""
-            )
+      )
+    # XD
+    # [0, 200, 400, 800, 1600, 3200, 6400, 12800, *19200*, 25600, *38400*, 51200]
+    if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
+      sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
+      for module_name in ['pre_proj', 'post_proj']:
+        if module_name not in sa: continue
+        for param_name in sa[module_name]:
+        # for param_name in ['w', 'w1', 'w2', 'b', 'd', 'dw', 'dd', 'dwb',
+        #   'dw1', 'dwhb',
+        #   'dw2_w1', 'dw2_w2', 'dw2_d',
+        #   'dwb_w1', 'dwb_w2'
+        #   ]:
+          if module_name in sa and param_name in sa[module_name]:
+            param = sa[module_name][param_name]
+            # save to this location will be deleted mysteriously when restarting from preemption
+            # gs_path = self.directory.parent / 'params' / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
+            parent = self.directory.parent  # llm_projects_zone/log/exp
+            exp = parent.name
+            parent = epath.Path(global_cfg.strip_zone(str(parent.parent)))  # llm_projects_zone/log->llm_projects/log
+            gs_path = parent / 'params' / exp / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
+            logging.warning('Saving params to %s', str(gs_path))
+            np.save(file_io.FileIO(gs_path, 'w'), param)
+    # save_kwargs
+    save_kwargs = _update_args_with_version(None, self.version)
 
-        # save_kwargs
-        # lsp：版本信息{'state': {'version': ...}}
-        save_kwargs = _update_args_with_version(None, self.version)
+    # items
+    items = _create_items_dict_with_metadata(
+        train_state,
+        train_state_unpadded_shape_dtype_struct,
+        self.version,
+        tensorstore_use_ocdbt=self._tensorstore_use_ocdbt,
+    )
 
-        # items，如果self.version > 0则加入metadata数据进行保存, 没有的话返回{'state': train_state}
-        items = _create_items_dict_with_metadata(
-            train_state,
-            train_state_unpadded_shape_dtype_struct,
-            self.version,
-            tensorstore_use_ocdbt=self._tensorstore_use_ocdbt,
-        )
-        if train_input_pipeline:
-            items[INPUT_ITEM_NAME] = train_input_pipeline
-        # lsp
-        # py_utils.sync_global_devices('Model start finish.......')
-        # with base_layer.JaxContext.new_context():
-        # items = jax.tree_map(lambda x: self.convert_to_float16(x), items)
-        return self._manager.save(step, items, save_kwargs=save_kwargs, force=force)
-        # return self._manager.save(step, items, force=force)
+    if train_input_pipeline:
+      items[INPUT_ITEM_NAME] = train_input_pipeline
 
-    def convert_to_float16(self, x):
-        if hasattr(x, "dtype"):
-            x = x.astype(jnp.float16)
-        return x
+    return self._manager.save(step, items, save_kwargs=save_kwargs, force=force)
 
-    # lsp
-    def restore(
-        self,
-        step: int,
-        train_state: Any,  # 参数shape和dtype
-        train_state_unpadded_shape_dtype_struct: OptionalNestedShapeDtypeStruct = None,
-        train_input_pipeline: Optional[base_input.BaseInput] = None,
-        restore_kwargs: Optional[Any] = None,  # shard
-    ) -> Any:
-        """See superclass documentation."""
-        uses_transformations = (
-            restore_kwargs
-            and "transforms" in restore_kwargs
-            and restore_kwargs["transforms"] is not None
-        )
-        # Propagate version to CheckpointHandler. lsp: 参数 shard specs 更新版本信息
-        restore_kwargs = _update_args_with_version(restore_kwargs, self.version)
-        # lsp: train_state: padded_shape_dtype, 和train_state_unpadded_shape_dtype_struct一样？
-        # 根据版本信息，决定是否需要加载metadata数据信息，没有的话就返回{'state': train_state}
-        items = _create_items_dict_with_metadata(
-            train_state,
-            train_state_unpadded_shape_dtype_struct,
-            self.version,
-            tensorstore_use_ocdbt=self._tensorstore_use_ocdbt,
-        )
+  def restore(
+      self,
+      step: int,
+      train_state: Any,
+      train_state_unpadded_shape_dtype_struct: OptionalNestedShapeDtypeStruct = None,
+      train_input_pipeline: Optional[base_input.BaseInput] = None,
+      restore_kwargs: Optional[Any] = None,
+  ) -> Any:
+    """See superclass documentation."""
+    uses_transformations = (
+        restore_kwargs
+        and 'transforms' in restore_kwargs
+        and restore_kwargs['transforms'] is not None
+    )
+    # Propagate version to CheckpointHandler.
+    restore_kwargs = _update_args_with_version(restore_kwargs, self.version)
 
-        # Train input checkpoint may not exist if input checkpointing wasn't
-        # previously enabled
-        # train_input_pipeline： 输入数据的的shape和dtype
-        if train_input_pipeline and self._train_checkpoint_exists(step):
-            items[INPUT_ITEM_NAME] = train_input_pipeline
+    items = _create_items_dict_with_metadata(
+        train_state,
+        train_state_unpadded_shape_dtype_struct,
+        self.version,
+        tensorstore_use_ocdbt=self._tensorstore_use_ocdbt,
+    )
 
-        logging.info(f"items: {items}")
-        logging.info(f"restore_kwargs: {restore_kwargs}")
-        logging.info(f"step: {step}")
-        
-        restored = self._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
+    # Train input checkpoint may not exist if input checkpointing wasn't
+    # previously enabled
+    if train_input_pipeline and self._train_checkpoint_exists(step):
+      items[INPUT_ITEM_NAME] = train_input_pipeline
 
-        # Skip metadata checks if using transformations, since the TrainState may be
-        # completely altered.
-        # 检查metadata信息是否正确
-        if self.version > 1.0 and not uses_transformations and 0:
-            # If unpadded shapes were not provided, skip the shape check for now, as
-            # there are many callers that need to be changed.
-            if train_state_unpadded_shape_dtype_struct is None:
-                logging.error(
-                    """For checkpoint version > 1.0, we require users to provide
+    restored = self._manager.restore(
+        step, items=items, restore_kwargs=restore_kwargs
+    )
+
+    # Skip metadata checks if using transformations, since the TrainState may be
+    # completely altered.
+    if self.version > 1.0 and not uses_transformations:
+      # If unpadded shapes were not provided, skip the shape check for now, as
+      # there are many callers that need to be changed.
+      if train_state_unpadded_shape_dtype_struct is None:
+        logging.error(
+            """For checkpoint version > 1.0, we require users to provide
           `train_state_unpadded_shape_dtype_struct` during checkpoint
           saving/restoring, to avoid potential silent bugs when loading
           checkpoints to incompatible unpadded shapes of TrainState."""
-                )
-            else:
-                restored_metadata = checkpoint_metadata.PaxMetadata.from_dict(
-                    restored[METADATA_ITEM_NAME]
-                )
-                metadata = checkpoint_metadata.PaxMetadata.from_dict(items[METADATA_ITEM_NAME])
-                if not metadata.is_compatible(restored_metadata):
-                    raise ValueError(
-                        "PaxMetadata is not compatible with the restored PaxMetadata. "
-                        f"expected PaxMetadata = {restored_metadata}. "
-                        f"actual PaxMetadata = {metadata}."
-                    )
-        # lsp: 返回的已经是在tpu上的参数了
-        return restored[STATE_ITEM_NAME]
+        )
+      else:
+        restored_metadata = checkpoint_metadata.PaxMetadata.from_dict(
+            restored[METADATA_ITEM_NAME]
+        )
+        metadata = checkpoint_metadata.PaxMetadata.from_dict(
+            items[METADATA_ITEM_NAME]
+        )
+        if not metadata.is_compatible(restored_metadata):
+          raise ValueError(
+              'PaxMetadata is not compatible with the restored PaxMetadata. '
+              f'expected PaxMetadata = {restored_metadata}. '
+              f'actual PaxMetadata = {metadata}.'
+          )
+
+    return restored[STATE_ITEM_NAME]

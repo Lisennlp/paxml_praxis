@@ -120,7 +120,7 @@ class GPT126M(TransformerLmSpmdAdam):
   TRAINABLE_PE_MAX_SEQ_LEN = MAX_SEQ_LEN
 
   USE_BIAS = True
-  LAYERNORM_EPSILON = 1e-6
+  LAYERNORM_EPSILON = 1e-5
   ATTEN_LOGIT_CAP = -1.0
   INIT_STD = 0.023
   SOFTMAX_INIT_STD = 0.023
@@ -250,7 +250,7 @@ class GPT175B(TransformerLmSpmdPipelineAdam, PileUnsupervisedDataset):
   ADAM_EPSILON = 1e-8
   ADAM_CLIP_THRESHOLD = -1.0  # Disable Adam clip_threshold
   CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-  LAYERNORM_EPSILON = 1e-6
+  LAYERNORM_EPSILON = 1e-5
 
   # In units of steps for BS1.5k
   LEARNING_RATE = 2e-5

@@ -248,13 +248,11 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     unpadded = self.get_next()
     pad_size = self.batch_padding_size
     if pad_size == 0:
-      d = unpadded
-    else:
-      d =  jax.tree_util.tree_map(
+      return unpadded
+    return jax.tree_util.tree_map(
         lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
         unpadded,
-      )
-    return d
+    )
 
   def peek_padded(self) -> Optional[NestedJTensor]:
     """Peeks into the current input data pipeline."""
@@ -338,13 +336,10 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     Returns:
       Resharded inputs.
     """
-    # __import__('ipdb').set_trace()
-    # lsp: global_shapes： jax.ShapeDtypeStruct(x_shape, x.dtype)对象，x_shape变为了global pod的
     global_shapes = jax.tree_util.tree_map(
         py_utils.get_global_input_shape_dtype, arrays
     )
     device_order = self.custom_device_order
-    # lsp: None
     if device_order is None:
       return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)
     assert len(device_order) == jax.device_count()
@@ -358,7 +353,6 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
           len(global_shape.shape) - 1)
       # Custom device order.
       op_sharding.tile_assignment_devices = device_order
-      logging.info(f'xxxx: {x.shape} local_devices: {global_mesh.local_devices}')
       dbs = py_utils.put_to_devices(x, global_mesh.local_devices)
       sharding = jax.sharding.GSPMDSharding(
           list(global_mesh.devices.flat), op_sharding)

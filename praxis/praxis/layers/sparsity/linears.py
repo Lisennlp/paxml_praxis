@@ -70,10 +70,10 @@ class Linear(sparse_base_layer.SparsityBaseLayer, linears.Linear):  # pytype: di
         self.theta.w, inputs=inputs, name='w'
     )  # sparsify weight.
     out = self.einsum('...y,yz->...z', inputs, w)
+
     # Adjust sharding annotation during decoding.
     # TODO(pax): This logic should likely be lifted somewhere else.
     ap_out = ap.out
-    # 如果输出只有2维，只取ap_out的0,2位置
     if ap_out is not None and len(ap_out) == 3 and out.ndim == 2:
       ap_out = [ap_out[0], ap_out[2]]
     out = base_layer.maybe_shard(out, ap_out, self.mesh_axis_names)

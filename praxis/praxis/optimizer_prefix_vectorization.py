@@ -385,7 +385,6 @@ def get_transformations_with_vectorized_repeat_prefix(
     )
 
   if isinstance(tx, ShardedGradientTransformation):
-    # lsp
     return ShardedGradientTransformation(
         init=_init, update=_update, init_partition_spec=_init_partition_spec)
   else:

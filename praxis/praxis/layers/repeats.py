@@ -124,7 +124,7 @@ class Repeat(base_layer.BaseLayer):
     if nd_shape is not None:
       assert len(nd_shape) >= 1
       assert functools.reduce(lambda x, y: x * y, nd_shape) == self.x_times
-    #lsp: 创建sub属性，block -> StackedTransformer
+
     self.create_child(self.sublayer_name, self.sub_tpl)
 
   def _wrap_for_nd(
@@ -185,7 +185,6 @@ class Repeat(base_layer.BaseLayer):
       )
     return mapped_fn
 
-   #lsp forward-3
   def __call__(
       self,
       inputs: NestedJTensor,
@@ -226,7 +225,6 @@ class Repeat(base_layer.BaseLayer):
         **kwargs,
     )
 
-  # lsp：最最最后的call前传函数
   def call_with_custom_method(
       self,
       inputs: NestedJTensor,
@@ -238,7 +236,6 @@ class Repeat(base_layer.BaseLayer):
   ) -> Any:
     """Similar to __call__, but allows a custom way to create a layer method."""
 
-    # 
     def body_fn(sub, layer_in):
       fn = method_factory(sub)
       if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
@@ -337,7 +334,6 @@ class Repeat(base_layer.BaseLayer):
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Add scan index.
       scan_inputs = (scan_inputs, jnp.zeros((), jnp.int32))
-    # self.sublayer: sub 
     layer_out, intermediates = mapped_scan_fn(self.sublayer, scan_inputs)
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Remove scan index.

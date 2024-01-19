@@ -114,13 +114,12 @@ class _ExperimentRegistryHelper:
       # developing in notebooks.
       allow_overwrite = True
 
-    # canonical key is the full path.   ->  canonical_key: tasks.lm.params.c4  + C4SpmdGpt37BRoPE
+    # canonical key is the full path.
     canonical_key = (
         experiment_class.__module__ + '.' + experiment_class.__name__)
     preexisting = canonical_key in cls._registry
     if preexisting and not (cls._allow_overwrite or allow_overwrite):
       raise ValueError(f'Experiment already registered: {canonical_key}')
-    # key: experiment_name(tasks.lm.params.c4.C4SpmdGpt37BRoPE) , value: experiment_class(类名)
     cls._registry[canonical_key] = experiment_class
     cls._registry_tags[canonical_key] = list(tags or [])
     # Use print - absl.logging doesn't work since this happens before main.
@@ -134,14 +133,12 @@ class _ExperimentRegistryHelper:
     # Add secondary keys, which can be any partial paths.
     secondary_keys = set()
     parts = canonical_key.split('.')
-    # 比如1.2.3.a -> 1.2.3.a, 2.3.a, 3.a, a ， 都作为key映射value为注册的类名（C4SpmdGpt37BRoPE）
     for i in range(len(parts)):
       # Any partial path is a valid secondary key.
       secondary_keys.add('.'.join(parts[i:]))
-    # 将包含params的key，变为params之后的字符串作为key
+
     for k in cls.custom_secondary_keys(canonical_key):
       secondary_keys.add(k)
-    # params之后的字符串作为key， 原始key作为value，存入_secondary_keys字典
     for k in secondary_keys:
       cls._secondary_keys[k].append(canonical_key)
     return experiment_class

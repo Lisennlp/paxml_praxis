@@ -67,5 +67,3 @@ elif [ "$direction" -eq 1 ]; then
 else
   echo "无效的传输方向。传输方向应为0或1。"
 fi
-
-

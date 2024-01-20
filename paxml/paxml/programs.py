@@ -520,12 +520,12 @@ class BaseTrainProgram(Program):
       else:
         logging.debug('  Retrieved eval model_inputs.')
         logging.debug('  Performing eval_step() runs on training split.')
-# lsp
-#        eval_inputs = self._partitioner.preprocess_inputs(
-#            self._train_input,
-#            eval_inputs,
-#            self.train_input_partition_spec(eval_inputs),
-#        )
+      # lsp
+        eval_inputs = self._partitioner.preprocess_inputs(
+           self._train_input,
+           eval_inputs,
+           self.train_input_partition_spec(eval_inputs),
+       )
 
         eval_state = get_eval_train_state(
             self._task, new_state, self._task.train.eval_use_ema_states

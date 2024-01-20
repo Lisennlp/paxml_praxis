@@ -185,7 +185,10 @@ def compute_xent_loss_helper(
     # entropy, which is the (weighted) sum of log probs on the tokens.
     # __import__('ipdb').set_trace()
     # lsp: clean scores 负号 and add acc
-    per_example_output = NestedMap(labels=labels, batch_weights=batch_weights, scores=predictions.per_sequence_xent)
+    per_example_output = NestedMap(labels=labels, 
+                                    batch_weights=batch_weights, 
+                                    scores=predictions.per_sequence_xent,
+                                    batch_right=batch_right)
     # apply_eval_sample_weights:false, hasattr(input_batch, "eval_sample_weights"):true
     if apply_eval_sample_weights and hasattr(input_batch, "eval_sample_weights"):
         per_example_output.eval_sample_weights = input_batch.eval_sample_weights

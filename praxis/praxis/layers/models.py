@@ -136,11 +136,13 @@ def compute_xent_loss_helper(
   batch_weights = jnp.maximum(batch_weights, 1)
   logging.info(f'acc_batch_mean: {acc_batch_mean}')
   if acc_batch_mean:
-      batch_right = jnp.sum((labels == predicted_labels) * weights, axis=-1)
-      batch_mean_acc = jnp.mean(batch_right / batch_weights)
-      fraction_of_correct_next_step_preds = (batch_mean_acc, metric_weight)
+    batch_right = jnp.sum((labels == predicted_labels) * weights, axis=-1)
+    batch_mean_acc = jnp.mean(batch_right / batch_weights)
+    batch_mean_acc = (batch_mean_acc, metric_weight)
   else:
-      fraction_of_correct_next_step_preds = (mean_acc, metric_weight)
+    batch_mean_acc = (0, metric_weight)
+    
+  fraction_of_correct_next_step_preds = (mean_acc, metric_weight)
 
   if hasattr(predictions, 'avg_xent_weight'):
     avg_xent_weight = predictions.avg_xent_weight
@@ -157,6 +159,8 @@ def compute_xent_loss_helper(
       log_pplx=(predictions.avg_xent, avg_xent_weight),
       fraction_of_correct_next_step_preds=fraction_of_correct_next_step_preds,
       num_predictions=(num_preds, jnp.array(1.0, num_preds.dtype)),
+      batch_avg_xent=(predictions.batch_avg_xent, avg_xent_weight),
+      batch_avg_acc=(batch_mean_acc, metric_weight),
   )
   if report_strict_acc:
     num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
@@ -178,7 +182,10 @@ def compute_xent_loss_helper(
   # The score for the sequence is the negative of the sum of per token cross
   # entropy, which is the (weighted) sum of log probs on the tokens.
   per_example_output = NestedMap(
-      labels=labels, scores=-predictions.per_example_xent, batch_weights=batch_weights
+      labels=labels, 
+      scores=-predictions.per_example_xent, 
+      batch_weights=batch_weights,
+      batch_right=batch_right
   )
   if apply_eval_sample_weights and hasattr(input_batch, 'eval_sample_weights'):
     per_example_output.eval_sample_weights = input_batch.eval_sample_weights

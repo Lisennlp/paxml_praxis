@@ -352,7 +352,7 @@ class FullSoftmax(base_layer.BaseLayer):
         total_weight = _total_weight if total_weight is None else total_weight + _total_weight
         z_loss = _z_loss if z_loss is None else z_loss + _z_loss
       # lsp
-      batch_avg_xent = batch_avg_xent if batch_avg_xent is None else batch_avg_xent / (i + 1)
+      batch_avg_xent = batch_avg_xent if batch_avg_xent is None else batch_avg_xent
       per_example_xent = jnp.concatenate(per_example_xent, axis=-1)
       per_example_argmax = jnp.concatenate(per_example_argmax, axis=-1)
     else:
@@ -366,7 +366,8 @@ class FullSoftmax(base_layer.BaseLayer):
         per_example_xent=per_example_xent.astype(jnp.float32),
         total_xent=total_xent,
         total_weight=total_weight,
-        avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32) if not self.loss_batch_mean else batch_avg_xent,
+        avg_xent=(total_xent / (total_weight + 1e-6)).astype(jnp.float32),
+        batch_avg_xent=batch_avg_xent,
     )
     if self.z_loss_weight > 0.0:
       output_nmap['z_loss'] = z_loss

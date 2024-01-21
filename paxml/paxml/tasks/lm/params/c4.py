@@ -1477,9 +1477,9 @@ class Pythia12B(Pythia):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 32, 2]
-    PERCORE_BATCH_SIZE = 16
-    LM_HEAD_CHUNK_SIZE = None
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+    LM_HEAD_CHUNK_SIZE = 512
     FPROP_DTYPE = jnp.float32
 
     ONLY_EVAL = True
@@ -1509,8 +1509,8 @@ class PileEval(BaseEval):
 @experiment_registry.register
 class FlanMiniEval(BaseEval):
     ZERO_LOSS = False
-    LOSS_BATCH_MEAN = False
-    ACC_BATCH_MEAN = False
+    LOSS_BATCH_MEAN = True
+    ACC_BATCH_MEAN = True
 
     DATA_PATH = {
                 'train': 'gs://common_datasets/pythia_model_test/flan_test3', 

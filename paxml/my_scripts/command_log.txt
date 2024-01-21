@@ -28,9 +28,11 @@ sudo iptables -A OUTPUT -p tcp --sport 12345 -j ACCEPT
 # v4 PilePythia7B256x1DynWFFN16HD128Win256Alignedv4
 TPU_NAME=llm-jax-v4-32-10
 ZONE=us-central2-b
-STEP=33000
-gcloud compute tpus tpu-vm ssh $TPU_NAME  --project=llm-tpu --worker all  --zone $ZONE --command="cd /home/lishengping/;sudo rm -r projects/*; cd projects; git clone -b xd/dev https://github.com/xiaoda99/paxml.git;git clone -b xd/dev https://github.com/xiaoda99/praxis.git"
-gcloud compute tpus tpu-vm scp c4.py $TPU_NAME:/home/lishengping/projects/paxml/paxml/tasks/lm/params/c4.py  --zone=$ZONE  --worker=all  --project=llm-tpu
+STEP=143000
+SIZE=2.8b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b pythia https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis;killall main.py"
+EXP=Pythia2p8BFlanMiniEval
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/pythia/pythia-$SIZE-paxml/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=True --eval_model_step $STEP| tee $EXP.Step$STEP.log"
 
 
 

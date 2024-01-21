@@ -164,6 +164,7 @@ def compute_xent_loss_helper(
         batch_avg_xent=(predictions.batch_avg_xent, avg_xent_weight),
         batch_avg_acc=(batch_mean_acc, metric_weight),
     )
+    logging.info(f'metrics: {metrics}')
     if report_strict_acc:
         num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
         ## mask out padding examples

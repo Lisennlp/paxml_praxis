@@ -825,6 +825,7 @@ class BaseEvalProgram(Program):
             # logging.info(f'key: {key} values: {values}')
             # `metric_utils.as_float` computes the average from a list of weighted
             # scalars.
+            # lsp：判断values中每个元祖中的数据是否均为float类型
             weighted_average = metric_utils.as_float(values)
             sum_metric_weights = np.sum(np.stack([v[1] for v in values])).item()
             logging.info(

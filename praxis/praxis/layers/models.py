@@ -84,114 +84,119 @@ def compute_xent_loss_helper(
     return_predictions: bool,
     apply_eval_sample_weights: bool = False,
     report_strict_acc: bool = False,
-    acc_batch_mean: bool = False,
+    acc_batch_mean: bool = False
 ) -> Tuple[WeightedScalars, Dict[str, Any]]:
-  """Helper for computing the xent loss for Language model and Sequence model.
+    """Helper for computing the xent loss for Language model and Sequence model.
 
-  Args:
-    predictions: A `.NestedMap` containing the keys `per_example_argmax`,
-      `total_loss`, `avg_xent`, `aux_loss`, `total_weight` which corresponds to
-      the output of the Softmax layer.
-    input_batch: A `.NestedMap` object containing input tensors which contains
-      the keys `labels` and `weights` which corresponds to the labels and the
-      `weights` for each token in the sequence.
-    return_predictions: Whether to return predictions, which can be more
-      expensive.
-    apply_eval_sample_weights: Boolean indicating whether to apply the per
-      example weights from the input `eval_sample_weights` or not. When enabled,
-      these per-example weights will be merged with the per token
-      `input_batch.weights`.
-    report_strict_acc: Whether to report strict accuracy. In general, this
-      requires the entire portion of the sequence with nonzero weight be
-      predicted correctly. Frequently used for eval on the Lambada dataset, in
-      which case this metric is equivalent to full-word matching.
+    Args:
+      predictions: A `.NestedMap` containing the keys `per_example_argmax`,
+        `total_loss`, `avg_xent`, `aux_loss`, `total_weight` which corresponds to
+        the output of the Softmax layer.
+      input_batch: A `.NestedMap` object containing input tensors which contains
+        the keys `labels` and `weights` which corresponds to the labels and the
+        `weights` for each token in the sequence.
+      return_predictions: Whether to return predictions, which can be more
+        expensive.
+      apply_eval_sample_weights: Boolean indicating whether to apply the per
+        example weights from the input `eval_sample_weights` or not. When enabled,
+        these per-example weights will be merged with the per token
+        `input_batch.weights`.
+      report_strict_acc: Whether to report strict accuracy. In general, this
+        requires the entire portion of the sequence with nonzero weight be
+        predicted correctly. Frequently used for eval on the Lambada dataset, in
+        which case this metric is equivalent to full-word matching.
 
-  Returns:
-    - A dict or NestedMap containing str keys and (value, weight) pairs as
-      values, where one of the entries is expected to correspond to the loss.
-    - A dict containing arbitrary tensors describing something about each
-      training example, where the first dimension of each tensor is the batch
-      index. The base class just returns an empty dict.
-  """
+    Returns:
+      - A dict or NestedMap containing str keys and (value, weight) pairs as
+        values, where one of the entries is expected to correspond to the loss.
+      - A dict containing arbitrary tensors describing something about each
+        training example, where the first dimension of each tensor is the batch
+        index. The base class just returns an empty dict.
+    """
 
-  labels = input_batch.labels
-  weights = input_batch.weights
-  if apply_eval_sample_weights:
-    if not hasattr(input_batch, 'eval_sample_weights'):
-      logging.warning(
-          '`apply_eval_sample_weights` enabled, but the input batch does not '
-          'provide the necessary `eval_sample_weights` field.'
-      )
-    weights = _merge_per_token_and_per_example_weights(
-        weights, input_batch.eval_sample_weights
-    )
-  predicted_labels = predictions.per_example_argmax.astype(labels.dtype)
-  num_preds = predictions.total_weight
-  mean_acc = jnp.sum((labels == predicted_labels) * weights) / jnp.maximum(
-      num_preds, 1
-  )
-  metric_weight = jnp.array(num_preds, predictions.avg_xent.dtype)
-  # lsp: 在length维加和对的token数
-  batch_weights = jnp.sum(weights, axis=-1)
-  batch_weights = jnp.maximum(batch_weights, 1)
-  logging.info(f'acc_batch_mean: {acc_batch_mean}')
-  if acc_batch_mean:
+    labels = input_batch.labels
+    # lsp
+    if labels is None:
+        return predictions
+
+    weights = input_batch.weights
+    if apply_eval_sample_weights:
+        if not hasattr(input_batch, "eval_sample_weights"):
+            logging.warning(
+                "`apply_eval_sample_weights` enabled, but the input batch does not "
+                "provide the necessary `eval_sample_weights` field."
+            )
+        weights = _merge_per_token_and_per_example_weights(weights, input_batch.eval_sample_weights)
+    # predicted_labels: bsz * len, weights: bsz * len
+    predicted_labels = predictions.per_example_argmax.astype(labels.dtype)
+    num_preds = predictions.total_weight
+    logging.info(f'predicted_labels: {predicted_labels.shape}')
+    logging.info(f'weights: {weights.shape}')
+    logging.info(f'num_preds: {num_preds.shape}')
+    # mean_acc: constant
+    mean_acc = jnp.sum((labels == predicted_labels) * weights) / jnp.maximum(num_preds, 1)
+    metric_weight = jnp.array(num_preds, predictions.avg_xent.dtype)
+    logging.info(f'acc_batch_mean: {acc_batch_mean}')
+    # lsp: 在length维加和对的token数
+    batch_weights = jnp.sum(weights, axis=-1)
+    batch_weights = jnp.maximum(batch_weights, 1)
+    # if acc_batch_mean:
     batch_right = jnp.sum((labels == predicted_labels) * weights, axis=-1)
     batch_mean_acc = jnp.mean(batch_right / batch_weights)
-    batch_mean_acc = (batch_mean_acc, metric_weight)
-  else:
-    batch_mean_acc = (0, metric_weight)
-    
-  fraction_of_correct_next_step_preds = (mean_acc, metric_weight)
+    # else:
+    fraction_of_correct_next_step_preds = (mean_acc, metric_weight)
 
-  if hasattr(predictions, 'avg_xent_weight'):
-    avg_xent_weight = predictions.avg_xent_weight
-  else:
-    avg_xent_weight = metric_weight
+    if hasattr(predictions, "avg_xent_weight"):
+        avg_xent_weight = predictions.avg_xent_weight
+    else:
+        avg_xent_weight = metric_weight
 
-  metrics = NestedMap(
-      total_loss=(predictions.total_loss, metric_weight),
-      avg_xent=(predictions.avg_xent, avg_xent_weight),
-      aux_loss=(
-          predictions.aux_loss,
-          jnp.array(1.0, predictions.aux_loss.dtype),
-      ),
-      log_pplx=(predictions.avg_xent, avg_xent_weight),
-      fraction_of_correct_next_step_preds=fraction_of_correct_next_step_preds,
-      num_predictions=(num_preds, jnp.array(1.0, num_preds.dtype)),
-      batch_avg_xent=(predictions.batch_avg_xent, avg_xent_weight),
-      batch_avg_acc=(batch_mean_acc, metric_weight),
-  )
-  if report_strict_acc:
-    num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
-    ## mask out padding examples
-    num_acc = jax.lax.select(
-        input_batch.eval_sample_weights.astype(jnp.int32),
-        num_acc,
-        jnp.inf * jnp.ones_like(num_acc),
+    metrics = NestedMap(
+        total_loss=(predictions.total_loss, metric_weight),
+        avg_xent=(predictions.avg_xent, avg_xent_weight),
+        aux_loss=(
+            predictions.aux_loss,
+            jnp.array(1.0, predictions.aux_loss.dtype),
+        ),
+        log_pplx=(predictions.avg_xent, avg_xent_weight),
+        fraction_of_correct_next_step_preds=fraction_of_correct_next_step_preds,
+        num_predictions=(num_preds, jnp.array(1.0, num_preds.dtype)),
+        batch_avg_xent=(predictions.batch_avg_xent, avg_xent_weight),
+        batch_avg_acc=(batch_mean_acc, metric_weight),
     )
-    num_nonpadding = jnp.sum(input_batch.eval_sample_weights)
+    logging.info(f'metrics: {metrics}')
+    if report_strict_acc:
+        num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
+        ## mask out padding examples
+        num_acc = jax.lax.select(
+            input_batch.eval_sample_weights.astype(jnp.int32),
+            num_acc,
+            jnp.inf * jnp.ones_like(num_acc),
+        )
+        num_nonpadding = jnp.sum(input_batch.eval_sample_weights)
 
-    mean_acc_strict = jnp.sum(
-        jnp.sum((labels == predicted_labels) * weights, axis=-1) == num_acc
-    ) / jnp.maximum(num_nonpadding, 1)
-    strict_weight = jnp.array(num_nonpadding, predictions.avg_xent.dtype)
+        mean_acc_strict = jnp.sum(
+            jnp.sum((labels == predicted_labels) * weights, axis=-1) == num_acc
+        ) / jnp.maximum(num_nonpadding, 1)
+        strict_weight = jnp.array(num_nonpadding, predictions.avg_xent.dtype)
 
-    metrics.acc_strict = (mean_acc_strict, strict_weight)
+        metrics.acc_strict = (mean_acc_strict, strict_weight)
 
-  # The score for the sequence is the negative of the sum of per token cross
-  # entropy, which is the (weighted) sum of log probs on the tokens.
-  per_example_output = NestedMap(
-      labels=labels, 
-      scores=-predictions.per_example_xent, 
-      batch_weights=batch_weights,
-      batch_right=batch_right
-  )
-  if apply_eval_sample_weights and hasattr(input_batch, 'eval_sample_weights'):
-    per_example_output.eval_sample_weights = input_batch.eval_sample_weights
-  if return_predictions:
-    per_example_output = predictions
-  return metrics, per_example_output
+    # The score for the sequence is the negative of the sum of per token cross
+    # entropy, which is the (weighted) sum of log probs on the tokens.
+    # __import__('ipdb').set_trace()
+    # lsp: clean scores 负号 and add acc
+    per_example_output = NestedMap(labels=labels, 
+                                    batch_weights=batch_weights, 
+                                    scores=predictions.per_sequence_xent,
+                                    batch_right=batch_right)
+    # apply_eval_sample_weights:false, hasattr(input_batch, "eval_sample_weights"):true
+    if apply_eval_sample_weights and hasattr(input_batch, "eval_sample_weights"):
+        per_example_output.eval_sample_weights = input_batch.eval_sample_weights
+    # false
+    if return_predictions:
+        per_example_output = predictions
+    return metrics, per_example_output
 
 
 class LanguageModel(base_model.BaseModel):

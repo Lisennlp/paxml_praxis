@@ -1477,8 +1477,8 @@ class Pythia12B(Pythia):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 16, 1]
-    PERCORE_BATCH_SIZE = 64
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 32
     LM_HEAD_CHUNK_SIZE = 512
     FPROP_DTYPE = jnp.float32
 

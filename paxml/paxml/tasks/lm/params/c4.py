@@ -4388,9 +4388,9 @@ class Pythia7BLSP(DataParams, C4SpmdGpt37BRoPE):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 32
-    LM_HEAD_CHUNK_SIZE = None
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+    LM_HEAD_CHUNK_SIZE = 512
     FPROP_DTYPE = jnp.bfloat16
     SHUFFLE = {"train": False, "test": False}
     ONLY_EVAL = True
@@ -4421,12 +4421,12 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test2/', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test2/', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test3/', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test3/', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 320
 
 @experiment_registry.register
 class PilePythiaXLDynWFFN8HD64Win256AlignedPileEval(PileEval, PilePythiaXLDynWFFN8HD64Win256Aligned):
@@ -4466,7 +4466,7 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia7
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
-  TASK_NAME = 'SelfModelFlanMiniSmallPile'
+  TASK_NAME = 'SelfModelFlanMini0121'
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256PileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256):
@@ -4534,7 +4534,7 @@ class PilePythia3BDynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia3BDynW
 
 @experiment_registry.register
 class PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia3BDynWFFN16HD128Win256Aligned):
-  TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEvalSmallPile'
+  TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval0121'
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None

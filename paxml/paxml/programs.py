@@ -893,11 +893,6 @@ class BaseEvalProgram(Program):
       )
       if len(self._partitioner._mesh_names) == 3:
             eval_inputs = self._partitioner.preprocess_inputs(
-                                                            self._train_input,
-                                                            eval_inputs,
-                                                            self.train_input_partition_spec(eval_inputs),
-                                                        )
-            eval_inputs = self._partitioner.preprocess_inputs(
                                                 self.eval_input, eval_inputs, supported_input_partition_spec
                                                         )
       elif len(self._partitioner._mesh_names) == 2:

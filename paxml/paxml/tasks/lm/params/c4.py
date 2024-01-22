@@ -1370,9 +1370,9 @@ class Llama7B(C4SpmdGpt37BRoPE):
 class Llama7Bv32(Llama7B):
     NUM_LAYERS = 48
     ICI_MESH_SHAPE = [1, 16, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 8192 * 3
-    QUERY_CHUNK_SIZE = 2048
-    LM_HEAD_CHUNK_SIZE = None
+    MAX_SEQ_LEN = 8192 * 4
+    QUERY_CHUNK_SIZE = 512
+    LM_HEAD_CHUNK_SIZE = 512
     DATA_FULL_SHARD = False
     PERCORE_BATCH_SIZE = 0.5
 

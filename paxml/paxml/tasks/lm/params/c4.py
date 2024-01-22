@@ -1375,6 +1375,7 @@ class Llama7Bv32(Llama7B):
     LM_HEAD_CHUNK_SIZE = 512
     DATA_FULL_SHARD = False
     PERCORE_BATCH_SIZE = 0.5
+    FFN_CHUNK_SIZE = 5504 // 8
 
 @experiment_registry.register
 class Llama7Bv64(Llama7B):

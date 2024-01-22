@@ -2916,13 +2916,12 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG4):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192 * 2
+  MAX_SEQ_LEN = 8192 * 4
   WINDOW_SIZE = [256, 4096]
-  # 超显存10G
-  PERCORE_BATCH_SIZE = 0.5
-  QUERY_CHUNK_SIZE = 128
+  PERCORE_BATCH_SIZE = 1
+  QUERY_CHUNK_SIZE = 2048
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 32, 2]
+  ICI_MESH_SHAPE = [1, 32, 1]
   DATA_FULL_SHARD = False
   # FFN_CHUKN_SIZE = 5504 // 2
 
@@ -2930,10 +2929,14 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
-  # 跑不了
-  MAX_SEQ_LEN = 8192 * 2
+  MAX_SEQ_LEN = 8192 * 4
   WINDOW_SIZE = [256, 4096]
   PERCORE_BATCH_SIZE = 1 #/ 4
+  QUERY_CHUNK_SIZE = 2048
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 32, 1]
+  DATA_FULL_SHARD = False
+  # FFN_CHUKN_SIZE = 5504 // 2
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

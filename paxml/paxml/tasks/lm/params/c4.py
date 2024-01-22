@@ -2890,8 +2890,20 @@ class DCLlama33B(_DC, _Llama33B):  # TODO: add init
   DYNAMIC_SQUEEZE_RATIO = 52
   DYNAMIC_W_HIDDEN_DIM = 208
 
+class DCSlimLlama7BNG4(DCSlimLlama7B):
+  NUM_GROUPS = 4
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+  # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
+
+class DCSlimLlama7BNG2(DCSlimLlama7B):
+  NUM_GROUPS = 2
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16 * (16 // 8) * 2
+  # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
+
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG2):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2906,20 +2918,26 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192
+  MAX_SEQ_LEN = 8192 * 4
   WINDOW_SIZE = [256, 4096]
-  # 超显存10G
-  PERCORE_BATCH_SIZE = 2
-  QUERY_CHUNK_SIZE = 128
+  PERCORE_BATCH_SIZE = 1
+  QUERY_CHUNK_SIZE = 2048
   LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 32, 1]
+  DATA_FULL_SHARD = False
+  # FFN_CHUKN_SIZE = 5504 // 2
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
-  # 跑不了
-  MAX_SEQ_LEN = 8192 * 2
+  MAX_SEQ_LEN = 8192 // 8
   WINDOW_SIZE = [256, 4096]
-  PERCORE_BATCH_SIZE = 1 #/ 4
+  PERCORE_BATCH_SIZE = 0.25 * 2 #/ 4
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 4, 2]
+  DATA_FULL_SHARD = False
+  FFN_CHUKN_SIZE = 5504 // 8
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

@@ -2930,6 +2930,7 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
+  NUM_LAYERS=2
   MAX_SEQ_LEN = 8192 // 8
   WINDOW_SIZE = [256, 4096]
   PERCORE_BATCH_SIZE = 0.25 * 2 #/ 4

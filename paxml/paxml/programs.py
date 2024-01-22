@@ -521,11 +521,22 @@ class BaseTrainProgram(Program):
         logging.debug('  Retrieved eval model_inputs.')
         logging.debug('  Performing eval_step() runs on training split.')
       # lsp
-        eval_inputs = self._partitioner.preprocess_inputs(
-           self._train_input,
-           eval_inputs,
-           self.train_input_partition_spec(eval_inputs),
-       )
+        if len(self._partitioner._mesh_names) == 3:
+            eval_inputs = self._partitioner.preprocess_inputs(
+                                                            self._train_input,
+                                                            eval_inputs,
+                                                            self.train_input_partition_spec(eval_inputs),
+                                                        )
+        elif len(self._partitioner._mesh_names) == 2:
+            # lsp: 兼容full shard and (replica, data) shard, 但是速度相比于 full shard 稍微慢0.2%
+            eval_inputs = host_local_array_to_global_array(
+                                                        eval_inputs, 
+                                                        self._partitioner.global_mesh, 
+                                                        P(tuple(self._partitioner._mesh_names), None)
+                                                        )
+        else:
+            raise ValueError('‘_mesh_names’ attribute array length is not equal 2 or 3......')
+      
 
         eval_state = get_eval_train_state(
             self._task, new_state, self._task.train.eval_use_ema_states
@@ -880,10 +891,25 @@ class BaseEvalProgram(Program):
               partitioning_spec=self.eval_input_partition_spec(eval_inputs),
           )
       )
-# lsp
-#      eval_inputs = self._partitioner.preprocess_inputs(
-#          self.eval_input, eval_inputs, supported_input_partition_spec
-#      )
+      if len(self._partitioner._mesh_names) == 3:
+            eval_inputs = self._partitioner.preprocess_inputs(
+                                                            self._train_input,
+                                                            eval_inputs,
+                                                            self.train_input_partition_spec(eval_inputs),
+                                                        )
+            eval_inputs = self._partitioner.preprocess_inputs(
+                                                self.eval_input, eval_inputs, supported_input_partition_spec
+                                                        )
+      elif len(self._partitioner._mesh_names) == 2:
+          # lsp: 兼容full shard and (replica, data) shard, 但是速度相比于 full shard 稍微慢0.2%
+          eval_inputs = host_local_array_to_global_array(
+                                                      eval_inputs, 
+                                                      self._partitioner.global_mesh, 
+                                                      P(tuple(self._partitioner._mesh_names), None)
+                                                      )
+      else:
+          raise ValueError('‘_mesh_names’ attribute array length is not equal 2 or 3......')
+
       eval_outputs = self.eval_step(
           state,
           self._eval_prng_seed,

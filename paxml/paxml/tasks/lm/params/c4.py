@@ -4420,7 +4420,7 @@ class PileEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    EVAL_LOOP_NUM_BATCHES = 162
+    EVAL_LOOP_NUM_BATCHES = 5
     RESET_FOR_EVAL = True
     
 @experiment_registry.register
@@ -4519,7 +4519,8 @@ class PileGPTMediumPileEval(PileEval, PileGPTMedium):
 
 @experiment_registry.register
 class PileLlamaMediumPileEval(PileEval, PileLlamaMedium):
-  TASK_NAME = 'PileLlamaMediumPileEvalWhole'
+  ZERO_LOSS = False
+  TASK_NAME = 'PileLlamaMediumPileEvalWholeZeroFalse'
 
 @experiment_registry.register
 class PileDCLlamaMediumPileEval(PileEval, PileDCLlamaMedium):

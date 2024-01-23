@@ -1513,8 +1513,8 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test3', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test3', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_mini_320k',
+                'test':  'gs://common_datasets/pythia_model_test/flan_mini_320k', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     # DATA_PATH = {
@@ -1578,13 +1578,13 @@ class Pythia1p4BFlanMiniEval(FlanMiniEval, Pythia1p4B):
 @experiment_registry.register
 class Pythia2p8BFlanMiniEval(FlanMiniEval, Pythia2p8B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia2p8BFlanMiniWholeTM'
+    TASK_NAME = 'Pythia2p8BFlanMiniWholeNew'
 
 
 @experiment_registry.register
 class Pythia7BFlanMiniEval(FlanMiniEval, Pythia7B):
     TRAINING_NUM_BATCHES_TO_SKIP = 3000
-    TASK_NAME = 'Pythia7BFlanMiniWholeTM'
+    TASK_NAME = 'Pythia7BFlanMiniWholeNew'
 
 
 @experiment_registry.register

@@ -676,8 +676,9 @@ def configure_gpt3_task(
         fdl.get_callable(stacked_p), transformers.StackedTransformerRepeated
     ):
       stacked_p = stacked_p.block
+    if hasattr(stacked_p, 'pre_compute_atten_mask'):
+      stacked_p.pre_compute_atten_mask = getattr(cls, 'PRE_COMPUTE_ATTEN_MASK', True)
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
-
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
@@ -2930,15 +2931,16 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
-  NUM_LAYERS=48
-  MAX_SEQ_LEN = 8192 * 4
+  NUM_LAYERS=20
+  MAX_SEQ_LEN = 8192 // 4
   WINDOW_SIZE = [256, 4096]
-  PERCORE_BATCH_SIZE = 0.25 #/ 4
+  PERCORE_BATCH_SIZE = 0.5 #/ 4
   QUERY_CHUNK_SIZE = 512
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 64, 4]
+  ICI_MESH_SHAPE = [1, 4, 2]
   DATA_FULL_SHARD = False
   FFN_CHUKN_SIZE = 5504 // 8
+  PRE_COMPUTE_ATTEN_MASK = False
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331
@@ -4653,14 +4655,6 @@ class PilePythia7B128x1PileEval(PileEval, PilePythia7B128x1):
   TASK_NAME = 'PilePythia7B128x1PileEval'
 
 @experiment_registry.register
-class PileGPTXLPileEval(PileEval, PileGPTXL):
-  TASK_NAME = 'PileGPTXLPileEval'
-
-@experiment_registry.register
-class PileLlamaXLPileEval(PileEval, PileLlamaXL):
-  TASK_NAME = 'PileLlamaXLPileEval'
-
-@experiment_registry.register
 class PileDCLlamaXLFixDWInitPileEval(PileEval, PileDCLlamaXLFixDWInit):
   TASK_NAME = 'PileDCLlamaXLFixDWInitPileEvalWhole'
 
@@ -4669,20 +4663,9 @@ class PileDCLlamaXLFixDWShapePileEval(PileEval, PileDCLlamaXLFixDWShape):
   TASK_NAME = 'PileDCLlamaXLFixDWShapePileEvalWhole'
 
 @experiment_registry.register
-class PileGPTLargePileEval(PileEval, PileGPTLarge):
-  TASK_NAME = 'PileGPTLargePileEvalWhole'
-
-@experiment_registry.register
-class PileLlamaLargePileEval(PileEval, PileLlamaLarge):
-  TASK_NAME = 'PileLlamaLargePileEvalWhole'
-
-@experiment_registry.register
 class PileDCLlamaLargePileEval(PileEval, PileDCLlamaLarge):
   TASK_NAME = 'PileDCLlamaLargePileEvalWhole'
 
-@experiment_registry.register
-class PileGPTMediumPileEval(PileEval, PileGPTMedium):
-  TASK_NAME = 'PileGPTMediumPileEvalWhole'
 
 @experiment_registry.register
 class PileDCLlamaMediumPileEval(PileEval, PileDCLlamaMedium):
@@ -4710,9 +4693,71 @@ class PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePyth
 
 # ============= scaling law ============================
 @experiment_registry.register
+class PileGPTMediumPileEval(PileEval, PileGPTMedium):
+  ZERO_LOSS = False
+  TASK_NAME = 'PileGPTMediumPileEvalWholeZeroFalse'
+
+@experiment_registry.register
 class PileLlamaMediumPileEval(PileEval, PileLlamaMedium):
+  ZERO_LOSS = False
   # PileDCLlamaMediumSWNoQKNorm
-  TASK_NAME = 'PileLlamaMediumPileEvalWhole'
+  TASK_NAME = 'PileLlamaMediumPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileGPTLargePileEval(PileEval, PileGPTLarge):
+  ZERO_LOSS = False
+  TASK_NAME = 'PileGPTLargePileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileLlamaLargePileEval(PileEval, PileLlamaLarge):
+  ZERO_LOSS = False
+  TASK_NAME = 'PileLlamaLargePileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileGPTXLPileEval(PileEval, PileGPTXL):
+  ZERO_LOSS = False
+  TASK_NAME = 'PileGPTXLPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileLlamaXLPileEval(PileEval, PileLlamaXL):
+  ZERO_LOSS = False
+  TASK_NAME = 'PileLlamaXLPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCGPTMediumDWDDNoQKNormPileEval(PileEval, PileDCGPTMediumDWDDNoQKNorm):
+  # PileDCGPTMediumDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCGPTMediumDWDDNoQKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCGPTLargeDWDDNoQKNormPileEval(PileEval, PileDCGPTLargeDWDDNoQKNorm):
+  # PileDCGPTLargeDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCGPTLargeDWDDNoQKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCGPTXLDWDDNoQKNormPileEval(PileEval, PileDCGPTXLDWDDNoQKNorm):
+  # PileDCGPTXLDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCGPTXLDWDDNoQKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormPileEval(PileEval, PileDCLlamaMediumDWDDNoQKNorm):
+  # PileDCLlamaMediumDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCLlamaMediumDWDDNoQKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCLlamaLargeDWDDNoQKNormPileEval(PileEval, PileDCLlamaLargeDWDDNoQKNorm):
+  # PileDCLlamaLargeDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCLlamaLargeDWDDNoQKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormPileEval(PileEval, PileDCLlamaXLDWDDNoQKNorm):
+  # PileDCLlamaXLDWDDNoQKNormv4
+  ZERO_LOSS = False
+  TASK_NAME = 'PileDCLlamaXLDWDDNoQKNormPileEvalWholeZeroFalse'
 
 @experiment_registry.register
 class PileDCLlamaMediumNoOKNormPileEval(PileEval, PileDCLlamaMediumNoOKNorm):
@@ -4745,14 +4790,6 @@ class PileDCLlamaMediumDDNoQKNormPileEval(PileEval, PileDCLlamaMediumDDNoQKNorm)
     EVAL_LOOP_NUM_BATCHES = 162
     RESET_FOR_EVAL = False
     TASK_NAME = 'PileDCLlamaMediumDDNoQKNormPileEvalWholeZeroFalse'
-
-@experiment_registry.register
-class PileDCLlamaMediumDWDDNoQKNormPileEval(PileEval, PileDCLlamaMediumDWDDNoQKNorm):
-    # PileDCLlamaMediumDWDDNoQKNormv4
-    ZERO_LOSS = False
-    EVAL_LOOP_NUM_BATCHES = 162
-    RESET_FOR_EVAL = False
-    TASK_NAME = 'PileDCLlamaMediumDWDDNoQKNormPileEvalWholeZeroFalse'
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormTgtPileEval(PileEval, PileDCLlamaMediumDWDDNoQKNormTgt):

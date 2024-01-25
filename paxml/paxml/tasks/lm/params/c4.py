@@ -2904,7 +2904,7 @@ class DCSlimLlama7BNG2(DCSlimLlama7B):
   # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
 
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG4):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2941,6 +2941,8 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   DATA_FULL_SHARD = False
   FFN_CHUKN_SIZE = 5504 // 8
   PRE_COMPUTE_ATTEN_MASK = True
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

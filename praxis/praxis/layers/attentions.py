@@ -2767,8 +2767,8 @@ class DotProductAttention(base_layer.BaseLayer):
         atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
       else:
         raise ValueError(f'Paramers set error, please check pre_compute_atten_mask and atten_mask is None or not......')
-      
-      # atten_mask2 = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+      # lsp: 不同window size的mask矩阵有点不同，其实如果每层的window size相同，这个mask可以提前计算好传进来.
+      atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
       if self.transpose_logits:
         atten_mask = jnp.transpose(atten_mask, (0, 2, 3, 1))  # XD: BNTS->BTSN
         encoded = jnp.zeros((b, t, n, h), dtype=value.dtype)
@@ -2784,8 +2784,6 @@ class DotProductAttention(base_layer.BaseLayer):
         if self.pre_compute_atten_mask:
           _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
             if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
-          # _atten_mask2 = atten_mask2[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask2[:, :, -_key.shape[1]:]
-          
         else:
           _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
 
@@ -2798,23 +2796,8 @@ class DotProductAttention(base_layer.BaseLayer):
             kdd[:, kv_start : stop] if kdd is not None else None)
         _pre_proj_dw_args = slice_dw(*pre_proj_dw_args) if pre_proj_dw_args is not None and self.project_logits else ()  # debug
         _post_proj_dw_args = slice_dw(*post_proj_dw_args) if post_proj_dw_args is not None and self.project_probs else ()  # debug
-        logging.info(f'_query: {_query.shape} type: {_query.dtype}')
-        logging.info(f'_key: {_key.shape} type: {_key.dtype}')
-        logging.info(f'_value: {_value.shape} type: {_value.dtype}')
-        # logging.info(f'_atten_mask2: {_atten_mask2.shape} type: {_atten_mask2.dtype}')
-        logging.info(f'_atten_mask: {_atten_mask.shape} type: {_atten_mask.dtype}')
-
-        # self.add_summary(f'[lsp]{self.window_size}_query_{i}', _query, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_key_{i}', _key, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_value_{i}', _value, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_atten_mask_{i}', _atten_mask, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_atten_mask2_{i}', _atten_mask2, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_pre_proj_dw_args_{i}', _pre_proj_dw_args, verbosity=3)
-        # self.add_summary(f'[lsp]{self.window_size}_post_proj_dw_args_{i}', _post_proj_dw_args, verbosity=3)
         _encoded, _ = self._atten_context(_query, _key, _value, _atten_mask,
           _pre_proj_dw_args, _post_proj_dw_args)
-        # self.add_summary(f'[lsp]{self.window_size}_encoded_{i}', _encoded, verbosity=3)
-        
         encoded = encoded.at[:, :, start : stop, :].set(_encoded) \
           if not self.transpose_logits else encoded.at[:, start : stop, :, :].set(_encoded)
     if not self.transpose_logits: encoded = encoded.transpose(0, 2, 1, 3)  # bnth->btnh

@@ -4715,11 +4715,13 @@ class PileLlamaLargePileEval(PileEval, PileLlamaLarge):
 
 @experiment_registry.register
 class PileGPTXLPileEval(PileEval, PileGPTXL):
+  # PileGPTXL
   ZERO_LOSS = False
   TASK_NAME = 'PileGPTXLPileEvalWholeZeroFalse'
 
 @experiment_registry.register
 class PileLlamaXLPileEval(PileEval, PileLlamaXL):
+  # PileLlamaXL
   ZERO_LOSS = False
   TASK_NAME = 'PileLlamaXLPileEvalWholeZeroFalse'
 

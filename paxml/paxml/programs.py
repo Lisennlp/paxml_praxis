@@ -20,6 +20,7 @@ import contextlib
 import dataclasses
 import queue
 import time
+import pickle
 from typing import Any, Optional, Sequence, Tuple, Union, Mapping
 
 from absl import flags
@@ -377,6 +378,11 @@ class BaseTrainProgram(Program):
         and new_step % train_p.eval_interval_steps == 0
     ):
       eval_train_metrics = self._maybe_run_eval_train(new_state, new_step)
+
+    # if jax.process_index() == 0:
+    #     pickle.dump(train_outputs.summary_tensors, open(f'debug_{new_step}.pkl', 'wb'))
+    # if new_step == 5:
+    #     exit(0)
 
     return TrainProgramOutput(
         new_state,

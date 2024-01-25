@@ -183,6 +183,67 @@ def convert_paddings_to_mask(
   attention_mask *= py_utils.get_large_negative_number(dtype)
   return attention_mask
 
+# # lsp
+# def _compute_slide_atten_mask(w, window_size, length: int, dtype: jnp.dtype = jnp.bfloat16) -> JTensor:
+#   """
+#   w: query chunk size
+#   window_size: window size
+#   length: query length that before split
+#   dtype: query dtype
+#   """
+#   if w is None:
+#       w = length
+#   if window_size is None:
+#       offset = length - w
+#   else:
+#       offset = min(window_size, length - w)
+#   x = jnp.ones([w, w + offset])
+#   m1 = jnp.triu(x, k=offset + 1)
+#   if window_size is not None and window_size <= w:
+#       m2 = jnp.tril(x, k=window_size - w) # k=-1: 实际注意力为window_size + 1， k=0， 实际注意力为window_size.
+#       m = m1 + m2
+#   else:
+#       m = m1
+#   large_negative_number = py_utils.get_large_negative_number(dtype)
+#   # m = m.astype(dtype) * large_negative_number
+#   m = jnp.where((m > 0.5), large_negative_number, m)
+#   # bnts
+#   return m[jnp.newaxis, jnp.newaxis, ...]
+
+# lsp
+def _compute_slide_atten_mask(w, window_size, length: int, dtype: jnp.dtype = jnp.bfloat16) -> JTensor:
+  """
+  w: query chunk size
+  window_size: window size
+  length: query length that before split
+  dtype: query dtype
+  """
+  # w = 256
+  # length = 2048
+  # window_size = 1600
+  if w is None:
+    w = length
+  if window_size is None:
+    offset = length - w
+  else:
+    offset = min(window_size, length - w)
+  x = jnp.ones([w, w + offset])
+  m1 = jnp.triu(x, k=offset + 1)
+  if window_size is not None:
+    if window_size < length - w:
+        m2 = jnp.tril(x, k=0)
+    else:
+        m2 = jnp.tril(x, k=length - window_size - w)
+    m = m1 + m2
+  else:
+    m = m1
+  large_negative_number = py_utils.get_large_negative_number(dtype)
+  m = m.astype(dtype)
+  # m = m * large_negative_number or as follow:
+  m = jnp.where((m > 0.5), large_negative_number, m)
+  # bnts
+  return m[jnp.newaxis, jnp.newaxis, ...]
+
 
 def shift_1d(inputs: JTensor, offset: int, axis: int):
   """Shifts the input tensor by offset in the dimension axis.
@@ -2134,6 +2195,7 @@ class DotProductAttention(base_layer.BaseLayer):
   pv_einsum_tpl: LayerTpl = template_field(base_ops.EinsumOp)
   per_dim_scale_tpl: LayerTpl = template_field(PerDimScale)
   causal_depthwise_conv1d_tpl: LayerTpl = template_field(CausalDepthwiseConv1D)
+  pre_compute_atten_mask: bool = True
 
   # SPMD partition related params.
   #
@@ -2554,11 +2616,21 @@ class DotProductAttention(base_layer.BaseLayer):
     if getattr(self, proj_name, None) is None: return bnts
     return getattr(self, proj_name)(bnts, *dw_args, query_vec=query_vec, key_vec=key_vec)
 
+  def _causal_mask(self, tdtype, t):
+    assert (
+        tdtype == jnp.float32 or tdtype == jnp.bfloat16
+    ), tdtype
+    large_negative_number = py_utils.get_large_negative_number(tdtype)
+    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
+    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
+    mask = (row_idx < col_idx).astype(tdtype) * large_negative_number
+    return mask[jnp.newaxis, jnp.newaxis, :, :]
+
   def _atten_context(
       self,
-      query: JTensor,
+      query: JTensor, # btnh
       key: JTensor,
-      value: JTensor,
+      value: JTensor, # btnh
       atten_mask: JTensor,
       pre_proj_dw_args: tuple = (),
       post_proj_dw_args: tuple = (),
@@ -2568,7 +2640,7 @@ class DotProductAttention(base_layer.BaseLayer):
     # logits = self._atten_logits(query, key)
     N = 'N' if self.num_kv_heads != 1 else ''
     logits_exp = 'BNTS' if not self.transpose_logits else 'BTSN' # 'BTNS'
-    logits = self.qk_einsum(f"BNTH,B{N}SH->{logits_exp}", query, key)  # XD
+    logits = self.qk_einsum(f"BTNH,BS{N}H->{logits_exp}", query, key)  # XD
     # logits_exp = 'BTNS' if not self.transpose_logits else 'BTSN'
     # logits = self.qk_einsum(f"BTNH,BS{N}H->{logits_exp}", query, key)  # XD
 
@@ -2606,7 +2678,8 @@ class DotProductAttention(base_layer.BaseLayer):
     # if self.transpose_logits: probs = jnp.transpose(probs, (0, 3, 1, 2)) # XD: BTSN -> BNTS
     N = 'N' if self.num_kv_heads != 1 else ''
     value_exp = logits_exp.replace('S', '') + 'H'
-    encoded = self.pv_einsum(f'{logits_exp},B{N}SH->{value_exp}', probs, value)
+    #logits_exp: bnts * bsnh  -> value_exp: bnth
+    encoded = self.pv_einsum(f'{logits_exp},BS{N}H->{value_exp}', probs, value)
     # encoded = self.pv_einsum(f'BNTS,B{N}SH->BNTH', probs, value)
     return encoded, probs
     
@@ -2655,15 +2728,15 @@ class DotProductAttention(base_layer.BaseLayer):
     # source tokens. In this case tiling is inefficient and unnecessary.
     # If there is no padding mask, and only causal mask then the shape can be
     # [1, 1, T, S]
-    base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
-    asserts.in_set(atten_mask.shape[2], [t, 1])
-    asserts.in_set(atten_mask.shape[0], [b, 1])
-
+    if atten_mask is not None:
+      base_layer.assert_has_shape(atten_mask, [-1, 1, -1, s])
+      asserts.in_set(atten_mask.shape[2], [t, 1])
+      asserts.in_set(atten_mask.shape[0], [b, 1])
+      assert self.pre_compute_atten_mask 
+   
     if not (self.shared_qk_dim > 0 and self.float32_logits):  # XD
       query = self._scale_query(query)
 
-    query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]] # btnh->bnth
-    # atten_mask = jnp.transpose(atten_mask, (0, 2, 1, 3))  # XD: BNTS->BTNS
     if self.query_chunk_size is None:
       encoded, probs = self._atten_context(query, key, value, atten_mask,
         query_vec=query_vec, key_vec=key_vec)
@@ -2681,28 +2754,41 @@ class DotProductAttention(base_layer.BaseLayer):
           pre_proj_dw_args = self.dyn_w_pre_proj(query_vec, key_vec)
         if hasattr(self, 'dyn_w_post_proj'):
           post_proj_dw_args = self.dyn_w_post_proj(query_vec, key_vec)
-      if self.window_size is not None:  # adapted from limited_context_mask
+
+      if self.window_size is not None and atten_mask is not None:  # adapted from limited_context_mask
+        logging.info('Add slide atten mask on atten mask with window size......')
         large_negative_number = py_utils.get_large_negative_number(atten_mask.dtype)
         col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
         row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
+      elif atten_mask is None and not self.pre_compute_atten_mask:
+        logging.info('Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is True......')
+        atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+      else:
+        raise ValueError(f'Paramers set error, please check pre_compute_atten_mask and atten_mask is None or not......')
+      
+      # atten_mask2 = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
       if self.transpose_logits:
         atten_mask = jnp.transpose(atten_mask, (0, 2, 3, 1))  # XD: BNTS->BTSN
-        # atten_mask = jnp.transpose(atten_mask, (0, 2, 1, 3))  # XD: BNTS->BTNS
         encoded = jnp.zeros((b, t, n, h), dtype=value.dtype)
       else:
         encoded = jnp.zeros((b, n, t, h), dtype=value.dtype)
+
       for i in range(t // w):
         start, stop = i * w, (i + 1) * w
         kv_start = max(0, stop - w - self.window_size) if self.window_size is not None else 0
-        _query = query[:, :, start : stop, :]
-        _key, _value = key[:, :, kv_start : stop, :], value[:, :, kv_start : stop, :]
-        _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
-          if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
-        # _query = query[:, start : stop, :, :]
-        # _key, _value = key[:, : stop, :, :], value[:, : stop, :, :]
-        # _atten_mask = atten_mask[:, start : stop, :, : stop]
+        _query = query[:, start : stop]
+        _key, _value = key[:, kv_start : stop], value[:, kv_start : stop]
+        # lsp
+        if self.pre_compute_atten_mask:
+          _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
+            if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
+          # _atten_mask2 = atten_mask2[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask2[:, :, -_key.shape[1]:]
+          
+        else:
+          _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
+
         def slice_dw(qw1, qw2, kw1, kw2, qdd, kdd):
           return (qw1[:, start : stop] if qw1 is not None else None,
             qw2[:, start : stop] if qw2 is not None else None,
@@ -2712,8 +2798,23 @@ class DotProductAttention(base_layer.BaseLayer):
             kdd[:, kv_start : stop] if kdd is not None else None)
         _pre_proj_dw_args = slice_dw(*pre_proj_dw_args) if pre_proj_dw_args is not None and self.project_logits else ()  # debug
         _post_proj_dw_args = slice_dw(*post_proj_dw_args) if post_proj_dw_args is not None and self.project_probs else ()  # debug
+        logging.info(f'_query: {_query.shape} type: {_query.dtype}')
+        logging.info(f'_key: {_key.shape} type: {_key.dtype}')
+        logging.info(f'_value: {_value.shape} type: {_value.dtype}')
+        # logging.info(f'_atten_mask2: {_atten_mask2.shape} type: {_atten_mask2.dtype}')
+        logging.info(f'_atten_mask: {_atten_mask.shape} type: {_atten_mask.dtype}')
+
+        # self.add_summary(f'[lsp]{self.window_size}_query_{i}', _query, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_key_{i}', _key, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_value_{i}', _value, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_atten_mask_{i}', _atten_mask, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_atten_mask2_{i}', _atten_mask2, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_pre_proj_dw_args_{i}', _pre_proj_dw_args, verbosity=3)
+        # self.add_summary(f'[lsp]{self.window_size}_post_proj_dw_args_{i}', _post_proj_dw_args, verbosity=3)
         _encoded, _ = self._atten_context(_query, _key, _value, _atten_mask,
           _pre_proj_dw_args, _post_proj_dw_args)
+        # self.add_summary(f'[lsp]{self.window_size}_encoded_{i}', _encoded, verbosity=3)
+        
         encoded = encoded.at[:, :, start : stop, :].set(_encoded) \
           if not self.transpose_logits else encoded.at[:, start : stop, :, :].set(_encoded)
     if not self.transpose_logits: encoded = encoded.transpose(0, 2, 1, 3)  # bnth->btnh

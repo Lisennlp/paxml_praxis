@@ -1637,6 +1637,7 @@ class StackedTransformer(base_layer.BaseLayer):
   checkpoint_policy: AutodiffCheckpointType = (
       AutodiffCheckpointType.SAVE_DOT_EXCEPT_LOGITS_FFN1
   )
+  pre_compute_atten_mask: bool = True
 
   def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
     """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1692,6 +1693,9 @@ class StackedTransformer(base_layer.BaseLayer):
         p_i.tr_fflayer_tpl = moe_p
 
       atten_tpl = p_i.tr_atten_tpl
+      if hasattr(atten_tpl, 'pre_compute_atten_mask'):
+        logging.info(f'Set pre_compute_atten_mask as {self.pre_compute_atten_mask}.....')
+        atten_tpl.pre_compute_atten_mask = self.pre_compute_atten_mask
       # assert atten_tpl.project_logits
       # assert atten_tpl.project_probs
       # if i == 1:
@@ -1788,17 +1792,21 @@ class StackedTransformer(base_layer.BaseLayer):
       assert cross_paddings is not None
       if self.packed_input:
         assert cross_segment_mask is not None
-
-    attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
-        inputs,
-        paddings,
-        self.mask_self_attention,
-        segment_mask,
-        cross_inputs,
-        cross_paddings,
-        cross_segment_mask,
-        fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
-    )
+    # lsp
+    if self.pre_compute_atten_mask:
+      attention_mask, cross_attention_mask = compute_attention_masks_for_fprop(
+          inputs,
+          paddings,
+          self.mask_self_attention,
+          segment_mask,
+          cross_inputs,
+          cross_paddings,
+          cross_segment_mask,
+          fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
+      )
+    else:
+      attention_mask = None
+      cross_attention_mask = None
 
     x_out = inputs
     if self.input_dropout_prob > 0.0:

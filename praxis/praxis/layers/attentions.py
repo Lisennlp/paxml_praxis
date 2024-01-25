@@ -2767,7 +2767,8 @@ class DotProductAttention(base_layer.BaseLayer):
       # lsp: 不同window size的mask矩阵有点不同，其实如果每层的window size相同，这个mask可以提前计算好传进来.
         atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
       else:
-        raise ValueError(f'Paramers set error, please check pre_compute_atten_mask and atten_mask is None or not......')
+        pass
+        # raise ValueError(f'Paramers set error, please check pre_compute_atten_mask and atten_mask is None or not......')
       if self.transpose_logits:
         atten_mask = jnp.transpose(atten_mask, (0, 2, 3, 1))  # XD: BNTS->BTSN
         encoded = jnp.zeros((b, t, n, h), dtype=value.dtype)

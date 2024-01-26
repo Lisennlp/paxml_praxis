@@ -365,6 +365,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
       gate_activation = None
 
     # XD
+    logging.info(f'self.chunk_size: {self.chunk_size}')
     hidden_dims = self.hidden_dims
     if self.chunk_size is not None:
       assert self.hidden_dims % self.chunk_size == 0, f'{self.hidden_dims} % {self.chunk_size} != 0'

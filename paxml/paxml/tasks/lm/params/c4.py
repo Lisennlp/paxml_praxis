@@ -706,6 +706,9 @@ def configure_gpt3_task(
     if hasattr(cls, 'MGATE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
 
+    if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
+
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
     # XD

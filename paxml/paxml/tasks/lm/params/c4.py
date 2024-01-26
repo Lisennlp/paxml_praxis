@@ -2994,7 +2994,7 @@ class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
   PRE_COMPUTE_ATTEN_MASK = True
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
-  DCN_MESH_SHAPe = [2, 1, 1]
+  DCN_MESH_SHAPE = [2, 1, 1]
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

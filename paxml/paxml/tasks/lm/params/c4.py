@@ -2904,7 +2904,7 @@ class DCSlimLlama7BNG2(DCSlimLlama7B):
   # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
 
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG4):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2932,18 +2932,52 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
   NUM_LAYERS=48
-  MAX_SEQ_LEN = 8192 // 4
-  # WINDOW_SIZE = [256, 4096]
-  WINDOW_SIZE = None
-  PERCORE_BATCH_SIZE = 1 #/ 4
+  MAX_SEQ_LEN = 8192 * 4
+  WINDOW_SIZE = [256, 4096]
+  # WINDOW_SIZE = None
+  PERCORE_BATCH_SIZE = 0.25 #/ 4
   QUERY_CHUNK_SIZE = 512
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 16, 1]
+  ICI_MESH_SHAPE = [1, 64, 4]
   DATA_FULL_SHARD = False
   FFN_CHUKN_SIZE = 5504 // 8
   PRE_COMPUTE_ATTEN_MASK = False
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
+
+@experiment_registry.register
+class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
+  #MAX_SEQ_LEN = 8192 * 4 // 2
+  NUM_LAYERS=2
+  MAX_SEQ_LEN = 8192 * 2
+  WINDOW_SIZE = [256, 4096]
+  # WINDOW_SIZE = None
+  PERCORE_BATCH_SIZE = 0.25 #/ 4
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 2, 4]
+  DATA_FULL_SHARD = False
+  FFN_CHUKN_SIZE = 5504 // 8
+  PRE_COMPUTE_ATTEN_MASK = False
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20
+
+@experiment_registry.register
+class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
+  NUM_LAYERS=20
+  MAX_SEQ_LEN = 8192 // 4
+  # WINDOW_SIZE = [256, 4096]
+  WINDOW_SIZE = None
+  PERCORE_BATCH_SIZE = 1 #/ 4
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = None
+  ICI_MESH_SHAPE = [1, 8, 1]
+  DATA_FULL_SHARD = False
+  FFN_CHUKN_SIZE = None
+  PRE_COMPUTE_ATTEN_MASK = True
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20
+  DCN_MESH_SHAPe = [2, 1, 1]
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

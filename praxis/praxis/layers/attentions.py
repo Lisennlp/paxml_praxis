@@ -2763,7 +2763,7 @@ class DotProductAttention(base_layer.BaseLayer):
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
       elif atten_mask is None and not self.pre_compute_atten_mask:
-        logging.info('Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is True......')
+        logging.info(f'Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is {self.pre_compute_atten_mask}......')
       # lsp: 不同window size的mask矩阵有点不同，其实如果每层的window size相同，这个mask可以提前计算好传进来.
         atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
       else:

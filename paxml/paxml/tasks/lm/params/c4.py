@@ -2963,6 +2963,23 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_LOOP_NUM_BATCHES = 20
 
 @experiment_registry.register
+class SingleSliceTest(PileDCSlimLlama7B2Kx4x512x1):
+  NUM_LAYERS=20
+  MAX_SEQ_LEN = 8192 // 4
+  # WINDOW_SIZE = [256, 4096]
+  WINDOW_SIZE = None
+  PERCORE_BATCH_SIZE = 1 #/ 4
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = None
+  ICI_MESH_SHAPE = [1, 8, 1]
+  DATA_FULL_SHARD = True
+  FFN_CHUKN_SIZE = None
+  PRE_COMPUTE_ATTEN_MASK = True
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20
+  DCN_MESH_SHAPe = [1, 1, 1]
+
+@experiment_registry.register
 class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
   NUM_LAYERS=20
   MAX_SEQ_LEN = 8192 // 4
@@ -2972,7 +2989,7 @@ class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
   QUERY_CHUNK_SIZE = 512
   LM_HEAD_CHUNK_SIZE = None
   ICI_MESH_SHAPE = [1, 8, 1]
-  DATA_FULL_SHARD = False
+  DATA_FULL_SHARD = True
   FFN_CHUKN_SIZE = None
   PRE_COMPUTE_ATTEN_MASK = True
   EVAL_INTERVAL_STEPS = 100

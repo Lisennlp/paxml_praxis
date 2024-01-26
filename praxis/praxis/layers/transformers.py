@@ -539,7 +539,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         if self.mgate:
           # lsp: bl x bld
-          _outputs = gate_scores[..., i] * _outputs
+          _outputs = gate_scores[..., i: (i + 1)] * _outputs
 
         outputs = _outputs if outputs is None else outputs + _outputs
 

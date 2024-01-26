@@ -305,6 +305,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
   residual_cross_act_proj: bool = False
   chunk_size: int = None
   output_layer_std: float = None
+  mgate: bool = False
 
   class WeightSharding(base_layer.BaseLayer.WeightSharding):
     """Represents how layer's learned parameters are partitioned across a mesh.
@@ -446,6 +447,21 @@ class TransformerFeedForward(base_layer.BaseLayer):
       )
       self.create_child('residual_droppath', droppath_p)
 
+    if self.mgate:
+      mgate_p = self.fflayer_tpl.clone()
+      mgate_p.name = 'mgate_layer'
+      mgate_p.input_dims = self.input_dims
+      mgate_p.has_bias = self.has_bias
+      mgate_p.activation_tpl = activation
+      mgate_p.output_dims = self.n_chunks  # lsp: chunks数量即为专家的数目
+      mgate_p.weight_split_dims_mapping.wt = wp.ffn0
+      mgate_p.activation_split_dims_mapping.out = ap.ffn0
+      if self.internal_gshard_variance_scaling_fan_in_init:
+        scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
+        mgate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
+      self.create_child('mgate_layer', mgate_p)
+
+
   def __call__(self,
                inputs: JTensor,
                paddings: Optional[JTensor] = None,
@@ -467,6 +483,15 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
     if self.norm_policy in ('primer_hybrid', 'pre'):
       self.add_summary('input_norm_rms', _rms(inputs), verbosity=4)
+
+    if self.mgate:
+        # bld x de -> ble
+        gate_scores = self.mgate_layer(inputs)
+        gate_scores = jax.nn.softmax(gate_scores.astype(jnp.float32), axis=-1)
+        # gate_scores *= self.n_chunks
+        gate_scores = gate_scores.astype(self.fprop_dtype)
+        
+        assert gate_scores.shape[-1] == self.n_chunks, (self.n_chunks, gate_scores.shape[-1])
 
     if self.chunk_size is None:
       # Apply first FFN layer
@@ -510,6 +535,11 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         activations = self.relu_dropout(activations)
         _outputs = self.ffn_layer2[i](activations)
+
+        if self.mgate:
+          # lsp: bl x bld
+          _outputs = gate_scores[..., i] * _outputs
+
         outputs = _outputs if outputs is None else outputs + _outputs
 
     outputs = checkpoint_name(outputs, 'ffn2')

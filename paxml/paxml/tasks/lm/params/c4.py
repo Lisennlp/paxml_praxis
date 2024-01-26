@@ -702,6 +702,10 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
     if hasattr(cls, 'SEGMENT_SIZE'):  # XD
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
+
+    if hasattr(cls, 'MGATE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
+
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
     # XD
@@ -2904,7 +2908,7 @@ class DCSlimLlama7BNG2(DCSlimLlama7B):
   # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
 
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG4):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2962,22 +2966,22 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
 
-@experiment_registry.register
-class SingleSliceTest(PileDCSlimLlama7B2Kx4x512x1):
-  NUM_LAYERS=20
-  MAX_SEQ_LEN = 8192 // 4
-  # WINDOW_SIZE = [256, 4096]
-  WINDOW_SIZE = None
+class MgateTest(PileDCSlimLlama7B2Kx4x512x1):
+  #MAX_SEQ_LEN = 8192 * 4 // 2
+  NUM_LAYERS=10
+  MAX_SEQ_LEN = 2048
+  WINDOW_SIZE = [256, 4096]
+  # WINDOW_SIZE = None
   PERCORE_BATCH_SIZE = 1 #/ 4
   QUERY_CHUNK_SIZE = 512
-  LM_HEAD_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = 512
   ICI_MESH_SHAPE = [1, 8, 1]
   DATA_FULL_SHARD = True
-  FFN_CHUKN_SIZE = None
-  PRE_COMPUTE_ATTEN_MASK = True
+  FFN_CHUKN_SIZE = 5504 // 8
+  PRE_COMPUTE_ATTEN_MASK = False
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
-  DCN_MESH_SHAPe = [1, 1, 1]
+  MGATE = True
 
 @experiment_registry.register
 class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
@@ -2994,7 +2998,7 @@ class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
   PRE_COMPUTE_ATTEN_MASK = True
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
-  DCN_MESH_SHAPE = [2, 1, 1]
+  DCN_MESH_SHAPE = [2, 1, 1] # 2表示slice count
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331

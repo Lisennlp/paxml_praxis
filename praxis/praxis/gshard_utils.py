@@ -158,6 +158,7 @@ def top2_gating_on_logits(paddings,
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
 
+  # logits: 1 * (bsz * length) * e
   if logits.dtype != jnp.float32:
     logging.info('Upcasting gating logits')
     logits = logits.astype(jnp.float32)
@@ -173,9 +174,11 @@ def top2_gating_on_logits(paddings,
 
   raw_gates = jax.nn.softmax(logits, axis=-1)  # along E dim
 
-  if capacity_factor:
+  if capacity_factor: # default 2
     # Determine expert capacity automatically depending on the input size
     group_size_dim = logits.shape[1]
+    # group_size_dim: bsz * len  experts_dim: expert nums
+    # 32 * 2 * 2048
     auto_expert_capacity = int(group_size_dim * capacity_factor / experts_dim)
     if expert_capacity_dim is None:
       expert_capacity_dim = 1
@@ -351,6 +354,8 @@ def top2_gating_on_logits(paddings,
           index_1, experts_dim, dtype=jnp.float32)
   # GSEC tensor
   first_part_of_combine_tensor = jnp.einsum('GSE,GSC->GSEC', a, b)
+  # lsp
+  # first_part_of_combine_tensor = first_part_of_combine_tensor.astype(fprop_dtype)
 
   # GSC tensor
   b = jax.nn.one_hot(
@@ -362,6 +367,8 @@ def top2_gating_on_logits(paddings,
       gate_2 * mask_2_flat.astype(fprop_dtype), axis=-1) * jax.nn.one_hot(
           index_2, experts_dim, dtype=jnp.float32)
   second_part_of_combine_tensor = jnp.einsum('GSE,GSC->GSEC', a, b)
+  # lsp -> bf16
+  # second_part_of_combine_tensor = second_part_of_combine_tensor.astype(fprop_dtype)
 
   # GSEC tensor
   combine_tensor = first_part_of_combine_tensor + second_part_of_combine_tensor

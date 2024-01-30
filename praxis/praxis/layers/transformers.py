@@ -970,8 +970,9 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
       raise ValueError(f'The value of num_groups {num_groups} does not '
                        f'evenly divide the value of num_tokens {num_tokens}')
     g_len = num_tokens // num_groups
-
+    # 1 x (bsz * len) x moe_dim
     reshaped_inputs = inputs.reshape([num_groups, g_len, m_dim])
+    logging.info(f'reshaped_inputs: {reshaped_inputs}')
     reshaped_inputs = self._split(reshaped_inputs, ap.gsm)
     if paddings is not None:
       reshaped_paddings = paddings.reshape([num_groups, g_len])
@@ -1107,6 +1108,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     Returns:
       Tensor of the same shape as inputs.
     """
+    logging.info(f'Enter Moe call......')
     # Assume output_dims == input_dims
     fprop_dtype = self.fprop_dtype
 
@@ -1815,6 +1817,7 @@ class StackedTransformer(base_layer.BaseLayer):
     Returns:
       Output vector with shape [B, T, D].
     """
+    logging.info(f'self.num_experts: {self.num_experts}')
     if self.packed_input:
       assert segment_mask is not None
 
@@ -1867,7 +1870,7 @@ class StackedTransformer(base_layer.BaseLayer):
       fprop = nn.remat(
           _fprop, policy=checkpoint_policy.custom_policy(self.checkpoint_policy)
       )
-
+    # num_layers为1
     for i in range(self.num_layers):
       x_in = x_out
       x_out = fprop(

@@ -703,14 +703,21 @@ def configure_gpt3_task(
     if hasattr(cls, 'SEGMENT_SIZE'):  # XD
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
 
-    if hasattr(cls, 'MGATE'):  # lsp
-      transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
-
-    if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
-      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
-
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
+
+    if hasattr(cls, 'MGATE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
+    if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
+    if hasattr(cls, 'NUM_EXPERTS'):  # lsp
+      stacked_p.num_experts = cls.NUM_EXPERTS
+    if hasattr(cls, 'CAPACITY_FACTOR'):  # lsp
+      stacked_p.unadjusted_expert_capacity_factor = cls.CAPACITY_FACTOR
+    if hasattr(cls, 'MOE_LAYERS'):  # lsp
+      stacked_p.moe_layers = cls.MOE_LAYERS
+
+
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -2972,18 +2979,20 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
 @experiment_registry.register
 class MoeTest(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
-  NUM_LAYERS=2
-  MAX_SEQ_LEN = 8192 // 2
+  NUM_LAYERS=30
+  MAX_SEQ_LEN = 8192 // 4
   WINDOW_SIZE = [256, 4096]
   HIDDEN_DIM = 5504 // 4
   # WINDOW_SIZE = None
-  PERCORE_BATCH_SIZE = 1 #/ 4
+  PERCORE_BATCH_SIZE = 1
   QUERY_CHUNK_SIZE = 512
   LM_HEAD_CHUNK_SIZE = 512
   ICI_MESH_SHAPE = [1, 8, 1]
   DATA_FULL_SHARD = False
   # FFN_CHUKN_SIZE = 5504 // 8
   NUM_EXPERTS = 4
+  CAPACITY_FACTOR = 1.25
+  MOE_LAYERS = list(range(NUM_LAYERS))
   PRE_COMPUTE_ATTEN_MASK = False
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20

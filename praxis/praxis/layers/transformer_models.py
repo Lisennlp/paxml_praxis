@@ -335,9 +335,13 @@ class TransformerLm(base_layer.BaseLayer):
     # w_dnh: Sharding of qkv projection weights, shape (d, num_heads,
     # per_head_size)
     w_dnh = [data_axis, mdl_axis, None]
+
+    # lsp: 
     # w_emh: sharding for first MoE FFN weight, shape (e, m, h). The second MoE
     # ffn weight will be inferred from it.
-    w_emh = [data_axis, None, mdl_axis]
+    # w_emh = [data_axis, None, mdl_axis]
+    w_emh = [None, data_axis, mdl_axis]
+
     # w_vd: sharding of the embedding weight of (vocab_size, d).
     w_vd = [mdl_axis, data_axis]
     # a_bld: sharding of output of ffn/attention, shape (b, l, d).
@@ -349,8 +353,11 @@ class TransformerLm(base_layer.BaseLayer):
     a_blnh = [batch_axes, None, mdl_axis, None]
     # a_blv: sharding of the logits activation of shape (b, l, vocab_size).
     a_blv = [batch_axes, None, mdl_axis]
+    # lsp: g = batch * length
     # a_egch: sharding of the output of first MoE FFN, shape (e, g, c, h).
-    a_egch = [data_axis, None, None, mdl_axis]
+    # a_egch = [data_axis, None, None, mdl_axis]
+    a_egch = [None, data_axis, None, mdl_axis]
+
     # a_egcm: sharding of the output of second MoE FFN, shape (e, g, c, m).
     a_egcm = egcm
     return cls.set_custom_sharding_params(

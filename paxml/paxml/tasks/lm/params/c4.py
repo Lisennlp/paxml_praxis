@@ -4916,6 +4916,31 @@ class PileDCLlamaMediumNoQKNormProjProbsWorkaroundPileEval(PileEval, PileDCLlama
     TASK_NAME = 'PileDCLlamaMediumNoQKNormProjProbsWorkaroundPileEvalWholeZeroFalse'
 
 
+@experiment_registry.register
+class PileDCLlamaMediumNoQKNormR1PileEval(PileEval, PileDCLlamaMediumNoQKNormR1):
+    # PileDCLlamaMediumNoQKNormR1
+    ZERO_LOSS = False
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumNoQKNormR1PileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCLlamaMediumNoOKNormR1PileEval(PileEval, PileDCLlamaMediumNoOKNorm):
+    # PileDCLlamaMediumNoOKNorm
+    ZERO_LOSS = False
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumNoOKNormPileEvalWholeZeroFalse'
+
+@experiment_registry.register
+class PileDCLlamaMediumNoQKNormR4PileEval(PileEval, PileDCLlamaMediumNoQKNormR4):
+    # PileDCLlamaMediumNoQKNormR4
+    ZERO_LOSS = False
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumNoQKNormR4PileEvalWholeZeroFalse'
+
+
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None
     num_infeed_hosts: int = 0

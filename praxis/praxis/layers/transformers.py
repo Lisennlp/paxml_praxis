@@ -896,6 +896,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     ap = self.activation_split_dims_mapping
 
     theta_wi, theta_wo = self.theta['wi_0'], self.theta['wo_0']
+    logging.info(f'theta_wi: {theta_wi.shape} theta_wo: {theta_wo.shape}')
     assert (
         not self._is_ffn1_gated
     ), 'dense_top2 routing does not support gated MoE activations'
@@ -949,6 +950,8 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     assert self.gating_func != 'dense_top2'
 
     theta_wi, theta_wo = self.theta['wi_0'], self.theta['wo_0']
+    logging.info(f'theta_wi: {theta_wi.shape} theta_wo: {theta_wo.shape}')
+
     if self._is_ffn1_gated:
       theta_wi_gated = self.theta['wi_gate_0']
 
@@ -973,10 +976,10 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     # 1 x (bsz * len) x moe_dim
     reshaped_inputs = inputs.reshape([num_groups, g_len, m_dim])
     logging.info(f'reshaped_inputs: {reshaped_inputs}')
-    reshaped_inputs = self._split(reshaped_inputs, ap.gsm)
+    reshaped_inputs = self._split(reshaped_inputs, ap.gsm) # None, data, mdl
     if paddings is not None:
       reshaped_paddings = paddings.reshape([num_groups, g_len])
-      reshaped_paddings = self._split(reshaped_paddings, ap.gs)
+      reshaped_paddings = self._split(reshaped_paddings, ap.gs) # None, data
       reshaped_paddings = reshaped_paddings.astype(fprop_dtype)
     else:
       reshaped_paddings = None
@@ -1073,7 +1076,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
     # Dropout.
     hidden = self.relu_dropout(hidden)
-    # Output.
+    # Output. [1,8,1,8192,5504]
     expert_output = jnp.einsum('egch,ehm->egcm', hidden, theta_wo)
     expert_output = self._split(expert_output, ap.egcm)
     # Now transpose and reshard.
@@ -1723,6 +1726,11 @@ class StackedTransformer(base_layer.BaseLayer):
         if moe_p.hidden_dims:
           # MoE hidden_dims could be different from FFN hidden_dims
           p_i.hidden_dims = moe_p.hidden_dims
+          logging.info(f'[lsp]hidden_dims00: {p_i.hidden_dims}')
+
+        logging.info(f'[lsp]hidden_dims11: {p_i.hidden_dims}')
+        logging.info(f'[lsp]gating_func: {self.gating_func}')
+
         p_i.tr_fflayer_tpl = moe_p
 
       atten_tpl = p_i.tr_atten_tpl

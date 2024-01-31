@@ -157,7 +157,7 @@ def top2_gating_on_logits(paddings,
   if mask_dtype is None:
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
-
+  # ddd
   # logits: 1 * (bsz * length) * e
   if logits.dtype != jnp.float32:
     logging.info('Upcasting gating logits')
@@ -193,13 +193,18 @@ def top2_gating_on_logits(paddings,
           capacity_factor, group_size_dim, experts_dim)
 
   capacity = jnp.array(expert_capacity_dim, dtype=jnp.int32)
+  logging.info(f'[lsp]capacity: {capacity}', )
 
   # top-1 index: GS tensor
+  # raw_gates: 1, 16384, 4
+  # index_1: GS, G表示group，一般为1， S表示总的token数
   index_1 = jnp.argmax(raw_gates, axis=-1)
-
+  logging.info(f'[lsp]raw_gates: {raw_gates.shape}', )
+  logging.info(f'[lsp]index_1: {index_1.shape}', )
   # GSE
   mask_1 = jax.nn.one_hot(index_1, experts_dim, dtype=mask_dtype)
   density_1_proxy = raw_gates
+  logging.info(f'[lsp]mask_1: {mask_1.shape}', )
 
   if importance is not None:
     importance_is_one = jnp.equal(importance, 1.0)
@@ -216,8 +221,12 @@ def top2_gating_on_logits(paddings,
           nonpaddings.astype(density_1_proxy.dtype), -1)
       importance = nonpaddings
 
+  logging.info(f'[lsp]raw_gates: {raw_gates.dtype}', )
+
   gate_1 = jnp.einsum('GSE,GSE->GS', raw_gates, mask_1.astype(raw_gates.dtype))
   gates_without_top_1 = raw_gates * (1.0 - mask_1.astype(raw_gates.dtype))
+
+  logging.info(f'[lsp]gate_1: {gate_1.shape}', )
 
   if second_expert_policy == 'sampling':
     # We directly sample the 2nd expert index from the softmax over of the 2nd
@@ -241,12 +250,19 @@ def top2_gating_on_logits(paddings,
     # Greedily pick the 2nd expert.
     index_2 = jnp.argmax(gates_without_top_1, axis=-1)
 
+  logging.info(f'[lsp]index_2: {index_2.shape}', )
+
   mask_2 = jax.nn.one_hot(index_2, experts_dim, dtype=mask_dtype)
+  logging.info(f'[lsp]index_2: {mask_2.shape}', )
+
   if paddings is not None:
     importance_is_nonzero = importance > 0.0
     mask_2 *= jnp.expand_dims(importance_is_nonzero.astype(mask_2.dtype), -1)
   gate_2 = jnp.einsum('GSE,GSE->GS', gates_without_top_1,
                       mask_2.astype(gates_without_top_1.dtype))
+
+  logging.info(f'[lsp]gate_2: {gate_2.shape}', )
+  logging.info(f'[lsp]legacy_mtf_behavior: {legacy_mtf_behavior}', )
 
   # See notes in lingvo/core/gshard_layers.py.
   if legacy_mtf_behavior:
@@ -261,6 +277,8 @@ def top2_gating_on_logits(paddings,
   # flag below.
   # cumsum over S dim: mask_1 is GSE tensor.
   position_in_expert_1 = cum_sum(mask_1, exclusive=True, axis=-2)
+
+  logging.info(f'[lsp]position_in_expert_1: {position_in_expert_1.shape}', )
 
   # GE tensor (reduce S out of GSE tensor mask_1).
   # density_1[:, e] represents assignment ration (num assigned / total) to
@@ -287,6 +305,7 @@ def top2_gating_on_logits(paddings,
                                                         position_in_expert_1,
                                                         capacity,
                                                         'over_capacity_1')
+  logging.info(f'[lsp]over_capacity_1: {over_capacity_1.shape}', )
 
   mask_1 *= jnp.less(position_in_expert_1,
                      expert_capacity_dim).astype(mask_1.dtype)
@@ -348,12 +367,18 @@ def top2_gating_on_logits(paddings,
       position_in_expert_1.astype(np.int32),
       expert_capacity_dim,
       dtype=jnp.float32)
+  logging.info(f'[lsp]b1: {b.shape}', )
+
   # GSE tensor
   a = jnp.expand_dims(
       gate_1 * mask_1_flat.astype(jnp.float32), axis=-1) * jax.nn.one_hot(
           index_1, experts_dim, dtype=jnp.float32)
+  logging.info(f'[lsp]a1: {a.shape}', )
+  
   # GSEC tensor
   first_part_of_combine_tensor = jnp.einsum('GSE,GSC->GSEC', a, b)
+  # logging.info('[lsp]first_part_of_combine_tensor', first_part_of_combine_tensor.shape)
+
   # lsp
   # first_part_of_combine_tensor = first_part_of_combine_tensor.astype(fprop_dtype)
 
@@ -362,6 +387,8 @@ def top2_gating_on_logits(paddings,
       position_in_expert_2.astype(np.int32),
       expert_capacity_dim,
       dtype=jnp.float32)
+
+  
   # GSE tensor
   a = jnp.expand_dims(
       gate_2 * mask_2_flat.astype(fprop_dtype), axis=-1) * jax.nn.one_hot(

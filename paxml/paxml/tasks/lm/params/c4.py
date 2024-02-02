@@ -1311,14 +1311,14 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 4
+    NUM_LAYERS = 20
     MODEL_DIMS = 4096
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32
     # DIMS_PER_HEAD = 256
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 4, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 8192 // 2
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 8192 // 4
     VOCAB_SIZE = 50257
     DATA_FULL_SHARD = True
 
@@ -1357,7 +1357,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "debug"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = 2048
+    QUERY_CHUNK_SIZE = None
     LM_HEAD_CHUNK_SIZE = None
     FFN_CHUNK_SIZE = HIDDEN_DIMS // 1
     RESET_FOR_EVAL = False
@@ -1378,6 +1378,13 @@ class Llama7B(C4SpmdGpt37BRoPE):
                 }
     DATA_FUNC = c4_registry
 
+@experiment_registry.register
+class Llama7BMoe(Llama7B):
+  MOE_GATED_ACTIVATION = True
+  NUM_EXPERTS = 8
+  NUM_LAYERS = 20
+  MOE_LAYERS = list(range(NUM_LAYERS))
+  CAPACITY_FACTOR = 1.25
 
 @experiment_registry.register
 class Llama7BMultiSlice(Llama7B):

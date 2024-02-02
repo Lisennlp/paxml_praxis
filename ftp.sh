@@ -44,10 +44,13 @@ fi
 
 if [[ $tpu_suffix == *v3* ]]; then
   zone="us-east1-d"
-#  zone='us-central1-a'
+  zone='us-central1-a'
 #  zone='europe-west4-a'
 elif [[ $tpu_suffix == *v4* ]]; then
   zone="us-central2-b"
+
+elif [[ $tpu_suffix == *v5* ]]; then
+  zone="us-west4-a"
 else
   zone="us-west4-a"
 fi

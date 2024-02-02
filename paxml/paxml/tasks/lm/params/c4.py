@@ -1311,7 +1311,7 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7B(C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 20
+    NUM_LAYERS = 32
     MODEL_DIMS = 4096
     HIDDEN_DIMS = 11008 // 2
     NUM_HEADS = 32

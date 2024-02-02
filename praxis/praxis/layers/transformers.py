@@ -445,19 +445,19 @@ class TransformerFeedForward(base_layer.BaseLayer):
             )
             self.create_child("residual_droppath", droppath_p)
 
-    if self.mgate:
-      mgate_p = self.fflayer_tpl.clone()
-      mgate_p.name = 'mgate_layer'
-      mgate_p.input_dims = self.input_dims
-      mgate_p.has_bias = self.has_bias
-      mgate_p.activation_tpl = activation
-      mgate_p.output_dims = self.n_chunks  # lsp: chunks数量即为专家的数目
-      mgate_p.weight_split_dims_mapping.wt = wp.ffn0
-      mgate_p.activation_split_dims_mapping.out = ap.ffn0
-      if self.internal_gshard_variance_scaling_fan_in_init:
-        scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
-        mgate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
-      self.create_child('mgate_layer', mgate_p)
+        if self.mgate:
+          mgate_p = self.fflayer_tpl.clone()
+          mgate_p.name = 'mgate_layer'
+          mgate_p.input_dims = self.input_dims
+          mgate_p.has_bias = self.has_bias
+          mgate_p.activation_tpl = activation
+          mgate_p.output_dims = self.n_chunks  # lsp: chunks数量即为专家的数目
+          mgate_p.weight_split_dims_mapping.wt = wp.ffn0
+          mgate_p.activation_split_dims_mapping.out = ap.ffn0
+          if self.internal_gshard_variance_scaling_fan_in_init:
+            scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
+            mgate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
+          self.create_child('mgate_layer', mgate_p)
 
     # lsp： ffn层forward
     def __call__(

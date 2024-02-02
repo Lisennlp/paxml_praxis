@@ -716,7 +716,8 @@ def configure_gpt3_task(
       stacked_p.unadjusted_expert_capacity_factor = cls.CAPACITY_FACTOR
     if hasattr(cls, 'MOE_LAYERS'):  # lsp
       stacked_p.moe_layers = cls.MOE_LAYERS
-
+    if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
+      stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
 
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
@@ -2991,6 +2992,7 @@ class MoeTest(PileDCSlimLlama7B2Kx4x512x1):
   DATA_FULL_SHARD = False
   # FFN_CHUKN_SIZE = 5504 // 8
   NUM_EXPERTS = 4
+  MOE_GATED_ACTIVATION=True
   CAPACITY_FACTOR = 1.25
   MOE_LAYERS = list(range(NUM_LAYERS))
   PRE_COMPUTE_ATTEN_MASK = False
@@ -4934,7 +4936,7 @@ class PileDCLlamaMediumNoOKNormR1PileEval(PileEval, PileDCLlamaMediumNoOKNorm):
 
 @experiment_registry.register
 class PileDCLlamaMediumNoQKNormR4PileEval(PileEval, PileDCLlamaMediumNoQKNormR4):
-    # PileDCLlamaMediumNoQKNormR4
+    # PileDCLlamaMediumNoQKNormR4v4
     ZERO_LOSS = False
     EVAL_LOOP_NUM_BATCHES = 162
     RESET_FOR_EVAL = False

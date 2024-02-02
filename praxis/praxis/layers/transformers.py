@@ -818,6 +818,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         self.hidden_dims,
     ]
     self._is_ffn1_gated = self.use_gated_activation
+    logging.info(f'self.use_gated_activation: {self.use_gated_activation}')
     wi_init = None
     if self.internal_gshard_variance_scaling_fan_in_init:
       stddev = (1.0 / self.input_dims) ** 0.5
@@ -1061,6 +1062,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     expert_inputs = self._split(expert_inputs, ap.egcm)
 
     if self._is_ffn1_gated:
+      logging.info(f'self._is_ffn1_gated: {self._is_ffn1_gated} ====')
       hidden0 = jnp.einsum('egcm,emh->egch', expert_inputs, theta_wi)
       hidden1 = jnp.einsum('egcm,emh->egch', expert_inputs, theta_wi_gated)
       if self.gating_func in ['top2', 'expert_choice_v2']:
@@ -1674,6 +1676,7 @@ class StackedTransformer(base_layer.BaseLayer):
       AutodiffCheckpointType.SAVE_DOT_EXCEPT_LOGITS_FFN1
   )
   pre_compute_atten_mask: bool = True
+  moe_gated_activation: bool = False
 
   def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
     """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1723,6 +1726,8 @@ class StackedTransformer(base_layer.BaseLayer):
         moe_p.num_groups = self.num_groups
         moe_p.min_group_size = self.min_group_size
         moe_p.gating_func = self.gating_func
+        moe_p.use_gated_activation = self.moe_gated_activation
+
         if moe_p.hidden_dims:
           # MoE hidden_dims could be different from FFN hidden_dims
           p_i.hidden_dims = moe_p.hidden_dims
@@ -1730,6 +1735,7 @@ class StackedTransformer(base_layer.BaseLayer):
 
         logging.info(f'[lsp]hidden_dims11: {p_i.hidden_dims}')
         logging.info(f'[lsp]gating_func: {self.gating_func}')
+        logging.info(f'[lsp]moe_gated_activation: {self.moe_gated_activation}')
 
         p_i.tr_fflayer_tpl = moe_p
 

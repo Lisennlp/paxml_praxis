@@ -42,6 +42,7 @@ from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
+import numpy as np
 
 
 instantiate = base_hyperparams.instantiate
@@ -438,6 +439,11 @@ def _train_and_evaluate_common(
   # loop.
   gc.collect()
   gc.freeze()
+  
+  # lsp: compute model params size
+  num_params = sum(np.prod(p.shape) for p in jax.tree_leaves(partitioned_train_state.mdl_vars))
+  logging.info(f'Total params size: {num_params}')
+
   while True:
     logging.log_first_n(INFO, '[PAX STATUS]: Beginning step `%d`.', 5, step_i)
     save_or_pass = checkpointer.save_if_needed(

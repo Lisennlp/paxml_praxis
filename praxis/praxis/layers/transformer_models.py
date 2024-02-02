@@ -194,6 +194,29 @@ def _set_stacked_transformer_sharding(
         moe_ap.gsm = [a_e_sharding, None, a_m_sharding]
         moe_ap.egcm = a_egcm
         moe_ap.gecm = a_egcm
+
+    # if stacked_p.moe_layer_tpl is not None:
+    #     # Set Moe layer sharding hparams.
+    #     data = ('replica', 'data')
+    #     moe_p = stacked_p.moe_layer_tpl
+    #     moe_wp = moe_p.weight_split_dims_mapping
+    #     # m: data   h: mdl 
+    #     moe_wp.me = [data, None]
+    #     moe_wp.emh = [None, data, 'mdl']
+    #     moe_wp.ehm = [None, 'mdl', data]
+    #     # Activations
+    #     moe_ap = moe_p.activation_split_dims_mapping
+    #     moe_ap.gs = [None, data]
+    #     # dispatch and combine tensors
+    #     moe_ap.gsec = [None, data, None, None]
+    #     moe_ap.gecs = [None, None, None, data]
+    #     moe_ap.gec = [None, None, data] # top2没用到
+    #     moe_ap.gsm = [None, data, 'mdl']
+
+    #     moe_ap.egch = [None, None, None, None]
+    #     moe_ap.egcm = [None, None, None, 'mdl']
+    #     moe_ap.gecm = [None, None, None, 'mdl']
+
     return stacked_transformer_p
 
 

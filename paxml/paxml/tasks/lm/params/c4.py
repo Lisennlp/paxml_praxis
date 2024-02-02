@@ -607,6 +607,19 @@ def configure_gpt3_task(
         task_p.early_stopping_fn = pax_fiddle.Config(EarlyStoppingFn)
         task_p.early_stopping_fn.target_log_pplx = cls.TARGET_LOG_PPLX
 
+    if hasattr(cls, 'MGATE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
+    if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
+    if hasattr(cls, 'NUM_EXPERTS'):  # lsp
+      stacked_p.num_experts = cls.NUM_EXPERTS
+    if hasattr(cls, 'CAPACITY_FACTOR'):  # lsp
+      stacked_p.unadjusted_expert_capacity_factor = cls.CAPACITY_FACTOR
+    if hasattr(cls, 'MOE_LAYERS'):  # lsp
+      stacked_p.moe_layers = cls.MOE_LAYERS
+    if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
+      stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
+
     return task_p
 
 

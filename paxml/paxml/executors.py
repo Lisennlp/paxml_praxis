@@ -24,6 +24,7 @@ import time
 from collections import deque
 from typing import Any, Callable, Optional, Sequence, Tuple
 
+import numpy as np
 from absl import logging
 from etils import epath
 import jax
@@ -431,6 +432,9 @@ def _train_and_evaluate_common(
     step_time_deque = deque(maxlen=5)
     flag = 0
     # 初始化skip file and step
+    num_params = sum(np.prod(p.shape) for p in jax.tree_leaves(partitioned_train_state.mdl_vars))
+    logging.info(f'Total params size: {num_params}')
+
     while True:
         logging.log_first_n(INFO, "[PAX STATUS]: Beginning step `%d`.", 5, step_i)
         step_start = time.time()

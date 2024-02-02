@@ -299,6 +299,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
     norm_policy: str = "pre"
     internal_gshard_variance_scaling_fan_in_init: bool = False
     chunk_size: int = None
+    mgate: bool = False
 
     class WeightSharding(base_layer.BaseLayer.WeightSharding):
         """Represents how layer's learned parameters are partitioned across a mesh.
@@ -444,6 +445,20 @@ class TransformerFeedForward(base_layer.BaseLayer):
             )
             self.create_child("residual_droppath", droppath_p)
 
+    if self.mgate:
+      mgate_p = self.fflayer_tpl.clone()
+      mgate_p.name = 'mgate_layer'
+      mgate_p.input_dims = self.input_dims
+      mgate_p.has_bias = self.has_bias
+      mgate_p.activation_tpl = activation
+      mgate_p.output_dims = self.n_chunks  # lsp: chunks数量即为专家的数目
+      mgate_p.weight_split_dims_mapping.wt = wp.ffn0
+      mgate_p.activation_split_dims_mapping.out = ap.ffn0
+      if self.internal_gshard_variance_scaling_fan_in_init:
+        scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
+        mgate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
+      self.create_child('mgate_layer', mgate_p)
+
     # lsp： ffn层forward
     def __call__(
         self,
@@ -463,6 +478,15 @@ class TransformerFeedForward(base_layer.BaseLayer):
             inputs = self.pre_layer_norm(inputs)
         elif self.norm_policy == "pre":
             inputs = self.layer_norm(inputs)
+
+        if self.mgate:
+          # bld x de -> ble
+          gate_scores = self.mgate_layer(inputs)
+          gate_scores = jax.nn.softmax(gate_scores.astype(jnp.float32), axis=-1)
+          # gate_scores *= self.n_chunks
+          gate_scores = gate_scores.astype(self.fprop_dtype)
+          
+          assert gate_scores.shape[-1] == self.n_chunks, (self.n_chunks, gate_scores.shape[-1])
 
         outputs = None
         print(f'self.n_chunks:{self.n_chunks}')
@@ -1552,6 +1576,8 @@ class StackedTransformer(base_layer.BaseLayer):
     ngrammer_tpls: Optional[Sequence[LayerTpl]] = template_field(None)
     remat: bool = False
     checkpoint_policy: AutodiffCheckpointType = AutodiffCheckpointType.SAVE_DOT_EXCEPT_LOGITS_FFN1
+    pre_compute_atten_mask: bool = True
+    moe_gated_activation: bool = False
 
     def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
         """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1597,9 +1623,16 @@ class StackedTransformer(base_layer.BaseLayer):
                 moe_p.num_groups = self.num_groups
                 moe_p.min_group_size = self.min_group_size
                 moe_p.gating_func = self.gating_func
+                moe_p.use_gated_activation = self.moe_gated_activation
+
                 if moe_p.hidden_dims:
-                    # MoE hidden_dims could be different from FFN hidden_dims
-                    p_i.hidden_dims = moe_p.hidden_dims
+                  # MoE hidden_dims could be different from FFN hidden_dims
+                  p_i.hidden_dims = moe_p.hidden_dims
+                  logging.info(f'[lsp]hidden_dims00: {p_i.hidden_dims}')
+
+                logging.info(f'[lsp]hidden_dims11: {p_i.hidden_dims}')
+                logging.info(f'[lsp]gating_func: {self.gating_func}')
+                logging.info(f'[lsp]moe_gated_activation: {self.moe_gated_activation}')
                 p_i.tr_fflayer_tpl = moe_p
 
             if self.ngrammer_tpls is not None:

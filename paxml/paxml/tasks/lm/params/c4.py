@@ -623,6 +623,8 @@ def configure_gpt3_task(
       stacked_p.num_groups = cls.MOE_NUM_GROUPS
     if hasattr(cls, 'GATING_FUNC'):  # lsp
       stacked_p.gating_func = cls.GATING_FUNC
+    if hasattr(cls, 'MIN_GROUP_SIZE'):  # lsp
+      stacked_p.min_group_size = cls.MIN_GROUP_SIZE
 
     return task_p
 
@@ -1387,14 +1389,33 @@ class Llama7BMoe(Llama7B):
   MOE_GATED_ACTIVATION = True
   NUM_EXPERTS = 8
   GATING_FUNC = 'openmoe_top2'
-  NUM_LAYERS = 20
+  NUM_LAYERS = 12
+  NUM_HEADS = 32
   MOE_LAYERS = list(range(NUM_LAYERS))
   CAPACITY_FACTOR = 1.25
   HIDDEN_DIMS = 5504
-  MODEL_DIMS = 4096
+  MODEL_DIMS = 1024 * 4
   PERCORE_BATCH_SIZE = 1
   ICI_MESH_SHAPE = [1, 8, 1]
   MOE_NUM_GROUPS = 8
+  MIN_GROUP_SIZE = 10
+  FFN_CHUNK_SIZE = None
+  QUERY_CHUNK_SIZE = None
+
+@experiment_registry.register
+class Llama7BDense(Llama7B):
+  QUERY_CHUNK_SIZE = 512
+  MOE_GATED_ACTIVATION = True
+  NUM_EXPERTS = 0
+  NUM_LAYERS = 12
+  NUM_HEADS = 32
+#   MOE_LAYERS = list(range(NUM_LAYERS))
+  MOE_LAYERS = []
+  HIDDEN_DIMS = 5504 * 7
+  MODEL_DIMS = 1024 * 4
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 8, 1]
+  FFN_CHUNK_SIZE = 5504
 
 
 @experiment_registry.register

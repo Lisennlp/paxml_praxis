@@ -49,6 +49,7 @@ import tensorflow.compat.v2 as tf
 from paxml import checkpoints  # mapped to internal
 import wandb
 from paxml import checkpoint_paths
+from flax.traverse_util import flatten_dict, unflatten_dict
 
 
 instantiate = base_hyperparams.instantiate
@@ -432,6 +433,11 @@ def _train_and_evaluate_common(
     step_time_deque = deque(maxlen=5)
     flag = 0
     # 初始化skip file and step
+    logging.info('Start compute model param size and print shape')
+    for k, v in flatten_dict(partitioned_train_state.mdl_vars).items():
+        k = '.'.join(k)
+        logging.info(f'{k}: {v.shape}')
+
     num_params = sum(np.prod(p.shape) for p in jax.tree_leaves(partitioned_train_state.mdl_vars))
     logging.info(f'Total params size: {num_params}')
 

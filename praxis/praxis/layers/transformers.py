@@ -86,6 +86,10 @@ def _take_along_axis(array: Array, indices: Array, axis: int) -> Array:
     else:
         return jnp.take_along_axis(array, indices, axis=axis)
 
+def _favor_one_hot_slices() -> bool:
+  """Returns true iff running on TPUs."""
+  return jax.default_backend() == 'tpu' or jax.devices()[0].platform == 'tpu'
+
 def _top_k(array: Array, k: int) -> Tuple[Array, Array]:
     if _favor_one_hot_slices():
         top_k_indices = jax.lax.top_k(array, k)[-1]
@@ -93,7 +97,6 @@ def _top_k(array: Array, k: int) -> Tuple[Array, Array]:
         return top_k_values, top_k_indices
     else:
         return jax.lax.top_k(array, k)
-
 
 def _num_groups(num_experts,
         num_tokens: int,
@@ -958,9 +961,18 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         return combined_output, aux_loss
 
 
-    def _call_experts(self, expert_inputs, enable_dropout):
+    def _call_experts(self, expert_inputs, expert_index, compute_n_expert):
+        """
+        expert_inputs: gecm
+        """
+        theta_wi, theta_wo = self.theta["wi_0"][expert_index: expert_index + compute_n_expert], self.theta["wo_0"][expert_index: expert_index + compute_n_expert]
+        if self._is_ffn1_gated:
+            theta_wi_gated = self.theta["wi_gate_0"][expert_index: expert_index + compute_n_expert]
+
         num_groups, num_experts, capacity, *hidden_dims = expert_inputs.shape
-        expert_inputs = self._split(expert_inputs, (('replica', 'data'), None, 'mdl'))
+        assert num_experts == theta_wi.shape[0]
+       
+        expert_inputs = self._split(expert_inputs, (('replica', 'data'), None, None,'mdl'))
 
         if self._is_ffn1_gated:
             hidden0 = jnp.einsum("gecm,emh->gech", expert_inputs, theta_wi)
@@ -976,33 +988,34 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             # if self.gating_func in ["top2", "expert_choice_v2"]:
             #     self._count_dead_neurons(hidden, dispatch_tensor)
             hidden = self.activation(hidden)
-        return hidden
+
+        expert_output = jnp.einsum("gech,ehm->gecm", hidden, theta_wo)
+        expert_output = self._split(expert_output, (('replica', 'data'), None, None, 'mdl'))
+        
+        return expert_output
 
     def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids, z_loss=False):
         topn = 2
         fprop_dtype = self.fprop_dtype
         ap = self.activation_split_dims_mapping
         output_dims = self.input_dims
-        theta_wi, theta_wo = self.theta["wi_0"], self.theta["wo_0"]
-        if self._is_ffn1_gated:
-            theta_wi_gated = self.theta["wi_gate_0"]
         token_shape = inputs.shape[:-1]
         num_tokens = np.prod(token_shape)
         m_dim = inputs.shape[-1]
-        if paddings is not None:
-            assert paddings.shape == token_shape
-
-        max_group_size = token_shape * self.unadjusted_expert_capacity_factor
+       
+        max_group_size = float(inputs.shape[1]) * self.unadjusted_expert_capacity_factor
         # num_groups = _num_groups(num_tokens, max_group_size)
         num_groups = self.num_groups
 
         tokens_per_group = num_tokens // num_groups
-        logging.info(f'tokens_per_group: {tokens_per_group}')
+        logging.info(f'unadjusted_expert_capacity_factor: {self.unadjusted_expert_capacity_factor}')
 
         expert_capacity = int(self.unadjusted_expert_capacity_factor * tokens_per_group / self.num_experts)
         expert_capacity = max(expert_capacity, self.min_group_size)
+        logging.info(f'expert_capacity: {expert_capacity}')
         # gsm
         grouped_inputs = jnp.reshape(inputs, (num_groups, tokens_per_group, output_dims))
+
         grouped_inputs = self._split(grouped_inputs, (('replica', 'data'), None, None))
         token_inputs = jax.lax.convert_element_type(grouped_inputs, jnp.float32)
         # gse
@@ -1015,12 +1028,16 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         # g * s * top2
         expert_gate, expert_index = _top_k(router_probs, k=topn)
 
-        # if paddings is not None:
-        #     gate_mask = jnp.expand_dims(paddings, axis=-1)
-        #     expert_gate *= gate_mask
-        #     expert_index *= 2 * gate_mask - 1.
-        #     expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
-        #     router_probs *= gate_mask
+        if paddings is not None:
+            assert paddings.shape == token_shape
+            nonpaddings = 1.0 - paddings
+            nonpaddings = jnp.reshape(nonpaddings, grouped_inputs.shape[:2])
+            gate_mask = jnp.expand_dims(nonpaddings, axis=-1)
+            expert_gate *= gate_mask
+
+            expert_index *= 2 * gate_mask - 1.
+            expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
+            router_probs *= gate_mask
 
         aux_loss = _load_balancing_loss(router_probs, expert_index)
         # lsp
@@ -1036,47 +1053,52 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         # g * 2s
         expert_index = expert_index.reshape(num_groups, -1)
         # g * 2s * e
-        expert_mask = jax.nn.one_hot(expert_index, num_experts, dtype=jnp.int32)
+        expert_mask = jax.nn.one_hot(expert_index, self.num_experts, dtype=jnp.int32)
+
         # g * 2s * e
         token_priority = jnp.cumsum(expert_mask, axis=1) * expert_mask - 1.0
         # g * 2 * s * e
-        token_priority = token_priority.reshape(
-            (num_groups, self.num_selected_experts, -1, num_experts))
+        token_priority = token_priority.reshape(num_groups, topn, -1, self.num_experts)
         # g * s * 2 * e
         token_priority = jnp.swapaxes(token_priority, 1, 2)
         # g * s *  e
         token_priority = jnp.max(token_priority, axis=2)
         # g * s *  e
         token_priority = self._split(token_priority, (('replica', 'data'), None, None))
-        # 专家概率mask： g * s * e * c
-        dispatch_mask = jax.nn.one_hot(token_priority, expert_capacity, dtype=jnp.bool_)
-        # gsec
-        combine_array = jnp.einsum(
-            '...se,...sec->...sec',
-            router_probs,
-            dispatch_mask,
-            precision=jax.lax.Precision.DEFAULT)
-        combine_array = jax.lax.convert_element_type(combine_array, fprop_dtype)
 
-         # 专家的输入mask：gsm x gsec -> gecm
-        expert_inputs = jnp.einsum(
-            'gs...,gsec->gec...',
-            token_inputs,
-            dispatch_mask,
-            precision=jax.lax.Precision.DEFAULT
-            )
-        # egch
-        expert_outputs = self._call_experts(expert_inputs)
-        expert_outputs = jax.lax.convert_element_type(expert_outputs, fprop_dtype)
+        combined_outputs = None
+        compute_n_expert = 4
+        for expert_index in range(0, token_priority.shape[2], compute_n_expert):
+            logging.info(f'expert_index: {expert_index}')
+            _token_priority = token_priority[..., expert_index: expert_index+compute_n_expert]
+            _router_probs = router_probs[..., expert_index: expert_index+compute_n_expert]
+            # 专家概率mask： g * s * e * c
+            _dispatch_mask = jax.nn.one_hot(_token_priority, expert_capacity, dtype=jnp.bool_)
+            # gsec
+            _combine_array = jnp.einsum('...se,...sec->...sec', _router_probs, _dispatch_mask)
+            _combine_array = jax.lax.convert_element_type(_combine_array, fprop_dtype)
 
-        # Shape: [num_groups, tokens_per_group, hidden_dims]
-        # 专家的输出 * 专家的权重:  gech * gsec -> gsh
-        combined_outputs = jnp.einsum(
-            'gec...,gsec->gs...',
-            expert_outputs,
-            combine_array,
-            precision=jax.lax.Precision.DEFAULT,
-        )
+            # 专家的输入mask：gsm x gsec -> gecm
+            _expert_inputs = jnp.einsum('gs...,gsec->gec...', token_inputs, _dispatch_mask)
+            _expert_inputs = jax.lax.convert_element_type(_expert_inputs, fprop_dtype)
+            # gecm
+            logging.info(f'_expert_inputs: {_expert_inputs.shape}')
+            # g * 1 * c * m
+            _expert_outputs = self._call_experts(_expert_inputs, expert_index, compute_n_expert)
+            _combined_outputs = jnp.einsum('gec...,gsec->gs...', _expert_outputs, _combine_array)
+            combined_outputs = _combined_outputs if combined_outputs is None else combined_outputs + _combined_outputs
+
+        # # expert dim to cat
+        # expert_outputs = jnp.concatenate(expert_outputs, axis=1)
+        # # g * e * c * m
+        # expert_outputs = self._split(expert_outputs, (('replica', 'data'), None, None, 'mdl'))
+
+        # expert_outputs = jax.lax.convert_element_type(expert_outputs, fprop_dtype)
+        # # Shape: [num_groups, tokens_per_group, hidden_dims]
+        # # 专家的输出 * 专家的权重:  gech * gsec -> gsh
+        # combined_outputs = jnp.einsum('gec...,gsec->gs...', expert_outputs, combine_array)
+        # combined_outputs = combined_outputs.reshape(*inputs.shape)
+        # combined_outputs = self._split(combined_outputs, (('replica', 'data'), None, 'mdl'))
         return combined_outputs, aux_loss
 
     def _dispatch_and_combine_expert_outputs(self, inputs, paddings, segment_ids):
@@ -1547,6 +1569,8 @@ class Transformer(base_layer.BaseLayer):
         # if not isinstance(atten_outputs, list):
         #     atten_outputs = [atten_outputs]
         logging.info(f'atten_outputs length: {len(atten_outputs)}')
+        # return atten_outputs, None  # pytype: disable=bad-return-type  # jax-ndarray
+
         outputs = jnp.empty(atten_outputs.shape, dtype=atten_outputs.dtype)
         query_size = atten_outputs.shape[1] // 1
         # query_size = 1024
@@ -1829,6 +1853,7 @@ class StackedTransformer(base_layer.BaseLayer):
                 moe_p.min_group_size = self.min_group_size
                 moe_p.gating_func = self.gating_func
                 moe_p.use_gated_activation = self.moe_gated_activation
+                moe_p.unadjusted_expert_capacity_factor = self.unadjusted_expert_capacity_factor
 
                 if moe_p.hidden_dims:
                   # MoE hidden_dims could be different from FFN hidden_dims
@@ -1838,6 +1863,8 @@ class StackedTransformer(base_layer.BaseLayer):
                 logging.info(f'[lsp]hidden_dims11: {p_i.hidden_dims}')
                 logging.info(f'[lsp]gating_func: {self.gating_func}')
                 logging.info(f'[lsp]moe_gated_activation: {self.moe_gated_activation}')
+                logging.info(f'[lsp]unadjusted_expert_capacity_factor: {self.unadjusted_expert_capacity_factor}')
+                
                 p_i.tr_fflayer_tpl = moe_p
 
             if self.ngrammer_tpls is not None:

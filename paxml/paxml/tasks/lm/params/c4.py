@@ -620,6 +620,9 @@ def configure_gpt3_task(
     if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
       stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
 
+    if hasattr(cls, 'MOE_NUM_GROUPS'):  # lsp
+      stacked_p.num_groups = cls.MOE_NUM_GROUPS
+
     return task_p
 
 
@@ -1385,6 +1388,12 @@ class Llama7BMoe(Llama7B):
   NUM_LAYERS = 20
   MOE_LAYERS = list(range(NUM_LAYERS))
   CAPACITY_FACTOR = 1.25
+  HIDDEN_DIMS = 5504
+  MODEL_DIMS = 4096
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 8, 1]
+  MOE_NUM_GROUPS = 8
+
 
 @experiment_registry.register
 class Llama7BMultiSlice(Llama7B):

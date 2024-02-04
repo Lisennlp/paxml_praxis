@@ -54,6 +54,87 @@ SplitDimsMapping = pytypes.SplitDimsMapping
 AutodiffCheckpointType = checkpoint_policy.AutodiffCheckpointType
 
 
+def _take_along_axis(array: Array, indices: Array, axis: int) -> Array:
+    if array.ndim != indices.ndim:
+        raise ValueError(
+            'indices and array must have the same number of dimensions; '
+            f'{indices.ndim} vs. {array.ndim}.')
+
+    if (axis != -1 and axis != array.ndim - 1 and  # Not last dimension
+        axis != 1 and axis != -array.ndim + 1):  # Not second dimension
+        raise ValueError(
+            'Only slices along the second or last dimension are supported; '
+            f'array.ndim = {array.ndim}, while axis = {axis}.')
+
+    if _favor_one_hot_slices():
+        one_hot_length = array.shape[axis]
+        one_hot_indices = jax.nn.one_hot(indices, one_hot_length, axis=axis)
+
+        if axis == -1 or array.ndim == 1:
+            result = jnp.einsum(
+                '...s,...is->...i',
+                array,
+                one_hot_indices,
+                precision=jax.lax.Precision.HIGHEST)
+        else:
+            result = jnp.einsum(
+                'ns...,nis...->ni...',
+                array,
+                one_hot_indices,
+                precision=jax.lax.Precision.HIGHEST)
+        return jax.lax.convert_element_type(result, array.dtype)
+    else:
+        return jnp.take_along_axis(array, indices, axis=axis)
+
+def _top_k(array: Array, k: int) -> Tuple[Array, Array]:
+    if _favor_one_hot_slices():
+        top_k_indices = jax.lax.top_k(array, k)[-1]
+        top_k_values = _take_along_axis(array, top_k_indices, axis=-1)
+        return top_k_values, top_k_indices
+    else:
+        return jax.lax.top_k(array, k)
+
+
+def _num_groups(num_experts,
+        num_tokens: int,
+        max_group_size: int,
+) -> int:
+    min_num_groups = num_tokens // max_group_size
+    min_num_groups = max(min_num_groups,  num_experts)
+    def viable(n):
+        return num_tokens % n == 0 and n % num_experts == 0
+    num_groups = min_num_groups
+    while num_groups < num_tokens and not viable(num_groups):
+        num_groups += 1
+    if num_tokens % num_groups > 0:
+        raise ValueError(f'Error: num_tokens‘{num_tokens}’ % ‘{num_groups}’ > 0')
+    group_size = num_tokens // num_groups
+
+    logging.info(f'max_group_size: {max_group_size} real group_size: {group_size}; num_experts: {num_experts} num_groups: {num_groups} num_tokens: {num_tokens}')
+    return num_groups
+
+
+def _load_balancing_loss(router_probs: Array, expert_indices: Array) -> float:
+  num_experts = router_probs.shape[-1]
+  # Shape: [num_groups, tokens_per_group, num_selected_experts, num_experts].
+  expert_mask = jax.nn.one_hot(expert_indices, num_experts, dtype=jnp.int32)
+  # For a given token, determine if it was routed to a given expert.
+  # Shape: [num_groups, tokens_per_group, num_experts]
+  expert_mask = jnp.max(expert_mask, axis=-2)
+
+  tokens_per_group_and_expert = jnp.mean(
+      expert_mask, dtype=jnp.float32, axis=-2)
+  router_prob_per_group_and_expert = jnp.mean(
+      router_probs, dtype=jnp.float32, axis=-2)
+  return (
+      jnp.mean(  # pytype: disable=bad-return-type  # jnp-type
+          tokens_per_group_and_expert * router_prob_per_group_and_expert,
+          dtype=jnp.float32,
+      )
+      * num_experts**2
+  )
+
+
 def _rms(x):
     # Note: under pmap .mean() will produce a local mean, not across all hosts.
     return (x**2.0).mean().astype(jnp.float32) ** 0.5
@@ -875,6 +956,124 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         combined_output = self._split(combined_output, ap.gsm)
         aux_loss = jnp.array(0.0)
         return combined_output, aux_loss
+
+
+    def _call_experts(self, expert_inputs, enable_dropout):
+        num_groups, num_experts, capacity, *hidden_dims = expert_inputs.shape
+        expert_inputs = self._split(expert_inputs, (('replica', 'data'), None, 'mdl'))
+
+        if self._is_ffn1_gated:
+            # e: expert    g:batch?   c: seleted token?  m: model dim?
+            hidden0 = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi)
+            hidden1 = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi_gated)
+            if self.gating_func in ["top2", "expert_choice_v2"]:
+                self._count_dead_neurons(hidden1, dispatch_tensor)
+            hidden1 = self.activation(hidden1)
+            hidden = hidden1 * hidden0
+        else:
+            hidden = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi)
+            hidden = self._split(hidden, ap.egch)
+            if self.gating_func in ["top2", "expert_choice_v2"]:
+                self._count_dead_neurons(hidden, dispatch_tensor)
+            hidden = self.activation(hidden)
+
+
+
+    def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids):
+        topn = 2
+        fprop_dtype = self.fprop_dtype
+        ap = self.activation_split_dims_mapping
+        output_dims = self.input_dims
+        theta_wi, theta_wo = self.theta["wi_0"], self.theta["wo_0"]
+        if self._is_ffn1_gated:
+            theta_wi_gated = self.theta["wi_gate_0"]
+        token_shape = inputs.shape[:-1]
+        num_tokens = np.prod(token_shape)
+        m_dim = inputs.shape[-1]
+        if paddings is not None:
+            assert paddings.shape == token_shape
+
+        max_group_size = token_shape * self.unadjusted_expert_capacity_factor
+        num_groups = _num_groups(num_tokens, max_group_size)
+        tokens_per_group = num_tokens // num_groups
+
+        expert_capacity = int(self.unadjusted_expert_capacity_factor * tokens_per_group / self.num_experts)
+        expert_capacity = max(expert_capacity, self.min_group_size)
+
+        grouped_inputs = jnp.reshape(inputs, (num_groups, tokens_per_group, output_dims))
+        grouped_inputs = self._split(grouped_inputs, ('replica', 'data', 'mdl'))
+        token_inputs = jax.lax.convert_element_type(grouped_inputs, jnp.float32)
+
+        router_logits = jnp.einsum("gsm,me->gse", token_inputs, self.theta.gate)
+        router_probs = jax.nn.softmax(router_logits, axis=-1)
+        expert_gate, expert_index = _top_k(router_probs, k=topn)
+
+        if paddings is not None:
+            gate_mask = jnp.expand_dims(paddings, axis=-1)
+            expert_gate *= gate_mask
+            expert_index *= 2 * gate_mask - 1.
+            expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
+            router_probs *= gate_mask
+
+        auxiliary_loss = _load_balancing_loss(router_probs, expert_index)
+
+        expert_index = jnp.swapaxes(expert_index, 1, 2)
+
+        # Shape: [num_groups, num_selected_experts * tokens_per_group]
+        expert_index = expert_index.reshape(num_groups, -1)
+
+        # Create mask out of indices.
+        # Shape: [num_groups, tokens_per_group * num_selected_experts, num_experts].
+        expert_mask = jax.nn.one_hot(expert_index, num_experts, dtype=jnp.int32)
+
+        # Shape: [num_groups, tokens_per_group * num_selected_experts, num_experts].
+        token_priority = jnp.cumsum(expert_mask, axis=1) * expert_mask - 1.0
+        # Shape: [num_groups, num_selected_experts, tokens_per_group, num_experts].
+        token_priority = token_priority.reshape(
+            (num_groups, self.num_selected_experts, -1, num_experts))
+        # Shape: [num_groups, tokens_per_group, num_selected_experts, num_experts].
+        token_priority = jnp.swapaxes(token_priority, 1, 2)
+        # Shape: [num_groups, tokens_per_group, num_experts].
+        token_priority = jnp.max(token_priority, axis=2)
+       
+        # the range [0, expert_capacity).
+        # Shape: [num_groups, tokens_per_group, num_experts, expert_capacity].
+        dispatch_mask = jax.nn.one_hot(
+            token_priority, expert_capacity, dtype=jnp.bool_)
+
+        # The combine array will be used for combining expert outputs, scaled by the
+        # router probabilities. Shape: [num_groups, tokens_per_group, num_experts,
+        # expert_capacity].
+        combine_array = jnp.einsum(
+            '...te,...tec->...tec',
+            router_probs,
+            dispatch_mask,
+            precision=jax.lax.Precision.DEFAULT)
+
+        # Return to default dtype now that router computation is complete.
+        combine_array = jax.lax.convert_element_type(combine_array, fprop_dtype)
+
+         # Shape: [num_groups, num_experts, expert_capacity, hidden_dims].
+        expert_inputs = jnp.einsum(
+            'gt...,gtec->gec...',
+            token_inputs,
+            dispatch_mask,
+            precision=jax.lax.Precision.DEFAULT
+            )
+
+        
+        expert_outputs = self._call_experts(expert_inputs, enable_dropout)
+
+        # Shape: [num_groups, tokens_per_group, hidden_dims]
+        combined_outputs = jnp.einsum(
+            'gec...,gtec->gt...',
+            expert_outputs,
+            combine_array,
+            precision=jax.lax.Precision.DEFAULT,
+        )
+        # RouterMask(dispatch_mask, combine_array, auxiliary_loss)
+
+
 
     def _dispatch_and_combine_expert_outputs(self, inputs, paddings, segment_ids):
         """Combine expert outputs using GShard-style dispatch-combine tensors."""

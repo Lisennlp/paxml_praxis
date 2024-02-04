@@ -625,6 +625,8 @@ def configure_gpt3_task(
       stacked_p.gating_func = cls.GATING_FUNC
     if hasattr(cls, 'MIN_GROUP_SIZE'):  # lsp
       stacked_p.min_group_size = cls.MIN_GROUP_SIZE
+    if hasattr(cls, 'EXPERT_CHUNK_SIZE'):  # lsp
+      stacked_p.expert_chunk_size = cls.EXPERT_CHUNK_SIZE
 
     return task_p
 
@@ -1401,6 +1403,7 @@ class Llama7BMoe(Llama7B):
   MIN_GROUP_SIZE = 10
   FFN_CHUNK_SIZE = None
   QUERY_CHUNK_SIZE = None
+  EXPERT_CHUNK_SIZE = None
 
 @experiment_registry.register
 class Llama7BDense(Llama7B):

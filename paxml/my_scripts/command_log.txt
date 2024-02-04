@@ -222,6 +222,12 @@ EXP=Llama7B
 python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee L34_QP2048_Fscan2048_LMn_8192x1.log
 
 
+TPU_NAME=llm-jax-v3-8-10
+ZONE=us-central1-a
+EXP=Llama7BMoe
+cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git; mv paxml_praxis/*  projects/;sudo rm -r paxml_praxis
+python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee openmoe_L20_E8_B1_M1x8x1_.Llama
+
 
 TPU_NAME=llm-jax-v3-32-10
 ZONE=us-east1-d

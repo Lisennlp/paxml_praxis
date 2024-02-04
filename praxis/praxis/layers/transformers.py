@@ -721,7 +721,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     gating_logit_cap: float = 0.0
     moe_gating_embedding_level: str = "token"
     use_gated_activation: bool = False
-
+    expert_chunk_size: int = None
     # SPMD partition related params.
     # M - model_dim, for both inputs and outputs
     # E - experts dim
@@ -1066,8 +1066,13 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         # g * s *  e
         token_priority = self._split(token_priority, (('replica', 'data'), None, None))
 
+        if self.expert_chunk_size is None:
+            compute_n_expert = self.num_experts
+        else:
+            compute_n_expert = self.num_experts // self.expert_chunk_size
+
         combined_outputs = None
-        compute_n_expert = 4
+        assert self.num_experts % self.expert_chunk_size == 0
         for expert_index in range(0, token_priority.shape[2], compute_n_expert):
             logging.info(f'expert_index: {expert_index}')
             _token_priority = token_priority[..., expert_index: expert_index+compute_n_expert]
@@ -1807,6 +1812,7 @@ class StackedTransformer(base_layer.BaseLayer):
     checkpoint_policy: AutodiffCheckpointType = AutodiffCheckpointType.SAVE_DOT_EXCEPT_LOGITS_FFN1
     pre_compute_atten_mask: bool = True
     moe_gated_activation: bool = False
+    expert_chunk_size: int = None
 
     def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
         """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1854,6 +1860,7 @@ class StackedTransformer(base_layer.BaseLayer):
                 moe_p.gating_func = self.gating_func
                 moe_p.use_gated_activation = self.moe_gated_activation
                 moe_p.unadjusted_expert_capacity_factor = self.unadjusted_expert_capacity_factor
+                moe_p.expert_chunk_size = self.expert_chunk_size
 
                 if moe_p.hidden_dims:
                   # MoE hidden_dims could be different from FFN hidden_dims

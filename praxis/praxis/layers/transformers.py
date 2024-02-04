@@ -963,23 +963,22 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         expert_inputs = self._split(expert_inputs, (('replica', 'data'), None, 'mdl'))
 
         if self._is_ffn1_gated:
-            # e: expert    g:batch?   c: seleted token?  m: model dim?
-            hidden0 = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi)
-            hidden1 = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi_gated)
-            if self.gating_func in ["top2", "expert_choice_v2"]:
-                self._count_dead_neurons(hidden1, dispatch_tensor)
+            hidden0 = jnp.einsum("gecm,emh->gech", expert_inputs, theta_wi)
+            hidden1 = jnp.einsum("gecm,emh->gech", expert_inputs, theta_wi_gated)
+            # if self.gating_func in ["top2", "expert_choice_v2"]:
+            #     self._count_dead_neurons(hidden1, dispatch_tensor)
             hidden1 = self.activation(hidden1)
             hidden = hidden1 * hidden0
+            hidden = self._split(hidden, (('replica', 'data'), None, None, 'mdl'))
         else:
-            hidden = jnp.einsum("gecm,emh->egch", expert_inputs, theta_wi)
-            hidden = self._split(hidden, ap.egch)
-            if self.gating_func in ["top2", "expert_choice_v2"]:
-                self._count_dead_neurons(hidden, dispatch_tensor)
+            hidden = jnp.einsum("gecm,emh->gech", expert_inputs, theta_wi)
+            hidden = self._split(hidden, (('replica', 'data'), None, None, 'mdl'))
+            # if self.gating_func in ["top2", "expert_choice_v2"]:
+            #     self._count_dead_neurons(hidden, dispatch_tensor)
             hidden = self.activation(hidden)
+        return hidden
 
-
-
-    def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids):
+    def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids, z_loss=False):
         topn = 2
         fprop_dtype = self.fprop_dtype
         ap = self.activation_split_dims_mapping
@@ -994,86 +993,91 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             assert paddings.shape == token_shape
 
         max_group_size = token_shape * self.unadjusted_expert_capacity_factor
-        num_groups = _num_groups(num_tokens, max_group_size)
+        # num_groups = _num_groups(num_tokens, max_group_size)
+        num_groups = self.num_groups
+
         tokens_per_group = num_tokens // num_groups
+        logging.info(f'tokens_per_group: {tokens_per_group}')
 
         expert_capacity = int(self.unadjusted_expert_capacity_factor * tokens_per_group / self.num_experts)
         expert_capacity = max(expert_capacity, self.min_group_size)
-
+        # gsm
         grouped_inputs = jnp.reshape(inputs, (num_groups, tokens_per_group, output_dims))
-        grouped_inputs = self._split(grouped_inputs, ('replica', 'data', 'mdl'))
+        grouped_inputs = self._split(grouped_inputs, (('replica', 'data'), None, None))
         token_inputs = jax.lax.convert_element_type(grouped_inputs, jnp.float32)
-
+        # gse
         router_logits = jnp.einsum("gsm,me->gse", token_inputs, self.theta.gate)
+        router_logits = self._split(router_logits, (('replica', 'data'), None, None))
+
+        # gse
         router_probs = jax.nn.softmax(router_logits, axis=-1)
+        router_probs = self._split(router_probs, (('replica', 'data'), None, None))
+        # g * s * top2
         expert_gate, expert_index = _top_k(router_probs, k=topn)
 
-        if paddings is not None:
-            gate_mask = jnp.expand_dims(paddings, axis=-1)
-            expert_gate *= gate_mask
-            expert_index *= 2 * gate_mask - 1.
-            expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
-            router_probs *= gate_mask
+        # if paddings is not None:
+        #     gate_mask = jnp.expand_dims(paddings, axis=-1)
+        #     expert_gate *= gate_mask
+        #     expert_index *= 2 * gate_mask - 1.
+        #     expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
+        #     router_probs *= gate_mask
 
-        auxiliary_loss = _load_balancing_loss(router_probs, expert_index)
+        aux_loss = _load_balancing_loss(router_probs, expert_index)
+        # lsp
+        if z_loss:
+            # <=> torch.logsumexp(logits, dim = -1)
+            router_z_loss = jnp.log(jnp.sum(jnp.exp(router_logits), dim=-1))
+            router_z_loss = jnp.square(router_z_loss)            
+            router_z_loss = router_z_loss.mean()
+            aux_loss += router_z_loss
 
+        # g * 2 * s
         expert_index = jnp.swapaxes(expert_index, 1, 2)
-
-        # Shape: [num_groups, num_selected_experts * tokens_per_group]
+        # g * 2s
         expert_index = expert_index.reshape(num_groups, -1)
-
-        # Create mask out of indices.
-        # Shape: [num_groups, tokens_per_group * num_selected_experts, num_experts].
+        # g * 2s * e
         expert_mask = jax.nn.one_hot(expert_index, num_experts, dtype=jnp.int32)
-
-        # Shape: [num_groups, tokens_per_group * num_selected_experts, num_experts].
+        # g * 2s * e
         token_priority = jnp.cumsum(expert_mask, axis=1) * expert_mask - 1.0
-        # Shape: [num_groups, num_selected_experts, tokens_per_group, num_experts].
+        # g * 2 * s * e
         token_priority = token_priority.reshape(
             (num_groups, self.num_selected_experts, -1, num_experts))
-        # Shape: [num_groups, tokens_per_group, num_selected_experts, num_experts].
+        # g * s * 2 * e
         token_priority = jnp.swapaxes(token_priority, 1, 2)
-        # Shape: [num_groups, tokens_per_group, num_experts].
+        # g * s *  e
         token_priority = jnp.max(token_priority, axis=2)
-       
-        # the range [0, expert_capacity).
-        # Shape: [num_groups, tokens_per_group, num_experts, expert_capacity].
-        dispatch_mask = jax.nn.one_hot(
-            token_priority, expert_capacity, dtype=jnp.bool_)
-
-        # The combine array will be used for combining expert outputs, scaled by the
-        # router probabilities. Shape: [num_groups, tokens_per_group, num_experts,
-        # expert_capacity].
+        # g * s *  e
+        token_priority = self._split(token_priority, (('replica', 'data'), None, None))
+        # 专家概率mask： g * s * e * c
+        dispatch_mask = jax.nn.one_hot(token_priority, expert_capacity, dtype=jnp.bool_)
+        # gsec
         combine_array = jnp.einsum(
-            '...te,...tec->...tec',
+            '...se,...sec->...sec',
             router_probs,
             dispatch_mask,
             precision=jax.lax.Precision.DEFAULT)
-
-        # Return to default dtype now that router computation is complete.
         combine_array = jax.lax.convert_element_type(combine_array, fprop_dtype)
 
-         # Shape: [num_groups, num_experts, expert_capacity, hidden_dims].
+         # 专家的输入mask：gsm x gsec -> gecm
         expert_inputs = jnp.einsum(
-            'gt...,gtec->gec...',
+            'gs...,gsec->gec...',
             token_inputs,
             dispatch_mask,
             precision=jax.lax.Precision.DEFAULT
             )
-
-        
-        expert_outputs = self._call_experts(expert_inputs, enable_dropout)
+        # egch
+        expert_outputs = self._call_experts(expert_inputs)
+        expert_outputs = jax.lax.convert_element_type(expert_outputs, fprop_dtype)
 
         # Shape: [num_groups, tokens_per_group, hidden_dims]
+        # 专家的输出 * 专家的权重:  gech * gsec -> gsh
         combined_outputs = jnp.einsum(
-            'gec...,gtec->gt...',
+            'gec...,gsec->gs...',
             expert_outputs,
             combine_array,
             precision=jax.lax.Precision.DEFAULT,
         )
-        # RouterMask(dispatch_mask, combine_array, auxiliary_loss)
-
-
+        return combined_outputs, aux_loss
 
     def _dispatch_and_combine_expert_outputs(self, inputs, paddings, segment_ids):
         """Combine expert outputs using GShard-style dispatch-combine tensors."""
@@ -1263,6 +1267,8 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
         if self.gating_func == "dense_top2":
             outputs, aux_loss = self._combine_top2_expert_outputs(inputs, paddings, segment_ids)
+        elif self.gating_func == "openmoe_top2":
+            outputs, aux_loss = self._dispatch_and_combine_expert_outputs_openmoe(inputs, paddings, segment_ids)
         else:
             outputs, aux_loss = self._dispatch_and_combine_expert_outputs(
                 inputs, paddings, segment_ids

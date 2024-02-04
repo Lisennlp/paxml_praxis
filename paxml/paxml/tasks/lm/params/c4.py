@@ -619,9 +619,10 @@ def configure_gpt3_task(
       stacked_p.moe_layers = cls.MOE_LAYERS
     if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
       stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
-
     if hasattr(cls, 'MOE_NUM_GROUPS'):  # lsp
       stacked_p.num_groups = cls.MOE_NUM_GROUPS
+    if hasattr(cls, 'GATING_FUNC'):  # lsp
+      stacked_p.gating_func = cls.GATING_FUNC
 
     return task_p
 
@@ -1385,6 +1386,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
 class Llama7BMoe(Llama7B):
   MOE_GATED_ACTIVATION = True
   NUM_EXPERTS = 8
+  GATING_FUNC = 'openmoe_top2'
   NUM_LAYERS = 20
   MOE_LAYERS = list(range(NUM_LAYERS))
   CAPACITY_FACTOR = 1.25

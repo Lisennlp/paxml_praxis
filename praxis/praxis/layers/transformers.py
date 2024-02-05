@@ -722,6 +722,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
     moe_gating_embedding_level: str = "token"
     use_gated_activation: bool = False
     expert_chunk_size: int = None
+    router_z_loss: bool = False
     # SPMD partition related params.
     # M - model_dim, for both inputs and outputs
     # E - experts dim
@@ -994,7 +995,8 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         
         return expert_output
 
-    def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids, z_loss=False):
+    def _dispatch_and_combine_expert_outputs_openmoe(self, inputs, paddings, segment_ids):
+        logging.info(f'Enter openmoe top2 router.....')
         topn = 2
         fprop_dtype = self.fprop_dtype
         ap = self.activation_split_dims_mapping
@@ -1041,7 +1043,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
         aux_loss = _load_balancing_loss(router_probs, expert_index)
         # lsp
-        if z_loss:
+        if self.router_z_loss:
             # <=> torch.logsumexp(logits, dim = -1)
             router_z_loss = jnp.log(jnp.sum(jnp.exp(router_logits), dim=-1))
             router_z_loss = jnp.square(router_z_loss)            
@@ -1082,7 +1084,6 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             # gsec
             _combine_array = jnp.einsum('...se,...sec->...sec', _router_probs, _dispatch_mask)
             _combine_array = jax.lax.convert_element_type(_combine_array, fprop_dtype)
-
             # 专家的输入mask：gsm x gsec -> gecm
             _expert_inputs = jnp.einsum('gs...,gsec->gec...', token_inputs, _dispatch_mask)
             _expert_inputs = jax.lax.convert_element_type(_expert_inputs, fprop_dtype)
@@ -1093,21 +1094,11 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             _combined_outputs = jnp.einsum('gec...,gsec->gs...', _expert_outputs, _combine_array)
             combined_outputs = _combined_outputs if combined_outputs is None else combined_outputs + _combined_outputs
 
-        # # expert dim to cat
-        # expert_outputs = jnp.concatenate(expert_outputs, axis=1)
-        # # g * e * c * m
-        # expert_outputs = self._split(expert_outputs, (('replica', 'data'), None, None, 'mdl'))
-
-        # expert_outputs = jax.lax.convert_element_type(expert_outputs, fprop_dtype)
-        # # Shape: [num_groups, tokens_per_group, hidden_dims]
-        # # 专家的输出 * 专家的权重:  gech * gsec -> gsh
-        # combined_outputs = jnp.einsum('gec...,gsec->gs...', expert_outputs, combine_array)
-        # combined_outputs = combined_outputs.reshape(*inputs.shape)
-        # combined_outputs = self._split(combined_outputs, (('replica', 'data'), None, 'mdl'))
         return combined_outputs, aux_loss
 
     def _dispatch_and_combine_expert_outputs(self, inputs, paddings, segment_ids):
         """Combine expert outputs using GShard-style dispatch-combine tensors."""
+        logging.info(f'Enter paxml top2 router.....')
         fprop_dtype = self.fprop_dtype
         ap = self.activation_split_dims_mapping
         output_dims = self.input_dims
@@ -1190,6 +1181,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             capacity_factor=self.unadjusted_expert_capacity_factor,
             mask_dtype=jnp.int32,
             gating_logit_cap=self.gating_logit_cap,
+            z_loss=self.router_z_loss
         )
 
         if self.gating_func in ["top2", "topk"]:
@@ -1813,6 +1805,7 @@ class StackedTransformer(base_layer.BaseLayer):
     pre_compute_atten_mask: bool = True
     moe_gated_activation: bool = False
     expert_chunk_size: int = None
+    router_z_loss: bool = False
 
     def _clone_layer_params(self, layer_tpl: LayerTpl) -> LayerTpl:
         """Useful to let sublasses switch the class (e.g. Streaming version)."""
@@ -1861,6 +1854,7 @@ class StackedTransformer(base_layer.BaseLayer):
                 moe_p.use_gated_activation = self.moe_gated_activation
                 moe_p.unadjusted_expert_capacity_factor = self.unadjusted_expert_capacity_factor
                 moe_p.expert_chunk_size = self.expert_chunk_size
+                moe_p.router_z_loss = self.router_z_loss
 
                 if moe_p.hidden_dims:
                   # MoE hidden_dims could be different from FFN hidden_dims

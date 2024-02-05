@@ -627,7 +627,8 @@ def compute_gating(paddings,
                    capacity_factor=None,
                    mask_dtype=jnp.int32,
                    gating_logit_cap=0.0, 
-                   topk=2):
+                   topk=2,
+                   z_loss=False):
   """Compute gating."""
   if gating_func == 'top2':
     # lsp：token选择top2专家
@@ -648,7 +649,8 @@ def compute_gating(paddings,
         # *2.0 because we choose top-2 experts per example
         capacity_factor=capacity_factor,
         mask_dtype=mask_dtype,
-        gating_logit_cap=gating_logit_cap)
+        gating_logit_cap=gating_logit_cap,
+        z_loss=z_loss)
   # lsp: 添加topk
   elif gating_func == 'topk':
     topk_gating_on_logits(paddings=paddings,

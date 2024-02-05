@@ -1070,9 +1070,9 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             compute_n_expert = self.num_experts
         else:
             compute_n_expert = self.num_experts // self.expert_chunk_size
+            assert self.num_experts % self.expert_chunk_size == 0
 
         combined_outputs = None
-        assert self.num_experts % self.expert_chunk_size == 0
         for expert_index in range(0, token_priority.shape[2], compute_n_expert):
             logging.info(f'expert_index: {expert_index}')
             _token_priority = token_priority[..., expert_index: expert_index+compute_n_expert]
@@ -1088,7 +1088,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             _expert_inputs = jax.lax.convert_element_type(_expert_inputs, fprop_dtype)
             # gecm
             logging.info(f'_expert_inputs: {_expert_inputs.shape}')
-            # g * 1 * c * m
+            # g * e * c * m
             _expert_outputs = self._call_experts(_expert_inputs, expert_index, compute_n_expert)
             _combined_outputs = jnp.einsum('gec...,gsec->gs...', _expert_outputs, _combine_array)
             combined_outputs = _combined_outputs if combined_outputs is None else combined_outputs + _combined_outputs

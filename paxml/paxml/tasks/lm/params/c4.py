@@ -1398,12 +1398,48 @@ class Llama7BMoe(Llama7B):
   HIDDEN_DIMS = 5504
   MODEL_DIMS = 1024 * 4
   PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 8, 1]
-  MOE_NUM_GROUPS = 8
+  ICI_MESH_SHAPE = [1, 32, 1]
+  MOE_NUM_GROUPS = PERCORE_BATCH_SIZE * ICI_MESH_SHAPE[1]
   MIN_GROUP_SIZE = 10
   FFN_CHUNK_SIZE = None
   QUERY_CHUNK_SIZE = None
   EXPERT_CHUNK_SIZE = None
+
+
+@experiment_registry.register
+class Llama7BMoeV4x256(Llama7B):
+  MOE_GATED_ACTIVATION = True
+  NUM_EXPERTS = 8
+  GATING_FUNC = 'openmoe_top2'
+  NUM_LAYERS = 32
+  NUM_HEADS = 32
+  MOE_LAYERS = list(range(NUM_LAYERS))
+  CAPACITY_FACTOR = 1.25
+  HIDDEN_DIMS = 5504 * 2
+  MODEL_DIMS = 1024 * 4
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 128, 1]
+  MOE_NUM_GROUPS = PERCORE_BATCH_SIZE * ICI_MESH_SHAPE[1]
+  MIN_GROUP_SIZE = 10
+  FFN_CHUNK_SIZE = None
+  QUERY_CHUNK_SIZE = None
+  EXPERT_CHUNK_SIZE = None
+
+@experiment_registry.register
+class Llama7BDenseV4x256(Llama7B):
+  QUERY_CHUNK_SIZE = None
+  MOE_GATED_ACTIVATION = True
+  NUM_EXPERTS = 0
+  NUM_LAYERS = 32
+  NUM_HEADS = 32
+#   MOE_LAYERS = list(range(NUM_LAYERS))
+  MOE_LAYERS = []
+  HIDDEN_DIMS = 5504 * 2
+  MODEL_DIMS = 1024 * 4
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 128, 1]
+  FFN_CHUNK_SIZE = None
+
 
 @experiment_registry.register
 class Llama7BDense(Llama7B):
@@ -1414,11 +1450,11 @@ class Llama7BDense(Llama7B):
   NUM_HEADS = 32
 #   MOE_LAYERS = list(range(NUM_LAYERS))
   MOE_LAYERS = []
-  HIDDEN_DIMS = 5504 * 7
+  HIDDEN_DIMS = 5504 * 1
   MODEL_DIMS = 1024 * 4
   PERCORE_BATCH_SIZE = 1
-  ICI_MESH_SHAPE = [1, 8, 1]
-  FFN_CHUNK_SIZE = 5504
+  ICI_MESH_SHAPE = [1, 32, 1]
+  FFN_CHUNK_SIZE = None
 
 
 @experiment_registry.register

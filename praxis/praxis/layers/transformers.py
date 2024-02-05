@@ -1003,20 +1003,20 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         num_tokens = np.prod(token_shape)
         m_dim = inputs.shape[-1]
        
-        max_group_size = float(inputs.shape[1]) * self.unadjusted_expert_capacity_factor
         # num_groups = _num_groups(num_tokens, max_group_size)
         num_groups = self.num_groups
-
         tokens_per_group = num_tokens // num_groups
-        logging.info(f'unadjusted_expert_capacity_factor: {self.unadjusted_expert_capacity_factor}')
 
+        logging.info(f'unadjusted_expert_capacity_factor: {self.unadjusted_expert_capacity_factor}')
         expert_capacity = int(self.unadjusted_expert_capacity_factor * tokens_per_group / self.num_experts)
+        max_group_size = float(inputs.shape[1]) * self.unadjusted_expert_capacity_factor
+        expert_capacity = min(expert_capacity, max_group_size)
         expert_capacity = max(expert_capacity, self.min_group_size)
         logging.info(f'expert_capacity: {expert_capacity}')
         # gsm
         grouped_inputs = jnp.reshape(inputs, (num_groups, tokens_per_group, output_dims))
 
-        grouped_inputs = self._split(grouped_inputs, (('replica', 'data'), None, None))
+        grouped_inputs = self._split(grouped_inputs, (('replica', 'data'), None, 'mdl'))
         token_inputs = jax.lax.convert_element_type(grouped_inputs, jnp.float32)
         # gse
         router_logits = jnp.einsum("gsm,me->gse", token_inputs, self.theta.gate)
@@ -1024,7 +1024,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
 
         # gse
         router_probs = jax.nn.softmax(router_logits, axis=-1)
-        router_probs = self._split(router_probs, (('replica', 'data'), None, None))
+
         # g * s * top2
         expert_gate, expert_index = _top_k(router_probs, k=topn)
 
@@ -1035,7 +1035,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
             gate_mask = jnp.expand_dims(nonpaddings, axis=-1)
             expert_gate *= gate_mask
 
-            expert_index *= 2 * gate_mask - 1.
+            expert_index *= (2 * gate_mask - 1.)
             expert_index += jnp.repeat(gate_mask - 1., topn, axis=-1)
             router_probs *= gate_mask
 
@@ -1052,7 +1052,7 @@ class TransformerFeedForwardMoe(base_layer.BaseLayer):
         expert_index = jnp.swapaxes(expert_index, 1, 2)
         # g * 2s
         expert_index = expert_index.reshape(num_groups, -1)
-        # g * 2s * e
+        # g * 2s * e, expert_index 负值的地方忽略了?
         expert_mask = jax.nn.one_hot(expert_index, self.num_experts, dtype=jnp.int32)
 
         # g * 2s * e

@@ -1472,6 +1472,28 @@ class Llama7BMultiSlice(Llama7B):
 
 
 @experiment_registry.register
+class Llama7Bv4x16(Llama7B):
+    NUM_LAYERS = 48
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 2048
+    QUERY_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = None
+    DATA_FULL_SHARD = False
+    PERCORE_BATCH_SIZE = 1
+    FFN_CHUNK_SIZE = 5504
+
+@experiment_registry.register
+class Llama7Bv5px8(Llama7B):
+    NUM_LAYERS = 48
+    ICI_MESH_SHAPE = [1, 4, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    MAX_SEQ_LEN = 2048
+    QUERY_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = None
+    DATA_FULL_SHARD = False
+    PERCORE_BATCH_SIZE = 1
+    FFN_CHUNK_SIZE = 5504
+
+@experiment_registry.register
 class Llama7Bv32(Llama7B):
     NUM_LAYERS = 48
     ICI_MESH_SHAPE = [1, 16, 2]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
@@ -1664,18 +1686,6 @@ class Qwen7B(C4SpmdGpt37BRoPE):
                           'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
                 }
     DATA_FUNC = extract_qwen_datapath
-
-
-@experiment_registry.register
-class Qwen7BTest(Qwen7B):
-    NUM_LAYERS = 2
-    MODEL_DIMS = 4096
-    HIDDEN_DIMS = 11008
-    NUM_HEADS = 32
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
-    MAX_SEQ_LEN = 4097
-    VOCAB_SIZE = 151936
 
 
 @experiment_registry.register

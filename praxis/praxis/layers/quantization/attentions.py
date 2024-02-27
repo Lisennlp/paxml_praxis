@@ -17,7 +17,7 @@
 
 import copy
 import string
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import jax
 from jax import numpy as jnp
@@ -39,6 +39,215 @@ WeightHParams = base_layer.WeightHParams
 instance_field = base_layer.instance_field
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor
+
+
+
+import numpy as np
+from praxis import asserts
+from praxis import pax_fiddle
+
+NestedMap = py_utils.NestedMap
+WeightInit = base_layer.WeightInit
+WeightHParams = base_layer.WeightHParams
+template_field = base_layer.template_field
+LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
+JTensor = pytypes.JTensor
+NestedJTensor = pytypes.NestedJTensor
+NestedInt = pytypes.NestedInt
+
+SplitDimsMapping = pytypes.SplitDimsMapping
+
+PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
+
+
+
+def limited_context_mask(
+    left_context: Union[int, None],
+    right_context: Union[int, None],
+    time_size: int,
+    dtype: jnp.dtype = jnp.float32,
+) -> JTensor:
+    """Generates a logit mask from window configuration.
+
+    left_context includes the current timestep and left ones while right_context
+    includes only future timesteps. None represents infinity.
+
+    Args:
+      left_context: integer or None.
+      right_context: integer or None
+      time_size: size of time dimension.
+      dtype: data type of the output.
+
+    Returns:
+      A JTensor of shape [T, T] ready to add to attention logits.
+    """
+    large_negative_number = py_utils.get_large_negative_number(dtype)
+
+    if right_context is None:
+        right_context = time_size
+    if left_context is None:
+        left_context = time_size
+    col_idx = jnp.tile(jnp.arange(time_size)[jnp.newaxis, :], [time_size, 1])
+    row_idx = jnp.tile(jnp.arange(time_size)[:, jnp.newaxis], [1, time_size])
+    mask = ((col_idx + left_context <= row_idx) | (row_idx < col_idx - right_context)).astype(
+        dtype
+    ) * large_negative_number
+    return mask
+
+
+def causal_mask(input_t: JTensor) -> JTensor:
+    """Computes and returns causal mask.
+
+    Args:
+      input_t: A JTensor of shape [B, T, D].
+
+    Returns:
+      An attention_mask JTensor of shape [1, 1, T, T]. Attention mask has
+      already been converted large negative values.
+    """
+    assert input_t.dtype == jnp.float32 or input_t.dtype == jnp.bfloat16, input_t.dtype
+    large_negative_number = py_utils.get_large_negative_number(input_t.dtype)
+    t = input_t.shape[1]
+    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
+    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
+    mask = (row_idx < col_idx).astype(input_t.dtype) * large_negative_number
+    return mask[jnp.newaxis, jnp.newaxis, :, :]
+
+
+def segment_mask(
+    segment_ids: JTensor,
+    source_segment_ids: Optional[JTensor] = None,
+    dtype: jnp.dtype = jnp.float32,
+) -> JTensor:
+    """Computes (non-causal) segment mask.
+
+    Args:
+      segment_ids: a JTensor of shape [B, T], the segment that each token belongs
+        to.
+      source_segment_ids: a JTensor of shape [B, S], the segment that each source
+        token belongs to (optional).
+      dtype: data type of the input.
+
+    Returns:
+      A JTensor of shape [B, 1, T, S].
+    """
+    # [B, T, 1]
+    segment_ids_1 = jnp.expand_dims(segment_ids, axis=-1)
+    # [B, 1, S]
+    if source_segment_ids is not None:
+        segment_ids_2 = jnp.expand_dims(source_segment_ids, axis=1)
+    else:
+        segment_ids_2 = jnp.expand_dims(segment_ids, axis=1)
+    # [B, T, S].
+    mask = jnp.not_equal(segment_ids_1, segment_ids_2).astype(dtype)
+    mask = jnp.expand_dims(mask, 1)
+    mask *= py_utils.get_large_negative_number(dtype)
+    return mask
+
+
+def causal_segment_mask(
+    segment_ids: JTensor,
+    dtype: jnp.dtype = jnp.float32,
+    causal_attention_mask: Optional[JTensor] = None,
+) -> JTensor:
+    """Computes the masks which combines causal masking and segment masks.
+
+    Args:
+      segment_ids: a JTensor of shape [B, T], the segment that each token belongs
+        to.
+      dtype: data type of the input.
+      causal_attention_mask: a JTensor of shape [B, T] where 1 indicates where a
+        casual mask should be applied and 0 where it shouldn't. E.g. for an input
+        -> target type of input. Tensor indices corresponding to the input tokens
+        should be set to 0 and indices corresponding to target tokens should be
+        set to 1.
+
+    Returns:
+      A JTensor of shape [B, 1, T, T].
+    """
+    # [B, 1, T, T]
+    segment_mask_t = segment_mask(segment_ids, dtype=dtype)
+    # [1, 1, T, T]
+    b, t = segment_ids.shape
+    causal_mask_t = causal_mask(jnp.zeros([b, t, 1], dtype=dtype))
+    if causal_attention_mask is not None:
+        causal_mask_t *= causal_attention_mask[:, jnp.newaxis, jnp.newaxis, :]
+    return jnp.minimum(segment_mask_t, causal_mask_t)
+
+
+def convert_paddings_to_mask(paddings: JTensor, dtype: jnp.dtype = jnp.float32) -> JTensor:
+    """Converts binary paddings to a logit mask ready to add to attention matrix.
+
+    Args:
+      paddings: binary JTensor of shape [B, T], with 1 denoting padding token.
+      dtype: data type of the input.
+
+    Returns:
+      A JTensor of shape [B, 1, 1, T] ready to add to attention logits.
+    """
+    attention_mask = paddings[:, jnp.newaxis, jnp.newaxis, :]
+    attention_mask *= py_utils.get_large_negative_number(dtype)
+    return attention_mask
+
+
+def shift_1d(inputs: JTensor, offset: int, axis: int):
+    """Shifts the input tensor by offset in the dimension axis.
+
+    To shift right the offset is positive and the input is padded at the
+    beginning, while to shift left the offset is negative and the input is
+    padded at the end.
+
+    Args:
+      inputs: The input tensor to shift.
+      offset: The number of positions to shift. If the offset is positive, pad at
+        the beginning of the sequence, if the offset is negative, then pad at the
+        end of the sequence.
+      axis: The dimension in which to shift the input.
+
+    Returns:
+      The shifted input.
+    """
+    paddings = [((max(offset, 0), -min(offset, 0)) if i == axis else (0, 0)) for i in range(len(inputs.shape))]
+    input_length = jnp.shape(inputs)[axis]
+    padded_inputs = jnp.pad(inputs, paddings)
+    if offset > 0:
+        output = jax.lax.slice_in_dim(padded_inputs, start_index=0, limit_index=input_length, axis=axis)
+    else:
+        output = jax.lax.slice_in_dim(
+            padded_inputs,
+            start_index=-offset,
+            limit_index=input_length - offset,
+            axis=axis,
+        )
+    return output
+
+
+def convert_to_block(x, block_size: int, padding_val: float = 0.0) -> JTensor:
+    """Turns a sequence to non overlapping blocks.
+
+    Args:
+      x: a tensor of [batch, time, ...].
+      block_size: int. Number of time frames in a block.
+      padding_val: float. value on the padded frames.
+
+    Returns:
+      A tensor of [batch, num_blocks, block_size, ...], with necessary paddings,
+      where output[:, i, ...] are x[:, i*block_size:(i+1)*block_size, ...].
+    """
+    shape = list(x.shape)
+    b, t = shape[0], shape[1]
+    if block_size < 1:
+        raise ValueError("block_size must be at least 1, got {}".format(block_size))
+    w = block_size
+    # Pad it to be a multipe of w.
+    num_blocks = (t + w - 1) // w
+    pad_length = num_blocks * w - t
+
+    if pad_length > 0:
+        pad_shape = [(0, 0) if idx != 1 else (0, pad_length) for idx in range(len(x.shape))]
+        x = jnp.pad(x, pad_shape, constant_values=padding_val)
+    reshaped = jnp.reshape(x, [b, num_blocks, w] + shape[2:])
+    return reshaped
 
 
 class AttentionProjection(  # pytype: disable=signature-mismatch
@@ -603,6 +812,10 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
     return {base_layer.PARAMS: ret_params}
 
 
+from absl import logging
+
+
+
 class DotProductAttention(  # pytype: disable=signature-mismatch
     attentions.DotProductAttention, quantizer.QuantizationLayer
 ):
@@ -656,6 +869,9 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
 
   def setup(self) -> None:
     super().setup()
+    logging.info(f'self.quantization: {self.quantization}')
+    logging.info(f'self.quantization.quantization_type: {self.quantization.quantization_type}')
+
     if (
         self.quantization
         and self.quantization.quantization_type == QuantizationType.AQT
@@ -706,6 +922,7 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
       value: JTensor,
       atten_mask: JTensor,
       relative_bias: Optional[JTensor] = None,
+      alibi_mask: Optional[JTensor] = None,
   ) -> Tuple[JTensor, JTensor]:
     """Main attention function.
 
@@ -786,6 +1003,8 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
       encoded *= 1 - fully_masked
     encoded = checkpoint_name(encoded, 'context')
     encoded = self._shard_blnh(encoded)
+    # lsp
+    encoded = self.post(encoded)
     return encoded, probs
 
   def _dot_atten_one_step(

@@ -337,3 +337,16 @@ TPU_NAME=llm-jax-v4-8-10
 EXP=Qwen7BTest
 ZONE=us-central2-b
 sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/aqt 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee test.log
+
+
+
+TPU_NAME=llm-jax-v4-16-10
+EXP=Llama7Bv4x16
+ZONE=us-central2-b
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="cd /home/lishengping/;sudo rm -r projects/*; git clone -b main https://github.com/Lisennlp/paxml_praxis.git;mv paxml_praxis/*  projects/;rm -r paxml_praxis"
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command=" /home/lishengping/miniconda3/bin/pip install -f https://storage.googleapis.com/jax-releases/libtpu_releases.html jax[tpu]==0.4.10"
+
+
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/aqt 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee Qwen7BTest.log"

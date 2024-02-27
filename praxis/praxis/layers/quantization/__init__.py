@@ -21,7 +21,7 @@ from praxis.layers.quantization.attentions import DotProductAttention
 from praxis.layers.quantization.conformers import DotProductAttentionWithContext
 from praxis.layers.quantization.convolutions import Conv2D
 from praxis.layers.quantization.embedding_softmax import Embedding
-from praxis.layers.quantization.embedding_softmax import NClassMajorSharedEmbeddingSoftmax
+# from praxis.layers.quantization.embedding_softmax import NClassMajorSharedEmbeddingSoftmax
 from praxis.layers.quantization.embedding_softmax import SharedEmbeddingSoftmax
 from praxis.layers.quantization.linears import Linear
 from praxis.layers.quantization.multi_query_attention import OneHeadedAttentionProjection

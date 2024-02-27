@@ -32,9 +32,16 @@ from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import activations as activations_lib
+
 from praxis.layers import attentions
-from praxis.layers import checkpoint_policy
 from praxis.layers import linears
+
+# from praxis.layers.quantization import attentions  # aqt
+# from praxis.layers.quantization import linears # aqt
+
+from praxis.layers import checkpoint_policy
+
+
 from praxis.layers import normalizations
 from praxis.layers import pipeline
 from praxis.layers import repeats
@@ -1578,6 +1585,7 @@ class Transformer(base_layer.BaseLayer):
             inputs_chunk = inputs[:, start: end]
             padding_chunk = paddings[:, start: end]
             atten_output = atten_outputs[:, start: end]
+            # if atten_output
             logging.info(f'atten_output: {atten_output.shape}')
             logging.info(f'inputs_chunk: {inputs_chunk.shape}')
             logging.info(f'inputs_chunk: {inputs_chunk.shape}')

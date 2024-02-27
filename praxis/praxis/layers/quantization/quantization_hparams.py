@@ -162,7 +162,9 @@ class QuantizationParams:
     act_params: Config for activation quantization.
     weight_params: Config for weight quantization.
   """
-  quantization_type: QuantizationType = QuantizationType.PTQ
+  # lsp
+  # quantization_type: QuantizationType = QuantizationType.PTQ
+  quantization_type: QuantizationType = QuantizationType.AQT
   mode: QuantizationMode = QuantizationMode.INFERENCE
   act_params: Optional[ActQuantizationParams] = None
   weight_params: WeightQuantizationParams = WeightQuantizationParams()

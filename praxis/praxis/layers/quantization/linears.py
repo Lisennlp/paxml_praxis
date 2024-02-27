@@ -37,6 +37,20 @@ NestedJTensor = pytypes.NestedJTensor
 WeightInit = base_layer.WeightInit
 
 
+
+from typing import Optional
+from jax import vmap
+from praxis import pax_fiddle
+from praxis import py_utils
+from praxis.layers import activations
+from praxis.layers import base_ops
+
+NestedMap = py_utils.NestedMap
+template_field = base_layer.template_field
+LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
+
+
+
 class Linear(linears.Linear, quantizer.QuantizationLayer):  # pytype: disable=signature-mismatch
   """Quantized Linear layer without bias.
 
@@ -200,3 +214,106 @@ class Linear(linears.Linear, quantizer.QuantizationLayer):  # pytype: disable=si
     else:
       zp_name = 'w' + base_layer.QUANTIZED_ZP_NAME_POSTFIX
       return {base_layer.PARAMS: {'w': q_w, scale_name: q_s, zp_name: zp}}
+
+
+
+class Bias(base_layer.BaseLayer):
+    """Bias layer.
+
+    Attributes:
+      dims: Depth of the input.
+      bias_init: Init scale (constant) of bias terms.
+    """
+
+    dims: int = 0
+    bias_init: Optional[float] = 0.0
+
+    def setup(self) -> None:
+        wp = self.weight_split_dims_mapping
+        self.create_variable(
+            "b",
+            WeightHParams(
+                shape=[self.dims],
+                init=WeightInit.Constant(self.bias_init),
+                mesh_shape=self.mesh_shape,
+                tensor_split_dims_mapping=wp.wt,
+            ),
+        )
+
+    def __call__(self, inputs: JTensor) -> JTensor:
+        """Adds bias to inputs.
+
+        Args:
+          inputs: The inputs JTensor.  Shaped [..., dims].
+
+        Returns:
+          Inputs plus bias.
+        """
+        return inputs + self.theta.b
+
+        
+class FeedForward(base_layer.BaseLayer):
+    """Feedforward layer with activation.
+
+    Attributes:
+      input_dims: Depth of the input.
+      output_dims: Depth of the output.
+      has_bias: Adds bias weights or not.
+      linear_tpl: Linear layer params.
+      activation_tpl: Activation layer params.
+      bias_init: Init scale (constant) of bias terms.
+    """
+
+    input_dims: int = 0
+    output_dims: int = 0
+    has_bias: bool = True
+    linear_tpl: LayerTpl = template_field(Linear)
+    bias_tpl: LayerTpl = template_field(Bias)
+    activation_tpl: pax_fiddle.Config[activations.BaseActivation] = template_field(activations.ReLU)
+    weight_init: Optional[WeightInit] = None
+    bias_init: Optional[float] = 0.0
+
+    def setup(self) -> None:
+        wp = self.weight_split_dims_mapping
+        ap = self.activation_split_dims_mapping
+        linear_layer_p = self.linear_tpl.clone()
+        linear_layer_p.set(
+            input_dims=self.input_dims,
+            output_dims=self.output_dims,
+            weight_init=self.weight_init,
+            weight_split_dims_mapping=wp.clone(),
+            activation_split_dims_mapping=ap.clone(),
+        )
+        # Provide type hint.
+        self.linear: Linear
+        self.create_child("linear", linear_layer_p)
+        if self.has_bias:
+            bias_layer_p = self.bias_tpl.clone()
+            bias_layer_p.set(dims=self.output_dims, bias_init=self.bias_init)
+            if self.mesh_shape is not None and ap.out is not None:
+                wp_bias = [ap.out[-1]]
+                bias_layer_p.weight_split_dims_mapping.wt = wp_bias
+            # Provide type hint.
+            self.bias: Bias
+            self.create_child("bias", bias_layer_p)
+        # Provide type hints
+        self.activation: activations.BaseActivation
+        self.create_child("activation", self.activation_tpl.clone())
+
+    def __call__(self, inputs: JTensor) -> JTensor:
+        chunk_size = inputs.shape[1]
+        n = inputs.shape[1] // chunk_size
+        # output = jnp.empty(inputs.shape, dtype=inputs.dtype)
+        output = []
+        for i in range(n):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size
+            inputs_chunk = inputs[:, start: end]
+            projected_inputs = self.linear(inputs_chunk)
+            if self.has_bias:
+                projected_inputs = self.bias(projected_inputs)
+            output_chunk = self.activation(projected_inputs)
+            output.append(output_chunk)
+        output = jnp.concatenate(output, axis=1)  
+            # output = output.at[:, start: end].set(output_chunk)
+        return output

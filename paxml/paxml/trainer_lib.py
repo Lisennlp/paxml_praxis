@@ -712,6 +712,7 @@ class StepFnOutput:
 
     # inter_values =
 
+from jax._src import dtypes
 
 # TODO(yonghui): refactor to pass in learner separately.
 # TODO(wangpeng): Consider breaking this function into smaller pieces, and/or
@@ -949,6 +950,15 @@ def train_step_single_learner(
                 mdl_vars,
                 grads,
             )
+
+            def convert_to_float(x):
+                if dtypes.dtype(x) == dtypes.float0:
+                    return jnp.asarray(x, dtype=jnp.float32)  # 或者 jnp.float64
+                else:
+                    return x
+            # 对梯度进行类型转换
+            grads = jax.tree_map(convert_to_float, grads)
+
             # self.sow('intermediates', 'x', grads,  init_fn=lambda :0, reduce_fn=lambda a, b: b)
             # logging.info(f'[lsp]grads: {grads}')
             return values, grads

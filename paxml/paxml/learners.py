@@ -324,7 +324,8 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
           transformed_grad, new_states pair.
         """
 
-        grads, valid_step = self.scale_gradients(grads)
+        # grads, valid_step = self.scale_gradients(grads)
+        valid_step = True
         # lsp
         # scale_grads = jax.tree_map(lambda x: x.copy(), grads)
         transformed_grad, new_states = self.get_grad_tx(var_weight_hparams).update(

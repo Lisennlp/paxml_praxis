@@ -326,41 +326,14 @@ EXP=Llama7B
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee test.log"
 
 
+gcloud compute instances set-machine-type l4-0 --machine-type g2-standard-48 --zone us-central1-a
 
- func(*args, **kwargs)
-  File "/home/lishengping/projects/paxml/paxml/main.py", line 582, in _main
-    run(
-  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
-    result = func(*args, **kwargs)
-  File "/home/lishengping/projects/paxml/paxml/main.py", line 511, in run
-    run_experiment(
-  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
-    result = func(*args, **kwargs)
-  File "/home/lishengping/projects/paxml/paxml/main.py", line 371, in run_experiment
-    train.train_and_evaluate(
-  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
-    result = func(*args, **kwargs)
-  File "/home/lishengping/projects/paxml/paxml/train.py", line 319, in train_and_evaluate
-    executor.start()
-  File "/home/lishengping/projects/paxml/paxml/executors.py", line 278, in start
-    _train_and_evaluate_common(
-  File "/home/lishengping/projects/paxml/paxml/executors.py", line 463, in _train_and_evaluate_common
-    program_output = train_program.run(partitioned_train_state, step_i)
-  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 1051, in wrapper
-    result = func(*args, **kwargs)
-  File "/home/lishengping/projects/paxml/paxml/programs.py", line 305, in run
-    model_inputs = self._partitioner.preprocess_inputs(
-  File "/home/lishengping/projects/paxml/paxml/partitioning.py", line 925, in preprocess_inputs
-    return input_pipeline.reshard_for_spmd(
-  File "/home/lishengping/projects/praxis/praxis/base_input.py", line 347, in reshard_for_spmd
-    return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)
-  File "/home/lishengping/projects/praxis/praxis/py_utils.py", line 414, in make_array
-    logging.info(f'local_mesh: {global_mesh.local_mesh}')
-  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 278, in local_mesh
-    return self._local_mesh(xb.process_index())
-  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 281, in _local_mesh
-    return _get_local_mesh(self, process_index)
-  File "/home/lishengping/miniconda3/lib/python3.10/site-packages/jax/_src/mesh.py", line 119, in _get_local_mesh
-    raise ValueError(
-ValueError: When passing host local inputs to pjit or xmap, devices connected to a single host must form a contiguous subcube of the global device mesh
-wandb: WARNING Ensure read and write access to run files dir: /home/lishengping/wandb/run-20240117_114811-nx14rx2l/files, control this via the WANDB_DIR env var. See https://docs.wandb.ai/guides/track/environment-variables
+
+
+
+
+
+TPU_NAME=llm-jax-v4-8-10
+EXP=Qwen7BTest
+ZONE=us-central2-b
+sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/;/home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/aqt 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee test.log

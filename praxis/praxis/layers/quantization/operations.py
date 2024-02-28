@@ -622,14 +622,18 @@ def aqt_einsum(
     logging.info(f'rhs_zp: {rhs_zp}')
     # lsp
     out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    logging.info(f'out: {out.dtype} shape: {out.shape}')
+    logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
+
     # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
-    ret = out
-    for s in [lhs_scale, rhs_scale]:
-      ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
+    # lhs_scale: bsz * length
+    # for s in [lhs_scale, rhs_scale]:
+    #   ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
     # 反量化回去, maxtext的out_scale shape: bsz * length
-    # out_scale = out_scale.astype(jnp.bfloat16)
-    # out = out.astype(jnp.bfloat16)
-    # ret = out * out_scale
+    out_scale = out_scale.astype(jnp.bfloat16)
+    out = out.astype(jnp.bfloat16)
+    ret = out * out_scale
     # None
     if rhs_zp is not None:
       if (

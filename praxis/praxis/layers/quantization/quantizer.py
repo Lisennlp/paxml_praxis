@@ -438,6 +438,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     )
     # True
     if self.use_symmetric:
+      # contract_dims: 2 , bsz * length * dim
       x_bound = jnp.max(jnp.abs(x), axis=contract_dims, keepdims=True)
       x_min = None
       range_bound = clip_bound_max

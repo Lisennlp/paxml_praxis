@@ -371,7 +371,7 @@ class TensorQuantizer(base_layer.BaseLayer):
       per channel, else per-tensor.
     sub_channels: Number of sub channels for splitting channelwise quantization.
   """
-  precision: Optional[int] = None # lsp: None -> 8
+  precision: Optional[int] = 8 # lsp: None -> 8
   stop_scale_gradient: bool = True # lsp: -> true
   min_clipping: Optional[float] = None
   num_optimize_clipping: Optional[int] = None

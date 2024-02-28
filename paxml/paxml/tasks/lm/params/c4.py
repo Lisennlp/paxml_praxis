@@ -3089,6 +3089,7 @@ class PileLlama13B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit,
   QUERY_CHUNK_SIZE = 512  # v3 0.099819
   # pass  # v3 0.096595
 
+@experiment_registry.register
 class _TrainConfig2Kx4x256x1(_TrainConfig2Kx2x512x1):
   PERCORE_BATCH_SIZE = 4
   ICI_MESH_SHAPE = [1, 256, 1]
@@ -3115,6 +3116,7 @@ class PileLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, 
   QUERY_CHUNK_SIZE = 512  # v3
   # pass  # v3
 
+@experiment_registry.register
 class _TrainConfig2Kx8x128x1(_TrainConfig2Kx2x512x1):
   PERCORE_BATCH_SIZE = 8
   ICI_MESH_SHAPE = [1, 128, 1]

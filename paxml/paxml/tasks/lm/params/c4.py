@@ -2977,12 +2977,24 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
 
+@experiment_registry.register
+class _TrainConfig2Kx2x512x1:
+  LEARNING_RATE = 3e-4  # v3 0.0331
+  LR_COS_WARMUP = 2000
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 200000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.1
+
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 512, 1]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
 class _TrainConfig2Kx4x256x1(_TrainConfig2Kx2x512x1):
   PERCORE_BATCH_SIZE = 4
   ICI_MESH_SHAPE = [1, 256, 1]
-  
+
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama3B):
   LEARNING_RATE = 5e-4
@@ -3056,18 +3068,6 @@ class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
   DCN_MESH_SHAPE = [2, 1, 1] # 2表示slice count
-
-class _TrainConfig2Kx2x512x1:
-  LEARNING_RATE = 3e-4  # v3 0.0331
-  LR_COS_WARMUP = 2000
-  LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 200000  # 800B tokens
-  LR_COS_MIN_RATIO = 0.1
-
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 512, 1]
-  EMBEDDING_LOOKUP_STYLE = 'index'
-  SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
 class PileDCLlama33B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, DCLlama33B):

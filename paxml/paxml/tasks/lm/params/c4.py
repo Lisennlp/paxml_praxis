@@ -2978,6 +2978,10 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_LOOP_NUM_BATCHES = 20
 
 @experiment_registry.register
+class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
+  LEARNING_RATE = 3.2e-4
+
+@experiment_registry.register
 class MoeTest(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
   NUM_LAYERS=30
@@ -4942,6 +4946,21 @@ class PileDCLlamaMediumNoQKNormR4PileEval(PileEval, PileDCLlamaMediumNoQKNormR4)
     RESET_FOR_EVAL = False
     TASK_NAME = 'PileDCLlamaMediumNoQKNormR4PileEvalWholeZeroFalse'
 
+@experiment_registry.register
+class PileDCLlama3B2Kx4x256x1DWDDLR00032PileEval(PileEval, PileDCLlama3B2Kx4x256x1DWDDLR00032):
+    # PileDCLlama3B2Kx4x256x1DWDDLR00032v4
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlama3B2Kx4x256x1DWDDLR00032PileEvalWholeZeroTrue'
+
+@experiment_registry.register
+class PileDCLlama3B2Kx4x256x1DWDDLR00032FlanMiniEval(FlanMiniEval, PileDCLlama3B2Kx4x256x1DWDDLR00032):
+    # PileDCLlama3B2Kx4x256x1DWDDLR00032v4
+    ZERO_LOSS = False
+    EVAL_LOOP_NUM_BATCHES = 320
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlama3B2Kx4x256x1DWDDLR00032FlanMiniEvalWholeZeroTrue'
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None

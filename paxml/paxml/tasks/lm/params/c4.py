@@ -2977,6 +2977,12 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
 
+
+@experiment_registry.register
+class _TrainConfig2Kx4x256x1(_TrainConfig2Kx2x512x1):
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 256, 1]
+  
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama3B):
   LEARNING_RATE = 5e-4
@@ -3088,11 +3094,6 @@ class PileDCLlama13B2Kx2x512x1DWDD(PileDCLlama13B2Kx2x512x1):
 class PileLlama13B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, _Llama13B):
   QUERY_CHUNK_SIZE = 512  # v3 0.099819
   # pass  # v3 0.096595
-
-@experiment_registry.register
-class _TrainConfig2Kx4x256x1(_TrainConfig2Kx2x512x1):
-  PERCORE_BATCH_SIZE = 4
-  ICI_MESH_SHAPE = [1, 256, 1]
 
 @experiment_registry.register
 class PileDCLlama13B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama13B):

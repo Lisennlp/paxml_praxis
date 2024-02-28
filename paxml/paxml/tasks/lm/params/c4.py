@@ -2978,6 +2978,10 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_LOOP_NUM_BATCHES = 20
 
 @experiment_registry.register
+class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):
+  USE_STATIC_W = False  # v4 0.221
+  
+@experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
   LEARNING_RATE = 3.2e-4
 

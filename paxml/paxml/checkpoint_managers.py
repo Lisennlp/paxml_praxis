@@ -269,9 +269,10 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
                 "Checkpoints with digit step subdirectories do not support the saving mode."
             )
 
-        # Whether to save an on-demand checkpoint due to preemption
-        if self.reached_preemption(step):
-            return True
+        # # Whether to save an on-demand checkpoint due to preemption
+        # if self.reached_preemption(step):
+        #     return True
+        
         last_checkpoint_step = self._last_checkpoint.step if self._last_checkpoint else None
         # Ensure current step is between the last step and next step (accounting for
         # save interval). The `last_checkpoint_step` may not be initialized, in

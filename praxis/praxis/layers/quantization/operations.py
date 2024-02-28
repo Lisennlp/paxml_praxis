@@ -588,6 +588,7 @@ def aqt_einsum(
       raise ValueError(
           'sub_channels is not implemented for activation quantization yet.'
       )
+    logging.info('===lhs_scale0===')
 
     input_shape = rhs.shape
     new_shape = compute_shape_with_subchannels(
@@ -605,18 +606,26 @@ def aqt_einsum(
     deq_rhs = jnp.reshape(deq_rhs, input_shape)
     ret = jnp.einsum(eqn, lhs, deq_rhs)
   else:
-    lhs, lhs_scale, _ = lhs_quantizer.quantize(
-        lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=lhs.dtype
-    )
 
+    logging.info(f'===lhs_scale1 lhs.dtype: {lhs.dtype}=== lhs_contract_dims: {lhs_contract_dims}')
+    # quantizer.py, p655
+    # lhs_contract_dims: 3, lhs.dtype: bf16， 如果quantized_dtype改为int8训练不了
+    lhs, lhs_scale, _ = lhs_quantizer.quantize(
+        lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=lhs.dtype)
+    # r/lhs: (8, 2048, 32, 128), r/lhs_scale: (1, 1, 1, 1)
     rhs, rhs_scale, rhs_zp = rhs_quantizer.quantize(
         rhs, rhs_contract_dims, squeeze_scale=False, quantized_dtype=rhs.dtype)
+    logging.info(f'lhs: {lhs.dtype} shape: {lhs.shape}')
+    logging.info(f'rhs: {rhs.dtype} shape: {rhs.shape}')
+    logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
+    logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')
+    logging.info(f'rhs_zp: {rhs_zp}')
 
     out = jnp.einsum(eqn, lhs, rhs)
     out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
 
     ret = out * out_scale
-
+    # None
     if rhs_zp is not None:
       if (
           hasattr(lhs_quantizer, 'precision')

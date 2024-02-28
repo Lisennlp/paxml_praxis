@@ -953,7 +953,7 @@ def train_step_single_learner(
 
             def convert_to_float(x):
                 if dtypes.dtype(x) == dtypes.float0:
-                    return jnp.asarray(x, dtype=jnp.float32)  # 或者 jnp.float64
+                    return jnp.asarray(x, dtype=jnp.bfloat16)  # 或者 jnp.float64
                 else:
                     return x
             # 对梯度进行类型转换

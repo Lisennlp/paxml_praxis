@@ -350,3 +350,32 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command=" /
 
 
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models/lsp_test/aqt 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee Qwen7BTest.log"
+
+
+
+
+
+
+
+
+
+
+# v5p create
+
+export PROJECT_ID=colorful-aia
+export ACCELERATOR_TYPE=v5p-8
+export ZONE=us-east5-a
+export RUNTIME_VERSION=v2-alpha-tpuv5
+export SERVICE_ACCOUNT=495921979093-compute@developer.gserviceaccount.com
+export TPU_NAME=llm-jax-v5p-8-10
+export QUEUED_RESOURCE_ID=llm-jax-v5p-8-10
+export QUOTA_TYPE=best-effort
+
+gcloud alpha compute tpus queued-resources create ${QUEUED_RESOURCE_ID} \
+  --node-id ${TPU_NAME} \
+  --project ${PROJECT_ID} \
+  --zone ${ZONE} \
+  --accelerator-type ${ACCELERATOR_TYPE} \
+  --runtime-version ${RUNTIME_VERSION} \
+  --service-account ${SERVICE_ACCOUNT} \
+  --${QUOTA_TYPE}

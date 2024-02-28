@@ -371,8 +371,8 @@ class TensorQuantizer(base_layer.BaseLayer):
       per channel, else per-tensor.
     sub_channels: Number of sub channels for splitting channelwise quantization.
   """
-  precision: Optional[int] = None
-  stop_scale_gradient: bool = False
+  precision: Optional[int] = None # lsp: None -> 8
+  stop_scale_gradient: bool = False # lsp: -> true
   min_clipping: Optional[float] = None
   num_optimize_clipping: Optional[int] = None
   clipping_coeff: Optional[float] = None
@@ -572,7 +572,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Quantized tensor.
     """
-
+    logging.info(f'precision: {self.precision}')
     if self.precision is None:
       return x
 
@@ -581,6 +581,7 @@ class TensorQuantizer(base_layer.BaseLayer):
         self.precision, self.unsigned_int_bounds
     )
     x = jnp.clip(x, clip_bound_min, clip_bound_max)
+    logging.info(f'precision22: {self.precision}')
 
     return x
 
@@ -672,6 +673,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     """
 
     q_s, x_min = self.get_quant_scale(x, contract_dims)
+    # 计算得到量化之后的scale x
     x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
     q_x = self.to_quant(x_scaled)
 

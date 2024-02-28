@@ -3131,10 +3131,6 @@ class PileDCLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit
 #   pass  # v3
 
 @experiment_registry.register
-class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):
-  USE_STATIC_W = False
-
-@experiment_registry.register
 class PileLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, _Llama3B):
   QUERY_CHUNK_SIZE = 512  # v3 0.099819
   # pass  # v3 0.096595

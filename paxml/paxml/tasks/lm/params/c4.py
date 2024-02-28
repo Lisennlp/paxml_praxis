@@ -2978,9 +2978,18 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_LOOP_NUM_BATCHES = 20
 
 @experiment_registry.register
+class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama3B):
+  LEARNING_RATE = 5e-4
+  LR_COS_WARMUP = 1430
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 143000
+  LR_COS_MIN_RATIO = 0.01
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+
+@experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):
   USE_STATIC_W = False  # v4 0.221
-  
+
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
   LEARNING_RATE = 3.2e-4
@@ -3114,9 +3123,9 @@ class _TrainConfig2Kx8x128x1(_TrainConfig2Kx2x512x1):
 class PileDCLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, DCLlama3B):
   pass  # v3
 
-@experiment_registry.register
-class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama3B):
-  pass  # v3
+# @experiment_registry.register
+# class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama3B):
+#   pass  # v3
 
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):

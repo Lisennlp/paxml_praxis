@@ -611,20 +611,25 @@ def aqt_einsum(
     # quantizer.py, p655
     # lhs_contract_dims: 3, lhs.dtype: bf16， 如果quantized_dtype改为int8训练不了
     lhs, lhs_scale, _ = lhs_quantizer.quantize(
-        lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=lhs.dtype)
+        lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
     # r/lhs: (8, 2048, 32, 128), r/lhs_scale: (1, 1, 1, 1)
     rhs, rhs_scale, rhs_zp = rhs_quantizer.quantize(
-        rhs, rhs_contract_dims, squeeze_scale=False, quantized_dtype=rhs.dtype)
+        rhs, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
     logging.info(f'lhs: {lhs.dtype} shape: {lhs.shape}')
     logging.info(f'rhs: {rhs.dtype} shape: {rhs.shape}')
     logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
     logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')
     logging.info(f'rhs_zp: {rhs_zp}')
-
-    out = jnp.einsum(eqn, lhs, rhs)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
-
-    ret = out * out_scale
+    # lsp
+    out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+    ret = out
+    for s in [lhs_scale, rhs_scale]:
+      ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
+    # 反量化回去, maxtext的out_scale shape: bsz * length
+    # out_scale = out_scale.astype(jnp.bfloat16)
+    # out = out.astype(jnp.bfloat16)
+    # ret = out * out_scale
     # None
     if rhs_zp is not None:
       if (

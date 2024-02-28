@@ -372,7 +372,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     sub_channels: Number of sub channels for splitting channelwise quantization.
   """
   precision: Optional[int] = None # lsp: None -> 8
-  stop_scale_gradient: bool = False # lsp: -> true
+  stop_scale_gradient: bool = True # lsp: -> true
   min_clipping: Optional[float] = None
   num_optimize_clipping: Optional[int] = None
   clipping_coeff: Optional[float] = None
@@ -423,6 +423,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     # Since TensorQuantizer does nothing when initialized, __call__ is a no-op.
     pass
 
+    # lsp
   def _get_scale_and_min(
       self,
       x: JTensor,
@@ -431,11 +432,11 @@ class TensorQuantizer(base_layer.BaseLayer):
   ) -> Tuple[JTensor, Optional[JTensor]]:
     if self.precision is None:
       return jnp.ones(shape=(1,) * x.ndim, dtype=x.dtype), None
-
+    # unsigned_int_bounds: False,  precision: None
     clip_bound_min, clip_bound_max = operations.get_min_max(
         self.precision, self.unsigned_int_bounds
     )
-
+    # True
     if self.use_symmetric:
       x_bound = jnp.max(jnp.abs(x), axis=contract_dims, keepdims=True)
       x_min = None
@@ -554,6 +555,8 @@ class TensorQuantizer(base_layer.BaseLayer):
     if self.min_clipping is not None and self.num_optimize_clipping is not None:
       return self._get_optimal_scale_and_min(x, contract_dims)
     else:
+      # here
+      logging.info(f'x shape: {x.shape} contract_dims: {contract_dims} clipping_coeff: {self.clipping_coeff}')
       return self._get_scale_and_min(
           x, contract_dims, clipping_coeff=self.clipping_coeff
       )
@@ -563,6 +566,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     # statistics update will be performed through this function.
     pass
 
+  # 相当于MaxText的vjp_fwd
   def to_quant(self, x: JTensor) -> JTensor:
     """Converts normalized float x to quantized value.
 
@@ -615,7 +619,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     if not self.use_symmetric and zp_time_scale is None:
       raise ValueError('Asymmetric quantization need zp_time_scale.')
 
-    if self.use_symmetric:
+    if self.use_symmetric: # True
       deq_q_x = q_x * q_scale
     else:
       deq_q_x = q_x * q_scale - zp_time_scale
@@ -671,11 +675,14 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Quantized tensor with scale (used for dequantization).
     """
-
+    # q_s 即 scale = x_bound / range_bound， x_bound： bsz * length, range_bound: constant
+    # x_min: None
     q_s, x_min = self.get_quant_scale(x, contract_dims)
-    # 计算得到量化之后的scale x
+    # x_scaled = x / q_s, zp_time_scale: None
     x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
     q_x = self.to_quant(x_scaled)
+    # lsp
+    q_s = jax.lax.reciprocal(q_s)
 
     if (
         quantized_dtype != jnp.int8  # it is used for materialization

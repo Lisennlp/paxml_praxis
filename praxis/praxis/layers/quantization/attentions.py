@@ -906,13 +906,14 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
 
   def _atten_logits(self, query: JTensor, key: JTensor) -> JTensor:
     """Compute logits from query and key."""
-    logits = operations.aqt_einsum(
-        eqn='BTNH,BSNH->BNTS',
-        lhs=query,
-        rhs=key,
-        lhs_quantizer=self.act_quantizer,
-        rhs_quantizer=self.act_quantizer,
-    )
+    # logits = operations.aqt_einsum(
+    #     eqn='BTNH,BSNH->BNTS',
+    #     lhs=query,
+    #     rhs=key,
+    #     lhs_quantizer=self.act_quantizer,
+    #     rhs_quantizer=self.act_quantizer,
+    # )
+    logits = self.qk_einsum("BTNH,BSNH->BNTS", query, key)
     return logits
 
   def _dot_atten(

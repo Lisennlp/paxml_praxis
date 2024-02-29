@@ -622,7 +622,7 @@ def aqt_einsum(
     logging.info(f'rhs_zp: {rhs_zp}')
     # lsp
     out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
     logging.info(f'out: {out.dtype} shape: {out.shape}')
     logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
 

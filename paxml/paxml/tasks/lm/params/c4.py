@@ -1858,8 +1858,6 @@ class BC2Gpt13BEval(BaseEval, BC2Gpt13B):
     DATA_FUNC = c4_registry
 
  
-
-
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None
     num_infeed_hosts: int = 0

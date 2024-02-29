@@ -372,7 +372,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     sub_channels: Number of sub channels for splitting channelwise quantization.
   """
   precision: Optional[int] = 8 # lsp: None -> 8
-  stop_scale_gradient: bool = True # lsp: -> true
+  stop_scale_gradient: bool = False # lsp: -> true
   min_clipping: Optional[float] = None
   num_optimize_clipping: Optional[int] = None
   clipping_coeff: Optional[float] = None
@@ -683,7 +683,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
     q_x = self.to_quant(x_scaled)
     # lsp
-    q_s = jax.lax.reciprocal(q_s)
+    # q_s = jax.lax.reciprocal(q_s)
 
     if (
         quantized_dtype != jnp.int8  # it is used for materialization

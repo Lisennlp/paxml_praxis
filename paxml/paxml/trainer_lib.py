@@ -957,7 +957,7 @@ def train_step_single_learner(
                 else:
                     return x
             # 对梯度进行类型转换
-            grads = jax.tree_map(convert_to_float, grads)
+            # grads = jax.tree_map(convert_to_float, grads)
 
             # self.sow('intermediates', 'x', grads,  init_fn=lambda :0, reduce_fn=lambda a, b: b)
             # logging.info(f'[lsp]grads: {grads}')

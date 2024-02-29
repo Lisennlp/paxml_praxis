@@ -664,8 +664,8 @@ def aqt_einsum(
     # lsp
     ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
 
-    self.add_summary("out_scale_rms", _rms(out_scale), verbosity=4)
-    self.add_summary("ret_rms", _rms(ret), verbosity=4)
+    # self.add_summary("out_scale_rms", _rms(out_scale), verbosity=4)
+    # self.add_summary("ret_rms", _rms(ret), verbosity=4)
 
     # None
     if rhs_zp is not None:

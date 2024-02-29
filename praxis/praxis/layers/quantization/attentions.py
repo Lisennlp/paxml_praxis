@@ -996,7 +996,7 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     #     lhs_quantizer=self.act_quantizer,
     #     rhs_quantizer=self.act_quantizer,
     # )
-    encoded = self.qk_einsum(eqn='BNTS,BSNH->BTNH', probs, value)
+    encoded = self.qk_einsum('BNTS,BSNH->BTNH', probs, value)
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.

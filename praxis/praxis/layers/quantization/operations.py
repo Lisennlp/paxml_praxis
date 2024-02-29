@@ -630,23 +630,23 @@ def aqt_einsum(
     logging.info(f'dimension_numbers: {dimension_numbers}')
 
     # lsp
-    # out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
     # dimension_numbers = ()
-    out = jax.lax.dot_general(
-        lhs,
-        rhs,
-        dimension_numbers=dimension_numbers,
-        preferred_element_type=jnp.int8,
-        precision=jax.lax.Precision.DEFAULT,
-    )
-    out_scale = jax.lax.dot_general(
-        lhs_scale,
-        rhs_scale,
-        dimension_numbers=dimension_numbers,
-        preferred_element_type=jnp.bfloat16,
-        precision=jax.lax.Precision.DEFAULT,
-    )
+    # out = jax.lax.dot_general(
+    #     lhs,
+    #     rhs,
+    #     dimension_numbers=dimension_numbers,
+    #     preferred_element_type=jnp.int8,
+    #     precision=jax.lax.Precision.DEFAULT,
+    # )
+    # out_scale = jax.lax.dot_general(
+    #     lhs_scale,
+    #     rhs_scale,
+    #     dimension_numbers=dimension_numbers,
+    #     preferred_element_type=jnp.bfloat16,
+    #     precision=jax.lax.Precision.DEFAULT,
+    # )
     logging.info(f'out: {out.dtype} shape: {out.shape}')
     logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
     logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')

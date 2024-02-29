@@ -50,7 +50,11 @@ template_field = base_layer.template_field
 LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
 
 
+def _rms(x):
+    # Note: under pmap .mean() will produce a local mean, not across all hosts.
+    return (x**2.0).mean().astype(jnp.float32) ** 0.5
 
+    
 class Linear(linears.Linear, quantizer.QuantizationLayer):  # pytype: disable=signature-mismatch
   """Quantized Linear layer without bias.
 

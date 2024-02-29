@@ -989,14 +989,14 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     probs = self.atten_dropout(probs)
     # Compute the attention context.
     # lsp qat
-    # encoded = operations.aqt_einsum(
-    #     eqn='BNTS,BSNH->BTNH',
-    #     lhs=probs,
-    #     rhs=value,
-    #     lhs_quantizer=self.act_quantizer,
-    #     rhs_quantizer=self.act_quantizer,
-    # )
-    encoded = self.qk_einsum('BNTS,BSNH->BTNH', probs, value)
+    encoded = operations.aqt_einsum(
+        eqn='BNTS,BSNH->BTNH',
+        lhs=probs,
+        rhs=value,
+        lhs_quantizer=self.act_quantizer,
+        rhs_quantizer=self.act_quantizer,
+    )
+    # encoded = self.qk_einsum('BNTS,BSNH->BTNH', probs, value)
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.

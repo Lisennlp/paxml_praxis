@@ -630,6 +630,7 @@ def aqt_einsum(
     logging.info(f'dimension_numbers: {dimension_numbers}')
 
     # lsp
+    # preferred_element_type指定输出数据类型
     out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
     out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
     # dimension_numbers = ()
@@ -660,8 +661,12 @@ def aqt_einsum(
     #   ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
     # 反量化回去, maxtext的out_scale shape: bsz * length
     # ret = dequant(out, [lhs_scale, rhs_scale])
+    # lsp
+    ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
 
-    ret = out.astype(jnp.bfloat16) * out_scale.astype(jnp.bfloat16)
+    self.add_summary("out_scale_rms", _rms(out_scale), verbosity=4)
+    self.add_summary("ret_rms", _rms(ret), verbosity=4)
+
     # None
     if rhs_zp is not None:
       if (

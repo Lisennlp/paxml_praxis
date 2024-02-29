@@ -586,13 +586,16 @@ class TensorQuantizer(base_layer.BaseLayer):
     if self.precision is None:
       return x
 
-    # x = operations.pass_through(x + 0.5, jnp.floor)
-    # -128, 127
-    clip_bound_min, clip_bound_max = operations.get_min_max(
-        self.precision, self.unsigned_int_bounds
-    )
-    x = jnp.clip(x, clip_bound_min, clip_bound_max)
-    logging.info(f'precision22: {self.precision}')
+    max_int8 = 127
+    x = jnp.clip(jnp.round(x), -max_int8, max_int8).astype(jnp.int8)
+
+    # # x = operations.pass_through(x + 0.5, jnp.floor)
+    # # -128, 127
+    # clip_bound_min, clip_bound_max = operations.get_min_max(
+    #     self.precision, self.unsigned_int_bounds
+    # )
+    # x = jnp.clip(x, clip_bound_min, clip_bound_max)
+    # logging.info(f'precision22: {self.precision}')
 
     return x
 

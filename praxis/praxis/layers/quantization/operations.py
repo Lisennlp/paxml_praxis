@@ -555,6 +555,32 @@ def dequant(ret, scales) -> jnp.ndarray:
     return ret
 
 
+# def matmul_true_int8(eqn, lhs, rhs):
+#   assert lhs.dtype == jnp.int8
+#   assert rhs.dtype == jnp.int8
+#   result = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32)
+#   assert result.dtype == jnp.int32
+#   return result
+
+
+# def aqt_einsum(a, w):
+#   max_int8 = 127
+#   def quant_int8(x):
+#     return jnp.clip(jnp.round(x), -max_int8, max_int8).astype(jnp.int8)
+
+#   # Calibration. Calibration function is also customizable and injectable.
+#   a_s = max_int8 / jnp.max(jnp.abs(a), axis=1, keepdims=True)
+#   w_s = max_int8 / jnp.max(jnp.abs(w), axis=0, keepdims=True)
+#   assert a_s.shape == (batch_size, 1) # shapes checked for illustration
+#   assert w_s.shape == (1, channels_out)
+
+#   # int8 matmul with int32 accumulator
+#   result = matmul_true_int8(quant_int8(a * a_s), quant_int8(w * w_s)) / (a_s * w_s)
+#   assert result.shape == (batch_size, channels_out)
+
+#   return result
+
+
 def aqt_einsum(
     eqn: str,
     lhs: JTensor,
@@ -575,6 +601,8 @@ def aqt_einsum(
   Returns:
     An array containing the result with the same dtype as 'lhs' and 'rhs'.
   """
+  # return jnp.einsum(eqn, lhs, rhs)
+
   if '.' in eqn:
     # Replace the ellipsis with arbitrary symbols.
     eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))

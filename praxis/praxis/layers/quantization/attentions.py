@@ -855,6 +855,8 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     quantization: Information related to the quantization applied to this layer,
       such as dtype for the quantized weight.
   """
+  # proj_tpl: LayerTpl = template_field(AttentionProjection)
+
 
   def create_tensor_quantizers(self):
     act_params = self.quantization.act_params if self.quantization else None
@@ -988,7 +990,7 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     # Apply attention dropout.
     probs = self.atten_dropout(probs)
     # Compute the attention context.
-    # lsp qat
+    # lsp aqt。这一步不使用aqt会变慢很多。有点奇怪
     encoded = operations.aqt_einsum(
         eqn='BNTS,BSNH->BTNH',
         lhs=probs,

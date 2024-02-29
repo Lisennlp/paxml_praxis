@@ -906,6 +906,7 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
 
   def _atten_logits(self, query: JTensor, key: JTensor) -> JTensor:
     """Compute logits from query and key."""
+    # lsp: aqt
     # logits = operations.aqt_einsum(
     #     eqn='BTNH,BSNH->BNTS',
     #     lhs=query,
@@ -987,13 +988,15 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     # Apply attention dropout.
     probs = self.atten_dropout(probs)
     # Compute the attention context.
-    encoded = operations.aqt_einsum(
-        eqn='BNTS,BSNH->BTNH',
-        lhs=probs,
-        rhs=value,
-        lhs_quantizer=self.act_quantizer,
-        rhs_quantizer=self.act_quantizer,
-    )
+    # lsp qat
+    # encoded = operations.aqt_einsum(
+    #     eqn='BNTS,BSNH->BTNH',
+    #     lhs=probs,
+    #     rhs=value,
+    #     lhs_quantizer=self.act_quantizer,
+    #     rhs_quantizer=self.act_quantizer,
+    # )
+    encoded = self.qk_einsum(eqn='BNTS,BSNH->BTNH', probs, value)
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.

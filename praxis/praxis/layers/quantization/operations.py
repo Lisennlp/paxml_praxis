@@ -548,6 +548,13 @@ def compute_shape_with_subchannels(
   return new_inputs_shape
 
 
+def dequant(ret, scales) -> jnp.ndarray:
+    for scale in scales:
+      # dequant_dtype: bf16
+      ret = ret.astype(jnp.bfloat16) * scale.astype(jnp.bfloat16)
+    return ret
+
+
 def aqt_einsum(
     eqn: str,
     lhs: JTensor,
@@ -622,18 +629,28 @@ def aqt_einsum(
     logging.info(f'rhs_zp: {rhs_zp}')
     # lsp
     out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    # dimension_numbers = ()
+    # out = jax.lax.dot_general(
+    #     lhs,
+    #     rhs,
+    #     dimension_numbers=dimension_numbers,
+    #     preferred_element_type=jnp.int8,
+    #     precision=jax.lax.Precision.DEFAULT,
+    # )
     logging.info(f'out: {out.dtype} shape: {out.shape}')
-    logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
+    logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
+    logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')
+
+    # logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
 
     # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
     # lhs_scale: bsz * length
     # for s in [lhs_scale, rhs_scale]:
     #   ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
     # 反量化回去, maxtext的out_scale shape: bsz * length
-    out_scale = out_scale.astype(jnp.bfloat16)
-    out = out.astype(jnp.bfloat16)
-    ret = out * out_scale
+    ret = dequant(out, [lhs_scale, rhs_scale])
+    # ret = out * out_scale
     # None
     if rhs_zp is not None:
       if (

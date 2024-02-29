@@ -376,8 +376,8 @@ class TensorQuantizer(base_layer.BaseLayer):
   min_clipping: Optional[float] = None
   num_optimize_clipping: Optional[int] = None
   clipping_coeff: Optional[float] = None
-  add_scale_eps: Optional[bool] = True
-  unsigned_int_bounds: bool = False
+  add_scale_eps: Optional[bool] = False # True -> False
+  unsigned_int_bounds: bool = False 
   use_symmetric: bool = True
   quant_loss_weight: Optional[float] = None
   kurt_loss_weight: Optional[float] = None
@@ -432,16 +432,18 @@ class TensorQuantizer(base_layer.BaseLayer):
   ) -> Tuple[JTensor, Optional[JTensor]]:
     if self.precision is None:
       return jnp.ones(shape=(1,) * x.ndim, dtype=x.dtype), None
-    # unsigned_int_bounds: False,  precision: None
+    # unsigned_int_bounds: False,  precision: None  (-128, 127)
     clip_bound_min, clip_bound_max = operations.get_min_max(
         self.precision, self.unsigned_int_bounds
     )
     # True
     if self.use_symmetric:
-      # contract_dims: 2 , bsz * length * dim
+      # contract_dims: 2 , bsz * length * dim, 相当于aqt def get_bound
       x_bound = jnp.max(jnp.abs(x), axis=contract_dims, keepdims=True)
+      # lsp: from aqt
+      x_bound = jnp.where(x_bound == 0.0, jnp.ones_like(x_bound), x_bound)
       x_min = None
-      range_bound = clip_bound_max
+      range_bound = clip_bound_max # 127
     else:
       x_max = jnp.max(x, axis=contract_dims, keepdims=True)
       x_min = jnp.min(x, axis=contract_dims, keepdims=True)
@@ -453,15 +455,18 @@ class TensorQuantizer(base_layer.BaseLayer):
       if x_min is not None:
         x_min *= clipping_coeff
 
-    scale = x_bound / range_bound
+    # lsp
+    # scale = x_bound / range_bound 
+    scale = range_bound / x_bound
+    
     if self.stop_scale_gradient:
       scale = jax.lax.stop_gradient(scale)
 
-    if self.add_scale_eps:
-      # Add epsilon to avoid NaN gradients for near-zero inputs during training.
-      scale = scale + jnp.finfo(x.dtype).eps
-    else:
-      scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
+    # if self.add_scale_eps:
+    #   # Add epsilon to avoid NaN gradients for near-zero inputs during training.
+    #   scale = scale + jnp.finfo(x.dtype).eps
+    # else:
+    #   scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
 
     return scale, x_min
 
@@ -581,7 +586,8 @@ class TensorQuantizer(base_layer.BaseLayer):
     if self.precision is None:
       return x
 
-    x = operations.pass_through(x + 0.5, jnp.floor)
+    # x = operations.pass_through(x + 0.5, jnp.floor)
+    # -128, 127
     clip_bound_min, clip_bound_max = operations.get_min_max(
         self.precision, self.unsigned_int_bounds
     )
@@ -643,7 +649,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Rescaled tensor.
     """
-
+    # lsp
     if self.use_symmetric:
       if x_min is not None:
         raise ValueError('x_min has to be None for symmetric quantization.')
@@ -679,8 +685,12 @@ class TensorQuantizer(base_layer.BaseLayer):
     # q_s 即 scale = x_bound / range_bound， x_bound： bsz * length, range_bound: constant
     # x_min: None
     q_s, x_min = self.get_quant_scale(x, contract_dims)
+    logging.info(f'q_s: {q_s.shape} x_min: {x_min}')
     # x_scaled = x / q_s, zp_time_scale: None
-    x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
+    zp_time_scale = None
+    x_scaled = x * q_s
+    # x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
+    # clip
     q_x = self.to_quant(x_scaled)
     # lsp
     # q_s = jax.lax.reciprocal(q_s)

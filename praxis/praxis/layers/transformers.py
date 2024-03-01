@@ -33,11 +33,11 @@ from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import activations as activations_lib
 
-# from praxis.layers import attentions
-# from praxis.layers import linears
+from praxis.layers import attentions
+from praxis.layers import linears
 
-from praxis.layers.quantization import attentions  # aqt
-from praxis.layers.quantization import linears # aqt
+# from praxis.layers.quantization import attentions  # aqt
+# from praxis.layers.quantization import linears # aqt
 
 from praxis.layers import checkpoint_policy
 

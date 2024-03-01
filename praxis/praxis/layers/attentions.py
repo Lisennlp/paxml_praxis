@@ -34,7 +34,11 @@ from praxis import pytypes
 from praxis.layers import base_ops
 from praxis.layers import embedding_softmax
 from praxis.layers import stochastics
-# from praxis.layers import saqt
+#from praxis.layers import saqt
+
+from praxis.layers import utils
+from praxis.layers.quantization import quantizer
+
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
@@ -49,25 +53,26 @@ SplitDimsMapping = pytypes.SplitDimsMapping
 
 PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
 
-
-from praxis.layers import utils
-from praxis.layers.quantization import quantizer
-
-
 quantizer_obj = quantizer.TensorQuantizer()
 
 
 def aqt_einsum(eqn, lhs0, rhs0):
-    # eqn='BNTS,BSNH->BTNH' # eqn='BD,DH->BH'
+    # eqn='BNTS,BSNH->BTNH'
+    # eqn='BD,DH->BH'
     dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
+
     lhs1, lhs_scale, _ = quantizer_obj.quantize(
             lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
     rhs1, rhs_scale, _ = quantizer_obj.quantize(
             rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
+
     out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int16, precision=jax.lax.Precision.DEFAULT)
-    # ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+#    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+   # rhs_scale = rhs_scale[jnp.newaxis, ...]
+   # lhs_scale = lhs_scale[..., jnp.newaxis]
+   # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
     ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
     ret = ret.astype(jnp.bfloat16)
     return ret
@@ -724,7 +729,9 @@ class AttentionProjection(base_layer.BaseLayer):
             assert shape[-1] == self.input_dim, f"Expecting shape[-1] == p.input_dim, {shape[-1]} != {self.input_dim}"
             batch_eqn = eqn_sym[: (rank - 1)] if rank else "..."
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
-        ret = self.einsum(eqn, inputs, w)
+        # lsp aqt
+        ret = aqt_einsum(eqn, inputs, w)
+        # ret = self.einsum(eqn, inputs, w)
         if self.use_bias:
             ret += theta.b
         return ret
@@ -1396,7 +1403,9 @@ class DotProductAttention(base_layer.BaseLayer):
     ) -> Tuple[JTensor, JTensor]:
         # logits = self._atten_logits(query, key)
         # logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
-        logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
+        # lsp
+        logits = aqt_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
+        
         # 不占用激活值
         if self.scale_logits_by_head_dims:
             logits = jnp.multiply(logits, 1.0 / np.sqrt(query.shape[-1]))
@@ -1415,9 +1424,8 @@ class DotProductAttention(base_layer.BaseLayer):
             probs = jnp.exp(self._log_softmax_with_extra_logit(padded_logits)).astype(value.dtype)
 
         probs = self.atten_dropout(probs)
-        # lsp
-        # encoded = aqt_einsum("BNTS,BSNH->BTNH", probs, value)
-        encoded = self.pv_einsum(f"BNTS,BSNH->BTNH", probs, value)
+        encoded = aqt_einsum("BNTS,BSNH->BTNH", probs, value)
+        # encoded = self.pv_einsum(f"BNTS,BSNH->BTNH", probs, value)
         encoded = self._shard_blnh(encoded)
         # lsp
         # return encoded, probs

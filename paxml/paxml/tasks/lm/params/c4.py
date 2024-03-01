@@ -1484,14 +1484,19 @@ class Llama7Bv4x16(Llama7B):
 
 @experiment_registry.register
 class Llama7Bv5px8(Llama7B):
-    NUM_LAYERS = 48
+    NUM_LAYERS = 32
     ICI_MESH_SHAPE = [1, 4, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     MAX_SEQ_LEN = 2048
     QUERY_CHUNK_SIZE = None
     LM_HEAD_CHUNK_SIZE = None
     DATA_FULL_SHARD = False
-    PERCORE_BATCH_SIZE = 1
-    FFN_CHUNK_SIZE = 5504
+    PERCORE_BATCH_SIZE = 8
+    # FFN_CHUNK_SIZE = 5504 * 2
+    LEARNING_RATE = 2e-4  # XD: 1e-3
+    LR_LRED_WARMUP = 500
+    LR_LRED_DECAY_START = 501
+    LR_LRED_DECAY_END = 200000
+    HIDDEN_DIMS = 11008
 
 @experiment_registry.register
 class Llama7Bv32(Llama7B):

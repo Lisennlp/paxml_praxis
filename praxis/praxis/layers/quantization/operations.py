@@ -690,7 +690,8 @@ def aqt_einsum(
     # 反量化回去, maxtext的out_scale shape: bsz * length
     # ret = dequant(out, [lhs_scale, rhs_scale])
     # lsp
-    ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
+    # ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
+    ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
 
     # self.add_summary("out_scale_rms", _rms(out_scale), verbosity=4)
     # self.add_summary("ret_rms", _rms(ret), verbosity=4)

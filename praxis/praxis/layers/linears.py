@@ -27,6 +27,12 @@ from praxis.layers import activations
 from praxis.layers import base_ops
 import string
 
+import functools
+from aqt.jax.v2 import config as aqt_config
+from aqt.jax.v2.flax import aqt_flax
+from dataclasses import dataclass
+
+
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 WeightHParams = base_layer.WeightHParams
@@ -73,6 +79,20 @@ def aqt_einsum(eqn, lhs0, rhs0):
     ret = ret.astype(jnp.bfloat16)
     return ret
 
+
+def get_dimension(eqn, rnk):
+    # eqn='BNTS,BSNH->BTNH'
+    # eqn='BD,DH->BH'
+    if '.' in eqn:
+        # Replace the ellipsis with arbitrary symbols.
+        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
+        batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
+        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+    else:
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+    return  dimension_numbers[0]
+   
 
 def project_last_dim(
     inputs: JTensor,
@@ -128,6 +148,8 @@ class Linear(base_layer.BaseLayer):
         )
         self.create_child("einsum", self.einsum_tpl.clone())
 
+
+
     def __call__(self, inputs: JTensor) -> JTensor:
         """Apply projection to inputs.
 
@@ -149,7 +171,24 @@ class Linear(base_layer.BaseLayer):
         # input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
         # lsp
         # out = self.einsum("...y,yz->...z", inputs, w)
-        out = aqt_einsum("...y,yz->...z", inputs, w)
+
+        config = utils.AqtCfg()
+        aqt_config = utils.configure_quantization(config)
+        dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
+        # lsp: inputs and kernel dtype is bf16 or fp32
+        # AqtDotGeneral
+        # (head_nums, head_dim)
+        # axis = _canonicalize_tuple(axis) # -1 -> (-1, )
+        # # bsz * length * head_nums * head_dim
+        # axis = _normalize_axes(axis, inputs.ndim) # (-1, ) -> (3, )
+        # contract_ind = tuple(range(0, len(axis)))
+        # output = dot_general(inputs, kernel, (dimension_numbers, ((), ())), precision=None)
+
+        # out = aqt_einsum("...y,yz->...z", inputs, w)
+        rank = len(inputs.shape)
+        dimension_numbers = get_dimension("...y,yz->...z", rank)
+
+        out = dot_general(inputs, w, (dimension_numbers, ((), ())), precision=None)
 
         # Adjust sharding annotation during decoding.
         # TODO(pax): This logic should likely be lifted somewhere else.

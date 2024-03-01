@@ -38,6 +38,10 @@ from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
 
 
+# chex==0.1.85
+# optax==0.1.9
+# flax==0.8
+# jax==0.4.23
 
 Config = Any
 
@@ -123,29 +127,16 @@ def configure_quantization(config: Config, quant_mode_str: str = 'train'):
   return None
 
 
-def _normalize_axes(axes: Iterable[int], ndim: int) -> Tuple[int]:
-  # A tuple by convention. len(axes_tuple) then also gives the rank efficiently.
-  return tuple(ax if ax >= 0 else ndim + ax for ax in axes)
-
-
-def _canonicalize_tuple(x):
-    if isinstance(x, Iterable):
-        return tuple(x)
-    else:
-        return (x,)
-
 @dataclass
-class AqtCfg():
+class AqtCfg:
     quantization: "int8"
     quantization_local_shard_count: -1
 
-config = AqtCfg()
-aqt_config = configure_quantization(config)
-dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
-
 
 def aqt_dot_general(inputs, kernel, dimension_numbers):
-    """Computes a dot_general operation that may be quantized."""
+    config = AqtCfg()
+    aqt_config = configure_quantization(config)
+    dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
     # lsp: inputs and kernel dtype is bf16 or fp32
     # AqtDotGeneral
     # (head_nums, head_dim)

@@ -148,7 +148,9 @@ class Linear(base_layer.BaseLayer):
         )
         self.create_child("einsum", self.einsum_tpl.clone())
 
-
+        config = utils.AqtCfg()
+        aqt_config = utils.configure_quantization(config)
+        dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
 
     def __call__(self, inputs: JTensor) -> JTensor:
         """Apply projection to inputs.
@@ -172,9 +174,7 @@ class Linear(base_layer.BaseLayer):
         # lsp
         # out = self.einsum("...y,yz->...z", inputs, w)
 
-        config = utils.AqtCfg()
-        aqt_config = utils.configure_quantization(config)
-        dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
+       
         # lsp: inputs and kernel dtype is bf16 or fp32
         # AqtDotGeneral
         # (head_nums, head_dim)
@@ -188,7 +188,7 @@ class Linear(base_layer.BaseLayer):
         rank = len(inputs.shape)
         dimension_numbers = get_dimension("...y,yz->...z", rank)
 
-        out = dot_general(inputs, w, (dimension_numbers, ((), ())), precision=None)
+        out = self.dot_general(inputs, w, (dimension_numbers, ((), ())), precision=None)
 
         # Adjust sharding annotation during decoding.
         # TODO(pax): This logic should likely be lifted somewhere else.

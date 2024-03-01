@@ -25,6 +25,7 @@ from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import activations
 from praxis.layers import base_ops
+import string
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
@@ -36,7 +37,7 @@ JTensor = pytypes.JTensor
 
 from praxis.layers import utils
 from praxis.layers.quantization import quantizer
-
+import jax
 
 
 quantizer_obj = quantizer.TensorQuantizer()
@@ -48,14 +49,13 @@ def aqt_einsum(eqn, lhs0, rhs0):
     if '.' in eqn:
         # Replace the ellipsis with arbitrary symbols.
         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-        rank = len(lhs.shape)
+        rank = len(lhs0.shape)
         batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
     else:
         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
 
-    dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
 
     lhs1, lhs_scale, _ = quantizer_obj.quantize(
@@ -64,8 +64,8 @@ def aqt_einsum(eqn, lhs0, rhs0):
             rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
 
     out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-#    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
    # rhs_scale = rhs_scale[jnp.newaxis, ...]
    # lhs_scale = lhs_scale[..., jnp.newaxis]
    # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)

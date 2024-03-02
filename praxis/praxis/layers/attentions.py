@@ -53,26 +53,26 @@ SplitDimsMapping = pytypes.SplitDimsMapping
 
 PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
 
-quantizer_obj = quantizer.TensorQuantizer()
+# quantizer_obj = quantizer.TensorQuantizer()
 
 
-def aqt_einsum(eqn, lhs0, rhs0):
-    # eqn='BNTS,BSNH->BTNH'
-    # eqn='BD,DH->BH'
-    if '.' in eqn:
-        # Replace the ellipsis with arbitrary symbols.
-        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-        rank = len(lhs0.shape)
-        batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
-    else:
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+# def aqt_einsum(eqn, lhs0, rhs0):
+#     # eqn='BNTS,BSNH->BTNH'
+#     # eqn='BD,DH->BH'
+#     if '.' in eqn:
+#         # Replace the ellipsis with arbitrary symbols.
+#         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
+#         rank = len(lhs0.shape)
+#         batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
+#         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
+#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+#     else:
+#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
 
-    dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
-    lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
+#     dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+#     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
 
-    ret = utils.aqt_dot_general(lhs0, rhs0, dimension_numbers[0])
+#     ret = utils.aqt_dot_general(lhs0, rhs0, dimension_numbers[0])
 
 #     lhs1, lhs_scale, _ = quantizer_obj.quantize(
 #             lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
@@ -87,7 +87,7 @@ def aqt_einsum(eqn, lhs0, rhs0):
 #    # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
 #     ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
 #     ret = ret.astype(jnp.bfloat16)
-    return ret
+    # return ret
 
 
 def limited_context_mask(

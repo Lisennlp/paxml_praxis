@@ -1,24 +1,22 @@
-
+import string
 from typing import Any, Callable, Iterable, Sequence, Tuple, Union, Optional
 
 from absl import logging
-
 import flax.linen as nn
 import jax
 import numpy as np
 import jax.numpy as jnp
-
-
 import functools
 from aqt.jax.v2 import config as aqt_config
 from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
+
 from praxis.layers import utils
 
 
 # chex==0.1.85
 # optax==0.1.9
-# flax==0.8
+# flax==0.8.1
 # jax==0.4.23
 
 Config = Any
@@ -100,20 +98,6 @@ def configure_quantization(config: Config, quant_mode_str: str = 'train'):
 class AqtCfg:
     quantization:str ="int8"
     quantization_local_shard_count: int = 1
-
-
-# def aqt_dot_general(inputs, kernel, dimension_numbers):
-#     config = AqtCfg()
-#     aqt_config = configure_quantization(config)
-#     dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
-#     # lsp: inputs and kernel dtype is bf16 or fp32
-#     # AqtDotGeneral
-#     # (head_nums, head_dim)
-#     # axis = _canonicalize_tuple(axis) # -1 -> (-1, )
-#     # # bsz * length * head_nums * head_dim
-#     # axis = _normalize_axes(axis, inputs.ndim) # (-1, ) -> (3, )
-#     # contract_ind = tuple(range(0, len(axis)))
-#     output = dot_general(inputs, kernel, (dimension_numbers, ((), ())), precision=None)
 
 
 def get_dimension(eqn, ndim):

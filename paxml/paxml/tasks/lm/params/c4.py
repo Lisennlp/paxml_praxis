@@ -53,7 +53,7 @@ from praxis import py_utils
 
 from paxml import checkpoint_paths
 
-from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath
+from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208
 from paxml import aqt_utils
 
 
@@ -631,10 +631,16 @@ def configure_gpt3_task(
       stacked_p.expert_chunk_size = cls.EXPERT_CHUNK_SIZE
     if hasattr(cls, 'ROUTER_Z_LOSS'):  # lsp
       stacked_p.router_z_loss = cls.ROUTER_Z_LOSS
-    if hasattr(cls, 'QUANT') and cls.QUANT:  # lsp
+
+    if hasattr(cls, 'QUANT'):  # lsp
+      logging.info(f'quant is True')
       aqt_config = aqt_utils.AqtCfg(quantization=cls.QUANT)
+      logging.info(f'aqt_config: {aqt_config}')
       quant_config = aqt_utils.configure_quantization(aqt_config)
-      stacked_p.quant = quant_config
+      logging.info(f'quant_config: {quant_config}')
+
+      transformer_layer_p.quant = quant_config
+      transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config
 
     return task_p
 
@@ -1503,7 +1509,7 @@ class Llama7Bv5px8(Llama7B):
     LR_LRED_DECAY_START = 501
     LR_LRED_DECAY_END = 200000
     HIDDEN_DIMS = 11008
-    quant = 'int8'
+    QUANT = 'int8'
 
 @experiment_registry.register
 class Llama7Bv32(Llama7B):

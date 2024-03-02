@@ -15,7 +15,7 @@
 
 """Linear layers."""
 
-from typing import Optional
+from typing import Optional, Any
 
 from jax import numpy as jnp
 from jax import vmap
@@ -124,11 +124,11 @@ def project_last_dim(
 
 
 class DenseGeneral(nn.Module):
-  quant=None
+  quant: Optional[Any] = None
 
   @nn.compact
   def __call__(self, inputs, kernel):
-    
+
     assert self.quant is not None
 
     def compute_dot_general(inputs, kernel, dimensions):
@@ -137,7 +137,7 @@ class DenseGeneral(nn.Module):
         dot_general = dot_general_cls()
         return dot_general(
         inputs, kernel, (dimensions, ((), ())), precision=None)
-    logging.info(f'dimension_numbers: {dimension_numbers}')
+    logging.info(f'dimensions: {dimensions}')
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
     dimensions = get_dimension("...y,yz->...z", ndim=inputs.ndim)
     output = compute_dot_general(inputs, kernel, dimensions=dimensions)
@@ -171,7 +171,7 @@ class Linear(base_layer.BaseLayer):
         )
         self.create_child("einsum", self.einsum_tpl.clone())
 
-
+    @nn.compact
     def __call__(self, inputs: JTensor) -> JTensor:
         """Apply projection to inputs.
 
@@ -192,6 +192,7 @@ class Linear(base_layer.BaseLayer):
             w = self.theta.w
         # lsp input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
         if self.quant is not None:
+            logging.info(f'self.quant: {self.quant}')
             dot_general = DenseGeneral(quant=self.quant)
             out = dot_general(inputs, w)
         else:

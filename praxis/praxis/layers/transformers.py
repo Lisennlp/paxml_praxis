@@ -1541,6 +1541,7 @@ class Transformer(base_layer.BaseLayer):
           The fflayer output with shape [B, T, D].
           atten_probs: A NestedMap with keys `self_atten` <float>[B, N, T, T].
         """
+        logging.info(f'model quant: {self.quant}')
 
         inputs_stats = stats.compute_stats(inputs, jnp.expand_dims(paddings, -1))
         self.add_summary("xformer_input_mean", inputs_stats.mean_v, verbosity=3)

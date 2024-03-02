@@ -96,8 +96,8 @@ def configure_quantization(config: Config, quant_mode_str: str = 'train'):
 
 @dataclass
 class AqtCfg:
-    quantization="int8"
-    quantization_local_shard_count=-1
+    quantization:str ="int8"
+    quantization_local_shard_count: int =-1
 
 
 # def aqt_dot_general(inputs, kernel, dimension_numbers):

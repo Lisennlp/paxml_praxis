@@ -199,8 +199,8 @@ def extract_sft_datapath(task, mode):
         files = read_bucket(path, substrings=substrings)
         for step, f in files.items():
             total_files.extend(f)
-    train = [f for f in total_files if 'train' in f]
-    test = [f for f in total_files if 'test' in f]
+    train = [f for f in total_files if 'train.' in f]
+    test = [f for f in total_files if 'test.' in f]
     logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')
     train_test_dataset = {"test": test, "train": train}
     setattr(task, 'train_test_dataset', train_test_dataset)

@@ -588,17 +588,30 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         outputs = None
         print(f'self.n_chunks:{self.n_chunks}')
-        for i in range(self.n_chunks):
+        if self.n_chunks > 1:
+            for i in range(self.n_chunks):
+                if self._is_ffn1_gated:
+                    gate_value = self.ffn_layer1_gate[i](inputs)
+                    activations = gate_value * self.ffn_layer1[i](inputs)
+                else:
+                    activations = self.ffn_layer1[i](inputs)
+                activations = checkpoint_name(activations, f"ffn1_{i}")
+                if not self.apply_padding_first and paddings is not None: # False
+                    activations *= 1.0 - paddings
+                activations = self.relu_dropout(activations)
+                output = self.ffn_layer2[i](activations)
+                outputs = output if outputs is None else outputs + output
+        else:
             if self._is_ffn1_gated:
-                gate_value = self.ffn_layer1_gate[i](inputs)
-                activations = gate_value * self.ffn_layer1[i](inputs)
+                gate_value = self.ffn_layer1_gate(inputs)
+                activations = gate_value * self.ffn_layer1(inputs)
             else:
-                activations = self.ffn_layer1[i](inputs)
-            activations = checkpoint_name(activations, f"ffn1_{i}")
+                activations = self.ffn_layer1(inputs)
+            activations = checkpoint_name(activations, f"ffn1")
             if not self.apply_padding_first and paddings is not None: # False
                 activations *= 1.0 - paddings
             activations = self.relu_dropout(activations)
-            output = self.ffn_layer2[i](activations)
+            output = self.ffn_layer2(activations)
             outputs = output if outputs is None else outputs + output
 
         outputs = checkpoint_name(outputs, "ffn2")

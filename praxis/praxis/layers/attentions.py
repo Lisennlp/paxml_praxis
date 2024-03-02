@@ -38,6 +38,11 @@ from praxis.layers import stochastics
 # lsp
 from praxis import aqt_utils
 
+from praxis.layers import utils
+from praxis.layers.quantization import quantizer
+
+
+quantizer_obj = quantizer.TensorQuantizer()
 
 
 NestedMap = py_utils.NestedMap
@@ -53,41 +58,40 @@ SplitDimsMapping = pytypes.SplitDimsMapping
 
 PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
 
-# quantizer_obj = quantizer.TensorQuantizer()
+quantizer_obj = quantizer.TensorQuantizer()
 
 
-# def aqt_einsum(eqn, lhs0, rhs0):
-#     # eqn='BNTS,BSNH->BTNH'
-#     # eqn='BD,DH->BH'
-#     if '.' in eqn:
-#         # Replace the ellipsis with arbitrary symbols.
-#         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-#         rank = len(lhs0.shape)
-#         batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-#         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
-#     else:
-#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+def aqt_einsum(eqn, lhs0, rhs0):
+    # eqn='BNTS,BSNH->BTNH'
+    # eqn='BD,DH->BH'
+    if '.' in eqn:
+        # Replace the ellipsis with arbitrary symbols.
+        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
+        rank = len(lhs0.shape)
+        batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
+        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+    else:
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
 
-#     dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
-#     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
+    lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
 
-#     ret = utils.aqt_dot_general(lhs0, rhs0, dimension_numbers[0])
+    # ret = utils.aqt_dot_general(lhs0, rhs0, dimension_numbers[0])
 
-#     lhs1, lhs_scale, _ = quantizer_obj.quantize(
-#             lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
-#     rhs1, rhs_scale, _ = quantizer_obj.quantize(
-#             rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
+    lhs1, lhs_scale, _ = quantizer_obj.quantize(
+            lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
+    rhs1, rhs_scale, _ = quantizer_obj.quantize(
+            rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
 
-#     out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-#     # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-#     out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
-#    # rhs_scale = rhs_scale[jnp.newaxis, ...]
-#    # lhs_scale = lhs_scale[..., jnp.newaxis]
-#    # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
-#     ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
-#     ret = ret.astype(jnp.bfloat16)
-    # return ret
+    out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+   # rhs_scale = rhs_scale[jnp.newaxis, ...]
+   # lhs_scale = lhs_scale[..., jnp.newaxis]
+   # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
+    ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
+    ret = ret.astype(jnp.bfloat16)
+    return ret
 
 
 def limited_context_mask(
@@ -1434,13 +1438,13 @@ class DotProductAttention(base_layer.BaseLayer):
             logging.info(f'qk quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             logits = dot_general(eqn, query, key)
+            # 这个有问题。loss后面降低的很慢
+            # logits = aqt_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
         else:
             logits = self.qk_einsum(eqn, query, key)
-        # logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
 
+        logits = self.qk_einsum(eqn, query, key)
         # lsp
-        # logits = aqt_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
-        
         # 不占用激活值
         if self.scale_logits_by_head_dims:
             logits = jnp.multiply(logits, 1.0 / np.sqrt(query.shape[-1]))
@@ -1466,8 +1470,12 @@ class DotProductAttention(base_layer.BaseLayer):
             logging.info(f'scoreV quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             encoded = dot_general(eqn, probs, value)
+            # 这个有问题。loss后面降低的很慢
+            # encoded = aqt_einsum(eqn, probs, value)  # XD
         else:
             encoded = self.pv_einsum(eqn, probs, value)
+
+        encoded = self.pv_einsum(eqn, probs, value)
 
         encoded = self._shard_blnh(encoded)
         # lsp

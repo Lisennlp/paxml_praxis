@@ -131,6 +131,7 @@ class DenseGeneral(nn.Module):
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
     dimensions = get_dimension(eqn, ndim=inputs.ndim)
     logging.info(f'dimensions: {dimensions}')
+    return None
     output = compute_dot_general(inputs, kernel, dimensions=dimensions)
     return output
 

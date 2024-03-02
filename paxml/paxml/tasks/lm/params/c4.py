@@ -640,9 +640,9 @@ def configure_gpt3_task(
       logging.info(f'quant_config: {quant_config}')
       transformer_layer_p.quant = quant_config # 可有可无
       # ffn aqt
-      transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config
-      # atten aqt
-      transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
+      transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config 
+      # atten aqt，设置后变慢了一点
+    #   transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
       transformer_layer_p.tr_atten_tpl.quant = quant_config
 
     return task_p

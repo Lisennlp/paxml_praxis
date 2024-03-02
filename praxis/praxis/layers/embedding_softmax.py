@@ -152,7 +152,13 @@ class Embedding(base_layer.BaseLayer):
         elif self.lookup_style == "matmul":
             # Explicit casting to fprop_dtype needed for bf16.
             one_hot_ids = jax.nn.one_hot(ids, self.num_classes, dtype=self.fprop_dtype)
-            embs = self.einsum("...y,yz->...z", one_hot_ids, self.theta.emb_var)
+            eqn = "...y,yz->...z"
+            if self.quant is not None:
+                logging.info(f'embed quant: {self.quant}')
+                dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+                out = dot_general(eqn, inputs, w)
+            else:
+                embs = self.einsum(eqn, one_hot_ids, self.theta.emb_var)
         else:
             raise ValueError("Unknown lookup style.")
 

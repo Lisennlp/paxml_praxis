@@ -539,6 +539,7 @@ def configure_gpt3_task(
         model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = False
         # matmul
         model_p.lm_tpl.separate_embedding_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
+        
     else:
         model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = False
         model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE  # matmul
@@ -644,6 +645,8 @@ def configure_gpt3_task(
       # atten aqt，设置后变慢了一点
     #   transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
       transformer_layer_p.tr_atten_tpl.quant = quant_config
+
+      model_p.lm_tpl.separate_embedding_tpl.quant = quant_config
 
     return task_p
 

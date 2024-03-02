@@ -127,7 +127,7 @@ class DenseGeneral(nn.Module):
         dot_general_cls = self.quant.dot_general_cls()
         dot_general = dot_general_cls()
         return dot_general(
-        inputs, kernel, (dimensions, ((0), (0))), precision=None)
+        inputs, kernel, (dimensions, ((), ())), precision=None)
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
 
     if dimensions is None:

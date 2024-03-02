@@ -32,6 +32,7 @@ import functools
 from aqt.jax.v2 import config as aqt_config
 from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
+from absl import logging
 
 
 NestedMap = py_utils.NestedMap
@@ -81,7 +82,7 @@ def aqt_einsum(eqn, lhs0, rhs0):
     return ret
 
 
-def get_dimension(eqn, rnk):
+def get_dimension(eqn, ndim):
     # eqn='BNTS,BSNH->BTNH'
     # eqn='BD,DH->BH'
     if '.' in eqn:
@@ -121,35 +122,26 @@ def project_last_dim(
     ), f"input_shape[-1] = {input_shape[-1]}, weight_shape[0] = {weight_shape[0]}"
     return jnp.einsum("...y,yz->...z", inputs, weight)
 
-config = utils.AqtCfg()
-aqt_config = utils.configure_quantization(config)
 
 class DenseGeneral(nn.Module):
-  quant=aqt_config
+  quant=None
 
   @nn.compact
   def __call__(self, inputs, kernel):
-    """Applies a linear transformation to the inputs along multiple dimensions.
+    
+    assert self.quant is not None
 
-    Args:
-      inputs: The nd-array to be transformed.
-
-    Returns:
-      The transformed input.
-    """
-
-    def compute_dot_general(inputs, kernel, dimension_numbers):
+    def compute_dot_general(inputs, kernel, dimensions):
         # AqtDotGeneral
         dot_general_cls = self.quant.dot_general_cls()
         dot_general = dot_general_cls()
         return dot_general(
-        inputs, kernel, (dimension_numbers, ((), ())), precision=None)
-
-    rank = len(inputs.shape)
-    dimension_numbers = get_dimension("...y,yz->...z", rank)
-    output = compute_dot_general(inputs, kernel, dimension_numbers)
+        inputs, kernel, (dimensions, ((), ())), precision=None)
+    logging.info(f'dimension_numbers: {dimension_numbers}')
+    logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
+    dimensions = get_dimension("...y,yz->...z", ndim=inputs.ndim)
+    output = compute_dot_general(inputs, kernel, dimensions=dimensions)
     return output
-
 
 
 class Linear(base_layer.BaseLayer):
@@ -179,7 +171,7 @@ class Linear(base_layer.BaseLayer):
         )
         self.create_child("einsum", self.einsum_tpl.clone())
 
-    @nn.compact
+
     def __call__(self, inputs: JTensor) -> JTensor:
         """Apply projection to inputs.
 
@@ -198,23 +190,13 @@ class Linear(base_layer.BaseLayer):
             w = self.theta.w / wnorm.clip(1e-12)
         else:
             w = self.theta.w
-        # input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
-        # lsp
-        # out = self.einsum("...y,yz->...z", inputs, w)
-        dot_general = DenseGeneral()
-        # dot_general = aqt_flax.AqtDotGeneral(aqt_config, rhs_quant_mode=aqt_flax.QuantMode.TRAIN)
-        # lsp: inputs and kernel dtype is bf16 or fp32
-        # AqtDotGeneral
-        # (head_nums, head_dim)
-        # axis = _canonicalize_tuple(axis) # -1 -> (-1, )
-        # # bsz * length * head_nums * head_dim
-        # axis = _normalize_axes(axis, inputs.ndim) # (-1, ) -> (3, )
-        # contract_ind = tuple(range(0, len(axis)))
-        # output = dot_general(inputs, kernel, (dimension_numbers, ((), ())), precision=None)
-
+        # lsp input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
+        if self.quant is not None:
+            dot_general = DenseGeneral(quant=self.quant)
+            out = dot_general(inputs, w)
+        else:
+            out = self.einsum("...y,yz->...z", inputs, w)
         # out = aqt_einsum("...y,yz->...z", inputs, w)
-        out = dot_general(inputs, w, (dimension_numbers, ((), ())), precision=None)
-
         # Adjust sharding annotation during decoding.
         # TODO(pax): This logic should likely be lifted somewhere else.
         # lsp: ap.out 表示shard

@@ -742,8 +742,8 @@ class AttentionProjection(base_layer.BaseLayer):
             batch_eqn = eqn_sym[: (rank - 1)] if rank else "..."
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
         # lsp aqt
-        ret = aqt_einsum(eqn, inputs, w)
-        # ret = self.einsum(eqn, inputs, w)
+        # ret = aqt_einsum(eqn, inputs, w)
+        ret = self.einsum(eqn, inputs, w)
         if self.use_bias:
             ret += theta.b
         return ret

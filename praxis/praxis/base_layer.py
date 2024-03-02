@@ -1526,6 +1526,7 @@ class BaseLayer(nn.Module):
         ActivationSharding
     )
     user_summary_level = 4
+    quant = None
 
     @property
     def mesh_shape(self):

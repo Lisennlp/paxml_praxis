@@ -1411,7 +1411,7 @@ class DotProductAttention(base_layer.BaseLayer):
         """Compute logits from query and key."""
         eqn = "BTNH,BSNH->BNTS"
         if self.quant is not None:
-            logging.info(f'ffn quant: {self.quant}')
+            logging.info(f'qk quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             logits = dot_general(eqn, query, key)
         else:
@@ -1452,7 +1452,15 @@ class DotProductAttention(base_layer.BaseLayer):
 
         probs = self.atten_dropout(probs)
         # encoded = aqt_einsum("BNTS,BSNH->BTNH", probs, value)
-        encoded = self.pv_einsum(f"BNTS,BSNH->BTNH", probs, value)
+
+        eqn = "BNTS,BSNH->BTNH"
+        if self.quant is not None:
+            logging.info(f'scoreV quant: {self.quant}')
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+            encoded = dot_general(eqn, probs, value)
+        else:
+            encoded = self.pv_einsum(eqn, probs, value)
+
         encoded = self._shard_blnh(encoded)
         # lsp
         # return encoded, probs

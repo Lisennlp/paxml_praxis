@@ -6,12 +6,14 @@ from absl import logging
 import flax.linen as nn
 import jax
 import numpy as np
+import jax.numpy as jnp
 
 
 import functools
 from aqt.jax.v2 import config as aqt_config
 from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
+from praxis.layers import utils
 
 
 # chex==0.1.85
@@ -113,4 +115,38 @@ class AqtCfg:
 #     # contract_ind = tuple(range(0, len(axis)))
 #     output = dot_general(inputs, kernel, (dimension_numbers, ((), ())), precision=None)
 
+
+def get_dimension(eqn, ndim):
+    # eqn='BNTS,BSNH->BTNH'
+    # eqn='BD,DH->BH'
+    if '.' in eqn:
+        # Replace the ellipsis with arbitrary symbols.
+        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
+        batch_eqn = eqn_sym[:(ndim - 1)] if ndim else '...'
+        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+    else:
+        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+    return  dimension_numbers[0]
+   
+
+class DenseGeneral(nn.Module):
+  quant: Optional[Any] = None
+
+  @nn.compact
+  def __call__(self, eqn, inputs, kernel):
+
+    assert self.quant is not None
+
+    def compute_dot_general(inputs, kernel, dimensions):
+        # AqtDotGeneral
+        dot_general_cls = self.quant.dot_general_cls()
+        dot_general = dot_general_cls()
+        return dot_general(
+        inputs, kernel, (dimensions, ((), ())), precision=None)
+    logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
+    dimensions = get_dimension(eqn, ndim=inputs.ndim)
+    logging.info(f'dimensions: {dimensions}')
+    output = compute_dot_general(inputs, kernel, dimensions=dimensions)
+    return output
 

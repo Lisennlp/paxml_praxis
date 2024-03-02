@@ -17,6 +17,7 @@
 
 from typing import Optional, Any
 
+import jax
 from jax import numpy as jnp
 from jax import vmap
 from praxis import base_layer
@@ -28,11 +29,7 @@ from praxis.layers import base_ops
 import string
 import flax.linen as nn
 
-import functools
-from aqt.jax.v2 import config as aqt_config
-from aqt.jax.v2.flax import aqt_flax
-from dataclasses import dataclass
-from absl import logging
+from praxis import aqt_utils
 
 
 NestedMap = py_utils.NestedMap
@@ -43,58 +40,41 @@ LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
 JTensor = pytypes.JTensor
 
 
-from praxis.layers import utils
-from praxis.layers.quantization import quantizer
-import jax
+# from praxis.layers import utils
+# from praxis.layers.quantization import quantizer
 
 
-quantizer_obj = quantizer.TensorQuantizer()
+# quantizer_obj = quantizer.TensorQuantizer()
+# def aqt_einsum(eqn, lhs0, rhs0):
+#     # eqn='BNTS,BSNH->BTNH'
+#     # eqn='BD,DH->BH'
+#     if '.' in eqn:
+#         # Replace the ellipsis with arbitrary symbols.
+#         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
+#         rank = len(lhs0.shape)
+#         batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
+#         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
+#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+#     else:
+#         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
 
+#     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
 
-def aqt_einsum(eqn, lhs0, rhs0):
-    # eqn='BNTS,BSNH->BTNH'
-    # eqn='BD,DH->BH'
-    if '.' in eqn:
-        # Replace the ellipsis with arbitrary symbols.
-        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-        rank = len(lhs0.shape)
-        batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
-    else:
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+#     lhs1, lhs_scale, _ = quantizer_obj.quantize(
+#             lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
+#     rhs1, rhs_scale, _ = quantizer_obj.quantize(
+#             rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
 
-    lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
+#     out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+#     # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
+#     out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+#    # rhs_scale = rhs_scale[jnp.newaxis, ...]
+#    # lhs_scale = lhs_scale[..., jnp.newaxis]
+#    # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
+#     ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
+#     ret = ret.astype(jnp.bfloat16)
+#     return ret
 
-    lhs1, lhs_scale, _ = quantizer_obj.quantize(
-            lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
-    rhs1, rhs_scale, _ = quantizer_obj.quantize(
-            rhs0, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
-
-    out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
-   # rhs_scale = rhs_scale[jnp.newaxis, ...]
-   # lhs_scale = lhs_scale[..., jnp.newaxis]
-   # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
-    ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
-    ret = ret.astype(jnp.bfloat16)
-    return ret
-
-
-def get_dimension(eqn, ndim):
-    # eqn='BNTS,BSNH->BTNH'
-    # eqn='BD,DH->BH'
-    if '.' in eqn:
-        # Replace the ellipsis with arbitrary symbols.
-        eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-        batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-        eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
-    else:
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
-    return  dimension_numbers[0]
-   
 
 def project_last_dim(
     inputs: JTensor,
@@ -121,27 +101,6 @@ def project_last_dim(
         input_shape[-1] == weight_shape[0]
     ), f"input_shape[-1] = {input_shape[-1]}, weight_shape[0] = {weight_shape[0]}"
     return jnp.einsum("...y,yz->...z", inputs, weight)
-
-
-class DenseGeneral(nn.Module):
-  quant: Optional[Any] = None
-
-  @nn.compact
-  def __call__(self, eqn, inputs, kernel):
-
-    assert self.quant is not None
-
-    def compute_dot_general(inputs, kernel, dimensions):
-        # AqtDotGeneral
-        dot_general_cls = self.quant.dot_general_cls()
-        dot_general = dot_general_cls()
-        return dot_general(
-        inputs, kernel, (dimensions, ((), ())), precision=None)
-    logging.info(f'dimensions: {dimensions}')
-    logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
-    dimensions = get_dimension(eqn, ndim=inputs.ndim)
-    output = compute_dot_general(inputs, kernel, dimensions=dimensions)
-    return output
 
 
 class Linear(base_layer.BaseLayer):
@@ -191,10 +150,10 @@ class Linear(base_layer.BaseLayer):
         else:
             w = self.theta.w
         # lsp input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
-        eqn =  "...y,yz->...z",
+        eqn = "...y,yz->...z"
         if self.quant is not None:
             logging.info(f'ffn quant: {self.quant}')
-            dot_general = DenseGeneral(quant=self.quant)
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             out = dot_general(eqn, inputs, w)
         else:
             out = self.einsum(eqn, inputs, w)

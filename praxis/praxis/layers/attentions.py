@@ -35,10 +35,9 @@ from praxis.layers import base_ops
 from praxis.layers import embedding_softmax
 from praxis.layers import stochastics
 #from praxis.layers import saqt
+# lsp
+from praxis import aqt_utils
 
-from praxis.layers import utils
-from praxis.layers.quantization import quantizer
-from praxis.layers import linears
 
 
 NestedMap = py_utils.NestedMap
@@ -747,7 +746,7 @@ class AttentionProjection(base_layer.BaseLayer):
         # ret = aqt_einsum(eqn, inputs, w)
         if self.quant is not None:
             logging.info(f'qkvo quant: {self.quant}')
-            dot_general = linears.DenseGeneral(quant=self.quant)
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             ret = dot_general(eqn, inputs, w)
         else:
             ret = self.einsum(eqn, inputs, w)

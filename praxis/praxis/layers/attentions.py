@@ -38,6 +38,7 @@ from praxis.layers import stochastics
 
 from praxis.layers import utils
 from praxis.layers.quantization import quantizer
+from praxis.layers import linears
 
 
 NestedMap = py_utils.NestedMap
@@ -695,6 +696,7 @@ class AttentionProjection(base_layer.BaseLayer):
 
         self.create_child("einsum", self.einsum_tpl.clone())
 
+    @nn.compact
     def __call__(self, inputs: JTensor) -> JTensor:
         """Computes the multi headed projection for inputs.
 
@@ -743,7 +745,13 @@ class AttentionProjection(base_layer.BaseLayer):
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
         # lsp aqt
         # ret = aqt_einsum(eqn, inputs, w)
-        ret = self.einsum(eqn, inputs, w)
+        if self.quant is not None:
+            logging.info(f'qkvo quant: {self.quant}')
+            dot_general = linears.DenseGeneral(quant=self.quant)
+            ret = dot_general(eqn, inputs, w)
+        else:
+            ret = self.einsum(eqn, inputs, w)
+
         if self.use_bias:
             ret += theta.b
         return ret

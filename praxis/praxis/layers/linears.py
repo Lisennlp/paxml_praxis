@@ -193,7 +193,7 @@ class Linear(base_layer.BaseLayer):
         # lsp input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
         eqn =  "...y,yz->...z",
         if self.quant is not None:
-            logging.info(f'self.quant: {self.quant}')
+            logging.info(f'ffn quant: {self.quant}')
             dot_general = DenseGeneral(quant=self.quant)
             out = dot_general(eqn, inputs, w)
         else:

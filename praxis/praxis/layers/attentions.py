@@ -1418,6 +1418,7 @@ class DotProductAttention(base_layer.BaseLayer):
             logits = self.qk_einsum(eqn, query, key)
         return logits
 
+    @nn.compact
     def _atten_context(
         self,
         query: JTensor,
@@ -1428,7 +1429,14 @@ class DotProductAttention(base_layer.BaseLayer):
     ) -> Tuple[JTensor, JTensor]:
         # logits = self._atten_logits(query, key)
         # logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
-        logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
+        eqn = "BTNH,BSNH->BNTS"
+        if self.quant is not None:
+            logging.info(f'qk quant: {self.quant}')
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+            logits = dot_general(eqn, query, key)
+        else:
+            logits = self.qk_einsum(eqn, query, key)
+        # logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
 
         # lsp
         # logits = aqt_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD

@@ -118,7 +118,7 @@ class DenseGeneral(nn.Module):
   quant: Optional[Any] = None
 
   @nn.compact
-  def __call__(self, eqn, inputs, kernel):
+  def __call__(self, eqn, inputs, kernel, dimensions=None):
 
     assert self.quant is not None
 
@@ -127,11 +127,14 @@ class DenseGeneral(nn.Module):
         dot_general_cls = self.quant.dot_general_cls()
         dot_general = dot_general_cls()
         return dot_general(
-        inputs, kernel, (dimensions, ((), ())), precision=None)
+        inputs, kernel, (dimensions, ((0), (0))), precision=None)
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
-    dimensions = get_dimension(eqn, ndim=inputs.ndim)
+
+    if dimensions is None:
+      dimensions = get_dimension(eqn, ndim=inputs.ndim)
+
     logging.info(f'dimensions: {dimensions}')
-    return None
+    # return inputs
     output = compute_dot_general(inputs, kernel, dimensions=dimensions)
     return output
 

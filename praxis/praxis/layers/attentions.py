@@ -1437,13 +1437,13 @@ class DotProductAttention(base_layer.BaseLayer):
         if self.quant is not None:
             logging.info(f'qk quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
-            logits = dot_general(eqn, query, key)
+            logits = dot_general(eqn, query, key, dimensions=((2, 3), (2, 3)))
             # 这个有问题。loss后面降低的很慢
             # logits = aqt_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
         else:
             logits = self.qk_einsum(eqn, query, key)
 
-        logits = self.qk_einsum(eqn, query, key)
+        # logits = self.qk_einsum(eqn, query, key)
         # lsp
         # 不占用激活值
         if self.scale_logits_by_head_dims:
@@ -1475,7 +1475,7 @@ class DotProductAttention(base_layer.BaseLayer):
         else:
             encoded = self.pv_einsum(eqn, probs, value)
 
-        encoded = self.pv_einsum(eqn, probs, value)
+        # encoded = self.pv_einsum(eqn, probs, value)
 
         encoded = self._shard_blnh(encoded)
         # lsp

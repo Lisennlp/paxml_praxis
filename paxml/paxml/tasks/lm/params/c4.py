@@ -1768,7 +1768,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    DATA_REPEAT = {'train': 1, 'test': 10}
+    DATA_REPEAT = {'train': 3, 'test': 10}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
@@ -1784,8 +1784,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
     #             }
     DATA_PATH = {
-                'train': ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'],
-                'test':  ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'], 
+                'train': ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord_test/'],
+                'test':  ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord_test/'], 
                 }
     DATA_FUNC = extract_sft_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled

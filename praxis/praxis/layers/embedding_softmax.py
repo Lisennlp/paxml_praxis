@@ -29,6 +29,8 @@ from praxis import pytypes
 from praxis.layers import activations
 from praxis.layers import base_ops
 from praxis.layers import linears
+from praxis import aqt_utils
+import flax.linen as nn
 
 NestedMap = py_utils.NestedMap
 WeightHParams = base_layer.WeightHParams
@@ -141,9 +143,11 @@ class Embedding(base_layer.BaseLayer):
         self.create_child("array_lookup", self.array_lookup_tpl.clone())
         self.create_child("einsum", self.einsum_tpl.clone())
 
+    
     def __call__(self, ids: JTensor) -> JTensor:
         return self.emb_lookup(ids)
 
+    @nn.compact
     def emb_lookup(self, ids: JTensor) -> JTensor:
         ap = self.activation_split_dims_mapping
 
@@ -156,7 +160,7 @@ class Embedding(base_layer.BaseLayer):
             if self.quant is not None:
                 logging.info(f'embed quant: {self.quant}')
                 dot_general = aqt_utils.DenseGeneral(quant=self.quant)
-                out = dot_general(eqn, inputs, w)
+                embs = dot_general(eqn, one_hot_ids, self.theta.emb_var)
             else:
                 embs = self.einsum(eqn, one_hot_ids, self.theta.emb_var)
         else:

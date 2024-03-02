@@ -194,9 +194,11 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
 def extract_sft_datapath(task, mode):
     paths = [task.DATA_PATH[mode]] if isinstance(task.DATA_PATH[mode], str) else task.DATA_PATH[mode]
     total_files = []
+    substrings = ['.tfrecord']
     for path in paths:
         files = read_bucket(path, substrings=substrings)
-        total_files.extend(files)
+        for step, f in files.items():
+            total_files.extend(f)
     train = [f for f in total_files if 'train' in f]
     test = [f for f in total_files if 'test' in f]
     logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')

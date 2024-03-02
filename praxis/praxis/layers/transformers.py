@@ -476,7 +476,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
             scale = (1.0 / self.input_dims) ** 0.5 * (3.0**0.5)
             ffn1_p.linear_tpl.params_init = WeightInit.Uniform(scale)
         # lsp
-        self.create_children('ffn_layer1', [ffn1_p.clone() for _ in range(self.n_chunks)])
+        if self.n_chunks > 1:
+            self.create_children('ffn_layer1', [ffn1_p.clone() for _ in range(self.n_chunks)])
+        else:
+            self.create_child('ffn_layer1', ffn1_p)
     
         if self._is_ffn1_gated:
             # This is a gated ffw network, corresponding to gshard_builder's wi0
@@ -495,8 +498,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
                 gate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
             
             # lsp
-            self.create_children('ffn_layer1_gate', [gate_p.clone() for _ in range(self.n_chunks)])
-            # self.create_child("ffn_layer1_gate", gate_p)
+            if self.n_chunks > 1:
+                self.create_children('ffn_layer1_gate', [gate_p.clone() for _ in range(self.n_chunks)])
+            else:
+                self.create_child("ffn_layer1_gate", gate_p)
 
         # Create RELU dropout layer
         relu_dropout_p = self.relu_dropout_tpl.clone()
@@ -519,8 +524,10 @@ class TransformerFeedForward(base_layer.BaseLayer):
             scale = (1.0 / self.hidden_dims) ** 0.5 * (3.0**0.5)
             ffn2_p.linear_tpl.params_init = WeightInit.Uniform(scale)
         # lsp
-        # self.create_child("ffn_layer2", ffn2_p)
-        self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)])
+        if self.n_chunks > 1:
+            self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)])
+        else:
+            self.create_child("ffn_layer2", ffn2_p)
 
         # Create residual dropout layer
         residual_dropout_p = self.residual_dropout_tpl.clone()

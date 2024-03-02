@@ -1409,7 +1409,13 @@ class DotProductAttention(base_layer.BaseLayer):
 
     def _atten_logits(self, query: JTensor, key: JTensor) -> JTensor:
         """Compute logits from query and key."""
-        logits = self.qk_einsum("BTNH,BSNH->BNTS", query, key)
+        eqn = "BTNH,BSNH->BNTS"
+        if self.quant is not None:
+            logging.info(f'ffn quant: {self.quant}')
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+            logits = dot_general(eqn, query, key)
+        else:
+            logits = self.qk_einsum(eqn, query, key)
         return logits
 
     def _atten_context(

@@ -643,6 +643,7 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config
       # atten aqt
       transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
+      transformer_layer_p.tr_atten_tpl.quant = quant_config
 
     return task_p
 

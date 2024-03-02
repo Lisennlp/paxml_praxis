@@ -53,7 +53,7 @@ from praxis import py_utils
 
 from paxml import checkpoint_paths
 
-from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208, extract_train_skip_step
+from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208, extract_train_skip_step, extract_sft_datapath
 from praxis import aqt_utils
 
 
@@ -1723,9 +1723,9 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
     PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 32, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    ICI_MESH_SHAPE = [1, 16, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
-    MAX_SEQ_LEN = 4097
+    MAX_SEQ_LEN = 2049
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
@@ -1763,8 +1763,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "Qwen14B"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = 128
-    LM_HEAD_CHUNK_SIZE = 128
+    QUERY_CHUNK_SIZE = 256
+    LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
@@ -1772,20 +1772,22 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
-    RESET_FOR_EVAL = False # when True, eval whole eval dataset
 
     # c4 text datasets. when LOAD_SEQIO_TEXT is True ，recovery code
     LOAD_SEQIO_TEXT = False
     LOAD_SEQIO_ID = False
     KEY_MAP = {"targets": "input_ids", "masks": "labels"}
+    # DATA_PATH = {
+    #             'train': ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
+    #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208'], 
+    #             'test':  ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
+    #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
+    #             }
     DATA_PATH = {
-                'train': ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
-                          'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208'], 
-                'test':  ['gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208', 
-                          'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
+                'train': ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'],
+                'test':  ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'], 
                 }
-                
-    DATA_FUNC = extract_qwen_datapath
+    DATA_FUNC = extract_sft_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208
@@ -1973,9 +1975,9 @@ class MyDatasets(base_input.BaseInput):
         logging.info(f'process index {jax.process_index()} load input_ids: {model_needed_inputs.ids}')
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            if self.label_flag == 0:
-                logging.info(f'=================data:\n{data}')
-            self.label_flag = 1
+            # if self.label_flag == 0:
+            #     logging.info(f'=================data:\n{data}')
+            # self.label_flag = 1
             weights = data["labels"] > 0
         else:
             weights = data["input_ids"] >= 0

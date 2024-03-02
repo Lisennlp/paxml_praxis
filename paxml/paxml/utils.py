@@ -191,6 +191,20 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
     return train_test_dataset
 
 
+def extract_sft_datapath(task, mode):
+    paths = [task.DATA_PATH[mode]] if isinstance(task.DATA_PATH[mode], str) else task.DATA_PATH[mode]
+    total_files = []
+    for path in paths:
+        files = read_bucket(path, substrings=substrings)
+        total_files.extend(files)
+    train = [f for f in total_files if 'train' in f]
+    test = [f for f in total_files if 'test' in f]
+    logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset
+
+
 def extract_pythia_datapath(task, mode):
     return extract_datapath(task, mode, substrings=['.tfrecord'], remove_steps=None)
    

@@ -127,7 +127,7 @@ class DenseGeneral(nn.Module):
   quant: Optional[Any] = None
 
   @nn.compact
-  def __call__(self, inputs, kernel):
+  def __call__(self, eqn, inputs, kernel):
 
     assert self.quant is not None
 
@@ -139,7 +139,7 @@ class DenseGeneral(nn.Module):
         inputs, kernel, (dimensions, ((), ())), precision=None)
     logging.info(f'dimensions: {dimensions}')
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
-    dimensions = get_dimension("...y,yz->...z", ndim=inputs.ndim)
+    dimensions = get_dimension(eqn, ndim=inputs.ndim)
     output = compute_dot_general(inputs, kernel, dimensions=dimensions)
     return output
 
@@ -191,12 +191,13 @@ class Linear(base_layer.BaseLayer):
         else:
             w = self.theta.w
         # lsp input: bsz * len * input_dim , w: input_dim * out_dim  ->  bsz * len * out_dim
+        eqn =  "...y,yz->...z",
         if self.quant is not None:
             logging.info(f'self.quant: {self.quant}')
             dot_general = DenseGeneral(quant=self.quant)
-            out = dot_general(inputs, w)
+            out = dot_general(eqn, inputs, w)
         else:
-            out = self.einsum("...y,yz->...z", inputs, w)
+            out = self.einsum(eqn, inputs, w)
         # out = aqt_einsum("...y,yz->...z", inputs, w)
         # Adjust sharding annotation during decoding.
         # TODO(pax): This logic should likely be lifted somewhere else.

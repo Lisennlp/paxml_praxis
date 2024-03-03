@@ -50,6 +50,7 @@ elif [[ $tpu_suffix == *v4* ]]; then
   zone="us-central2-b"
 else
   zone="us-west4-a"
+  zone='us-east5-a'
 fi
 echo "Zone: $zone"
 
@@ -58,7 +59,7 @@ echo "Romote path: $remote_path"
 # 检查传输方向
 if [ "$direction" -eq 0 ]; then
   # 从A传至B
-  gcloud compute tpus tpu-vm scp $file_name  llm-jax-${tpu_suffix}:$remote_path --worker all --zone $zone
+  gcloud compute tpus tpu-vm scp $file_name  llm-jax-${tpu_suffix}:$remote_path --worker all --zone $zone --project=colorful-aia
   echo "File name <${file_name}> have been ftped to <$remote_path> successfully"
 elif [ "$direction" -eq 1 ]; then
   # 从B传至A

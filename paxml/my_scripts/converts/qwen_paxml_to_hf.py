@@ -14,7 +14,6 @@ from flax.traverse_util import flatten_dict, unflatten_dict
 from paxml import train_states
 from paxml import checkpoint_managers
 from paxml import checkpoints  # mapped to internal
-from praxis import py_utils
 
 try:
     import torch
@@ -28,7 +27,6 @@ TrainState = train_states.TrainState
 CheckpointType = checkpoints.CheckpointType
 Checkpointer = checkpoints.Checkpointer
 PaxCheckpointHandler = checkpoints.PaxCheckpointHandler
-NestedMap = py_utils.NestedMap
 checkpoint_type = CheckpointType.GDA
 SAVE_INTERVAL_STEPS = 1
 
@@ -52,7 +50,7 @@ LLAMA_STANDARD_CONFIGS = {
 }
 
 
-step = 8200
+step = 14000
 model_size = '14B'
 params = LLAMA_STANDARD_CONFIGS[model_size]
 n_layers = params["n_layers"]
@@ -63,6 +61,7 @@ head_dim = dim // n_heads
 save_opt = False
 
 read_dir = 'gs://llm_base_models/qwen/14B/paxml_c8200/checkpoints'
+read_dir = 'gs://ntpu_llm_base_models/qwen/14B/sft_base_bookstart_step9000/checkpoints'
 save_dir = f'paxml_to_hf{step}'
 
 os.makedirs(save_dir, exist_ok=True)
@@ -248,7 +247,7 @@ save_model(no_repeat_state_dict, os.path.join(save_dir, filename), mode="torch")
 index_dict["metadata"] = {"total_size": param_count * 2}
 # cp py and config
 for f in ['py', 'json', 'tiktoken']:
-    command = ["gsutil", "cp", f"gs://llm_base_models/qwen/{model_size}/hf/*.{f}", save_dir]
+    command = ["gsutil", "cp", f"gs://ntpu_llm_base_models/qwen/{model_size}/hf/*.{f}", save_dir]
     result = subprocess.run(command, capture_output=True, text=True)
 
 write_json(index_dict, os.path.join(save_dir, "model.safetensors.index.json"))

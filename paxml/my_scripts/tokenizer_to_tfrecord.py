@@ -4,8 +4,15 @@ import os
 import json
 import time
 import tensorflow as tf
+import random
+import time
+import os
 
 
+from etils import epath
+from google.cloud import storage # google-cloud-storage
+from collections import defaultdict
+import tensorflow as tf
 def _int64_feature(value): return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
 
@@ -16,66 +23,101 @@ tokenizer = AutoTokenizer.from_pretrained(
         )
 
 
+random.seed(42)
 
+# local
+# read_dir = '/nas2/yuhe/chatllm/sft_target/zh'
+# files = os.listdir(read_dir)
+# start = time.time()
+# max_length = 4096
+# total_lines = []
+# for f in files[:1]:
+#     abs_path = os.path.join(read_dir, f)
+#     with open(abs_path, 'r') as f:
+#         lines = f.readlines()
+#         total_lines.extend(lines)
 
-read_dir = '/nas2/yuhe/chatllm/sft_target/zh'
-write_dir = 'gs://jax_llm_data/xiaomeng/sft_target/zh_tfrecord/'
+# bucket
+zh_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/zh/'
+en_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/en/'
 
-files = os.listdir(read_dir)
-print(files)
+client = storage.Client()
+bucket_name = 'ntpu_jax_llm_data'
+pathes = []
+for lang in ['zh', 'en']:
+    directory_path = f'xiaomeng/sft_target/{lang}/'
+    for blob in client.list_blobs(bucket_name, prefix=directory_path):
+        filename = blob.name
+        path = os.path.join('gs://', bucket_name, filename)
+        # path = f'gs://{bucket_name}/{directory_path}'
+        pathes.append(path)
+print(pathes)
+
 
 start = time.time()
-max_length = 2048
-for f in files:
-    name = f.split('.')[0] + '.tfrecord'
-    wp = os.path.join(write_dir, name)
-    tf_writer = tf.io.TFRecordWriter(wp)
-    abs_path = os.path.join(read_dir, f)
-    print(f'save path: {wp}')
-    print(f'Processing file: {f} take: {time.time() - start}')
-    with open(abs_path, 'r') as f:
-        for i, line in enumerate(f):
-            line = json.loads(line)
-            text = line['text']
-            target = line['target']
-            if text:
-                text_ids = tokenizer.encode(text)
-            else:
-                text_ids = []
-                
-            text_ids = text_ids[: max_length - 1]
-            labels = [0] * len(text_ids) 
-            target_ids = tokenizer.encode(target)
+max_length = 4096
+total_lines = []
+for path in pathes[:1]:
+    path = epath.Path(path)
+    with path.open('r') as f:
+        lines = f.readlines()
+        total_lines.extend(lines)
 
-            input_ids = text_ids + target_ids + [151643]  # <|endoftext|>
-            labels = labels + target_ids + [151643]
-            assert len(input_ids) == len(labels)
+random.shuffle(total_lines)
 
-            if len(input_ids) > max_length: 
-                print(f'i: {i} len: {len(input_ids)}')
-                continue
-            feature = {
-                "input_ids": _int64_feature(input_ids),
-                "labels": _int64_feature(labels),
-                      }
-            example = tf.train.Example(features=tf.train.Features(feature=feature))
-            tf_writer.write(example.SerializeToString())
-            # if i > 10:
-            #     break
-    tf_writer.close()
+print(f'Read data and shuffle take: {time.time() - start}s data length: {len(total_lines)}')
+train_path = 'gs://ntpu_jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/train.tfrecord'
+test_path = 'gs://ntpu_jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/test.tfrecord'
+
+train_writer = tf.io.TFRecordWriter(train_path)
+test_writer = tf.io.TFRecordWriter(test_path)
+
+
+test_nums = 10000
+
+start = time.time()
+for i, line in enumerate(total_lines):
+    line = json.loads(line)
+    text = line['text']
+    target = line['target']
+    text_ids = tokenizer.encode(text) if text else []
+    text_ids = text_ids[: max_length - 1]
+    labels = [0] * len(text_ids) 
+    target_ids = tokenizer.encode(target)
+    # <|im_start| <|im_end|>
+    if text_ids:
+        start_id = [151644]
+        end_id = [151645]
+    else:
+        start_id = []
+        end_id = []
+    input_ids =  text_ids + start_id + target_ids + end_id
+    assert sum(labels) == 0
+    labels = labels + start_id + target_ids + end_id
+    assert len(input_ids) == len(labels)
+    if len(input_ids) > max_length: 
+        print(f'i: {i} len: {len(input_ids)}')
+        continue
+    feature = {
+        "input_ids": _int64_feature(input_ids),
+        "labels": _int64_feature(labels),
+                }
+    example = tf.train.Example(features=tf.train.Features(feature=feature))
+    if i < test_nums:
+        test_writer.write(example.SerializeToString())
+    else:
+        train_writer.write(example.SerializeToString())
+    if i % 100 == 0:
+        print(f'Processing: {i}...... take: {time.time() - start}s')
+
+
+test_writer.close()
+train_writer.close()
 
 
 
 
 # =====================================================================
-import time
-import os
-
-
-from etils import epath
-from google.cloud import storage # google-cloud-storage
-from collections import defaultdict
-import tensorflow as tf
 
 p0 = 'gs://jax_llm_data/xiaomeng/sft_target/en_tfrecord'
 p1 = 'gs://jax_llm_data/xiaomeng/sft_target/en_tfrecord'

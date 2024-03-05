@@ -1755,8 +1755,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     USE_BIAS = False
     FPROP_DTYPE = jnp.bfloat16
 
-    CHECKPOINT_EVERY_N_STEPS = 20
-    EVAL_LOOP_NUM_BATCHES = 20
+    CHECKPOINT_EVERY_N_STEPS = 200
+    EVAL_LOOP_NUM_BATCHES = 35
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
@@ -1975,9 +1975,10 @@ class MyDatasets(base_input.BaseInput):
         logging.info(f'process index {jax.process_index()} load input_ids: {model_needed_inputs.ids}')
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            # if self.label_flag == 0:
-            #     logging.info(f'=================data:\n{data}')
-            # self.label_flag = 1
+            # lsp: 第一次打印数据
+            if self.label_flag == 0:
+                logging.info(f'=================data:\n{data}')
+            self.label_flag = 1
             weights = data["labels"] > 0
         else:
             weights = data["input_ids"] >= 0

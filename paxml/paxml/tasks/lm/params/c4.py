@@ -644,8 +644,8 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config 
       # atten aqt，设置后变慢了一点 qkv weight 
     #   transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
-      # qkv activation 有问题
-    #   transformer_layer_p.tr_atten_tpl.quant = quant_config
+      # qkv activation 快一点点
+      transformer_layer_p.tr_atten_tpl.quant = quant_config
       # embedding 快一点点
       model_p.lm_tpl.separate_embedding_tpl.quant = quant_config
       # lm head 变慢了一点点

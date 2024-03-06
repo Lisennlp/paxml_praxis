@@ -44,10 +44,12 @@ from praxis.layers.quantization import quantizer
 from jax.experimental.pallas.ops import attention as pallas_attention
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
+from jax.experimental import shard_map
 
-quantizer_obj = quantizer.TensorQuantizer()
+shard_map = shard_map.shard_map
 
 
+Array = jnp.ndarray
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 WeightHParams = base_layer.WeightHParams
@@ -56,13 +58,12 @@ LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor
 NestedInt = pytypes.NestedInt
-
 SplitDimsMapping = pytypes.SplitDimsMapping
-
 PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
 
-quantizer_obj = quantizer.TensorQuantizer()
 
+
+quantizer_obj = quantizer.TensorQuantizer()
 
 
 def aqt_einsum(eqn, lhs0, rhs0):
@@ -1318,6 +1319,9 @@ class DotProductAttention(base_layer.BaseLayer):
         self.create_child("qk_einsum", self.qk_einsum_tpl.clone())
         self.create_child("pv_einsum", self.pv_einsum_tpl.clone())
 
+        self.mesh = jax.sharding.Mesh(np.asarray(jax.devices()).reshape(1, 4, 1), ('replica', 'data', 'mdl'))
+
+ 
     def _shard_bnh(self, x: JTensor) -> JTensor:
         """Shards tensors of shape [b, n, h].
 
@@ -1515,7 +1519,49 @@ class DotProductAttention(base_layer.BaseLayer):
             decoder_segment_ids = splash_attention_kernel.SegmentIds(
                 decoder_segment_ids, decoder_segment_ids
             )
-        x = self.wrap_flash_attention(query, key, value, decoder_segment_ids)
+
+        axis_names = nn.logical_to_mesh_axes(('data', None, None, 'mdl'))
+        segment_axis_names = nn.logical_to_mesh_axes(('data', None))
+
+        @functools.partial(
+        shard_map,
+        mesh=self.mesh,
+        in_specs=(
+            axis_names,
+            axis_names,
+            axis_names,
+            segment_axis_names,
+        ),
+        out_specs=axis_names,
+        check_rep=False,
+        )
+        def wrap_flash_attention(query, key, value, decoder_segment_ids):
+            if decoder_segment_ids is not None:
+                assert (
+                    query.shape[2]
+                    == decoder_segment_ids.q.shape[1]
+                ), 'Sharding along sequence dimension not allowed in tpu kernel attention'
+            block_sizes = splash_attention_kernel.BlockSizes(
+                                                        block_q=min(512, query.shape[2]),
+                                                        block_kv_compute=min(512, key.shape[2]),
+                                                        block_kv=min(512, key.shape[2]),
+                                                        block_q_dkv=min(512, query.shape[2]),
+                                                        block_kv_dkv=min(512, key.shape[2]),
+                                                        block_kv_dkv_compute=min(512, query.shape[2]),
+                                                        block_q_dq=min(512, query.shape[2]),
+                                                        block_kv_dq=min(512, query.shape[2]),
+            )
+
+            masks = [splash_attention_mask.CausalMask( shape=(query.shape[2],query.shape[2])) for i in range(query.shape[1])]
+            multi_head_mask = splash_attention_mask.MultiHeadMask(masks=masks)
+            splash_kernel = splash_attention_kernel.make_splash_mha(mask = multi_head_mask,
+                                                                    head_shards = 1,
+                                                                    q_seq_shards = 1,
+                                                                    block_sizes = block_sizes)
+            
+            return jax.vmap(splash_kernel)(query,key,value, segment_ids = decoder_segment_ids)
+
+        x = wrap_flash_attention(query, key, value, decoder_segment_ids)
         x = jnp.transpose(x, axes=(0, 2, 1, 3))
         return x
 
@@ -1573,26 +1619,28 @@ class DotProductAttention(base_layer.BaseLayer):
             logging.info(f"atten_mask: {atten_mask.shape}")
         # =====================================xd: block attention====================================================
         # query, key, value = [tensor.transpose(0, 2, 1, 3) for tensor in [query, key, value]]  # btnh->bnth
-        # if self.query_chunk_size is None:
-        #     encoded = self._atten_context(query, key, value, atten_mask, alibi_mask)
-        #     encoded = self.post(encoded)
-        # else:
-        #     w = self.query_chunk_size
-        #     # assert t % w == 0, f"{t} % {w} != 0"
-        #     encoded = [
-        #             self.atten_dropout(self.post(self._atten_context(
-        #             query=query[:, i * w: (i + 1) * w], 
-        #             key=key[:, :(i + 1) * w], 
-        #             value=value[:, :(i + 1) * w], 
-        #             atten_mask=None if atten_mask is None else atten_mask[:, :, i * w: (i + 1) * w, :(i + 1) * w],
-        #             alibi_mask=None if alibi_mask is None else alibi_mask[:, i * w: (i + 1) * w, :(i + 1) * w],
-        #             )))
-        #                 for i in range(math.ceil(t / w))
-        #             ]
-        #     encoded = jnp.concatenate(encoded, axis=1)
-        encoded = self.tpu_flash_attention(query, key, value)
-        encoded = self.post(encoded)
+        if self.query_chunk_size is None:
+            encoded = self._atten_context(query, key, value, atten_mask, alibi_mask)
+            # 变慢了!!!
+            # encoded = self.tpu_flash_attention(query, key, value, None)
+            encoded = self.post(encoded)
 
+        else:
+            w = self.query_chunk_size
+            # assert t % w == 0, f"{t} % {w} != 0"
+            encoded = [
+                    self.atten_dropout(self.post(self._atten_context(
+                    query=query[:, i * w: (i + 1) * w], 
+                    key=key[:, :(i + 1) * w], 
+                    value=value[:, :(i + 1) * w], 
+                    atten_mask=None if atten_mask is None else atten_mask[:, :, i * w: (i + 1) * w, :(i + 1) * w],
+                    alibi_mask=None if alibi_mask is None else alibi_mask[:, i * w: (i + 1) * w, :(i + 1) * w],
+                    )))
+                        for i in range(math.ceil(t / w))
+                    ]
+            encoded = jnp.concatenate(encoded, axis=1)
+
+           
         encoded = self._shard_bld(encoded)
         # =========================================================================================
         return encoded, None

@@ -696,7 +696,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     # clip
     q_x = self.to_quant(x_scaled)
     # lsp
-    # q_s = jax.lax.reciprocal(q_s)
+    q_s = jax.lax.reciprocal(q_s)
 
     if (
         quantized_dtype != jnp.int8  # it is used for materialization

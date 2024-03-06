@@ -67,16 +67,15 @@ def aqt_einsum(eqn, lhs0, rhs0):
     if '.' in eqn:
         # Replace the ellipsis with arbitrary symbols.
         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-        rank = len(lhs0.shape)
+        rank = len(lhs.shape)
         batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
     else:
         dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
 
+    dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
     lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
-
-    # ret = utils.aqt_dot_general(lhs0, rhs0, dimension_numbers[0])
 
     lhs1, lhs_scale, _ = quantizer_obj.quantize(
             lhs0, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
@@ -85,7 +84,7 @@ def aqt_einsum(eqn, lhs0, rhs0):
 
     out = jnp.einsum(eqn, lhs1, rhs1, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
     out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
+#    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
    # rhs_scale = rhs_scale[jnp.newaxis, ...]
    # lhs_scale = lhs_scale[..., jnp.newaxis]
    # out_scale = jnp.einsum('abc,cdf->abdf', lhs_scale, rhs_scale)
@@ -746,14 +745,15 @@ class AttentionProjection(base_layer.BaseLayer):
             assert shape[-1] == self.input_dim, f"Expecting shape[-1] == p.input_dim, {shape[-1]} != {self.input_dim}"
             batch_eqn = eqn_sym[: (rank - 1)] if rank else "..."
             eqn = f"{batch_eqn}D,DNH->{batch_eqn}NH"
-        # lsp aqt
-        # ret = aqt_einsum(eqn, inputs, w)
+     
         if self.quant is not None:
             logging.info(f'qkvo quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
             ret = dot_general(eqn, inputs, w)
         else:
-            ret = self.einsum(eqn, inputs, w)
+            # lsp aqt
+            ret = aqt_einsum(eqn, inputs, w)
+            # ret = self.einsum(eqn, inputs, w)
 
         if self.use_bias:
             ret += theta.b
@@ -1429,7 +1429,13 @@ class DotProductAttention(base_layer.BaseLayer):
         # logits = self._atten_logits(query, key)
         # logits = self.qk_einsum(f"BNTH,BNSH->BNTS", query, key)  # XD
         eqn = "BTNH,BSNH->BNTS"
-        logits = self.qk_einsum(eqn, query, key)
+        if self.quant is not None:
+            logging.info(f'qk quant: {self.quant}')
+            dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+            ret = dot_general(eqn, query, key)
+        else:
+            logits = self.qk_einsum(eqn, query, key)
+
         # logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
         # lsp
         # 不占用激活值

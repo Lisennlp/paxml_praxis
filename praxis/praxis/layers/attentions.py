@@ -1432,7 +1432,7 @@ class DotProductAttention(base_layer.BaseLayer):
         if self.quant is not None:
             logging.info(f'qk quant: {self.quant}')
             dot_general = aqt_utils.DenseGeneral(quant=self.quant)
-            ret = dot_general(eqn, query, key)
+            logits = dot_general(eqn, query, key)
         else:
             logits = self.qk_einsum(eqn, query, key)
 

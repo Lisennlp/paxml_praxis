@@ -1461,7 +1461,8 @@ class DotProductAttention(base_layer.BaseLayer):
         if self.quant is not None:
             logging.info(f'scorev quant: {self.quant}')
             # dot_general = aqt_utils.DenseGeneral(quant=self.quant)
-            encoded = dot_general(eqn, probs, value)
+            encoded = dot_general(eqn, probs, value) # bnth
+            encoded = encoded.transpose(0, 2, 1, 3)
         else:
             encoded = self.pv_einsum(eqn, probs, value)
         # encoded = aqt_einsum("BNTS,BSNH->BTNH", probs, value)

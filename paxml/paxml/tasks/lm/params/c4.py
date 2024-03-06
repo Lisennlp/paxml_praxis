@@ -1519,6 +1519,10 @@ class Llama7Bv5px8(Llama7B):
     LR_LRED_DECAY_END = 200000
     HIDDEN_DIMS = 11008
     QUANT = 'int8'
+    DATA_PATH = {
+                'train': 'gs://common_datasets_us-east5/', 
+                'test':  'gs://common_datasets_us-east5/', 
+                }
 
 @experiment_registry.register
 class Llama7Bv32(Llama7B):

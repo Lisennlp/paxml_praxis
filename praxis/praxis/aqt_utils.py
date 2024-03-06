@@ -128,6 +128,7 @@ class DenseGeneral(nn.Module):
         dot_general = dot_general_cls()
         # dimensions = (((3, ), (3, )), ((0, ), (0, )))， dimensions[0]表示两个向量计算的维度, 
         # dimensions[1]表示两个向量的batch维度，可以是2，比如在计算qkscore的时候
+        # 例如qk：inputs: (32, 2048, 32, 128) kernel: (32, 2048, 32, 128) dimensions: (((3,), (3,)), ((0, 2), (0, 2)))
         return dot_general(inputs, kernel, dimensions, precision=None)
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
 

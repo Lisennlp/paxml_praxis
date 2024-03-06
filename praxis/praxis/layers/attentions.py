@@ -752,8 +752,8 @@ class AttentionProjection(base_layer.BaseLayer):
             ret = dot_general(eqn, inputs, w)
         else:
             # lsp aqt
-            ret = aqt_einsum(eqn, inputs, w)
-            # ret = self.einsum(eqn, inputs, w)
+            # ret = aqt_einsum(eqn, inputs, w)
+            ret = self.einsum(eqn, inputs, w)
 
         if self.use_bias:
             ret += theta.b
@@ -1458,7 +1458,12 @@ class DotProductAttention(base_layer.BaseLayer):
         probs = self.atten_dropout(probs)
 
         eqn = "BNTS,BSNH->BTNH"
-        encoded = self.pv_einsum(eqn, probs, value)
+        if self.quant is not None:
+            logging.info(f'scorev quant: {self.quant}')
+            # dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+            encoded = dot_general(eqn, probs, value)
+        else:
+            encoded = self.pv_einsum(eqn, probs, value)
         # encoded = aqt_einsum("BNTS,BSNH->BTNH", probs, value)
 
         encoded = self._shard_blnh(encoded)

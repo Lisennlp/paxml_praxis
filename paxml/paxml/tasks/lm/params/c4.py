@@ -643,9 +643,9 @@ def configure_gpt3_task(
       # ffn aqt
       transformer_layer_p.tr_fflayer_tpl.fflayer_tpl.linear_tpl.quant = quant_config 
       # atten aqt，设置后变慢了一点 qkv weight 
-    #   transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
+      transformer_layer_p.tr_atten_tpl.proj_tpl.quant = quant_config
       # qkv activation 快一点点
-      transformer_layer_p.tr_atten_tpl.quant = quant_config
+    #   transformer_layer_p.tr_atten_tpl.quant = quant_config
       # embedding 快一点点
       model_p.lm_tpl.separate_embedding_tpl.quant = quant_config
       # lm head 变慢了一点点
@@ -1523,6 +1523,11 @@ class Llama7Bv5px8(Llama7B):
                 'train': 'gs://common_datasets_us-east5/', 
                 'test':  'gs://common_datasets_us-east5/', 
                 }
+
+@experiment_registry.register
+class Llama7Bv5px32(Llama7Bv5px8):
+    ICI_MESH_SHAPE = [1, 16, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+
 
 @experiment_registry.register
 class Llama7Bv32(Llama7B):

@@ -1443,6 +1443,7 @@ class DotProductAttention(base_layer.BaseLayer):
             logits = dot_general(eqn, query, key)
         else:
             logits = self.qk_einsum(eqn, query, key)
+            # padded_logits = jnp.ones(query.shape[0], query.shape[2], query.shape[1], key.shape[1])
 
         # logits = self.qk_einsum(f"BTNH,BSNH->BNTS", query, key)  # XD
         # lsp
@@ -1457,7 +1458,7 @@ class DotProductAttention(base_layer.BaseLayer):
         # lsp
         if alibi_mask is not None:
             padded_logits += alibi_mask
-
+        
         if self.attention_extra_logit is None:
             probs = jax.nn.softmax(padded_logits, axis=-1).astype(value.dtype)
         else:

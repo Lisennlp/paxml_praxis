@@ -1319,7 +1319,7 @@ class DotProductAttention(base_layer.BaseLayer):
         self.create_child("qk_einsum", self.qk_einsum_tpl.clone())
         self.create_child("pv_einsum", self.pv_einsum_tpl.clone())
 
-        self.mesh = jax.sharding.Mesh(np.asarray(jax.devices()).reshape(1, 4, 1), ('replica', 'data', 'mdl'))
+        # self.mesh = jax.sharding.Mesh(np.asarray(jax.devices()).reshape(1, 4, 1), ('replica', 'data', 'mdl'))
 
  
     def _shard_bnh(self, x: JTensor) -> JTensor:

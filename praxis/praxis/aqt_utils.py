@@ -97,7 +97,7 @@ def configure_quantization(config: Config, quant_mode_str: str = 'train'):
 @dataclass
 class AqtCfg:
     quantization:str ="int8"
-    quantization_local_shard_count: int = 1
+    quantization_local_shard_count: int = 4
 
 
 def get_dimension(eqn, ndim):

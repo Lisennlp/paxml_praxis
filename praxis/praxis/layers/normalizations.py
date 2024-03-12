@@ -15,7 +15,7 @@
 
 """Normalization layers."""
 
-from typing import List, Optional, Tuple
+import dataclasses
 
 import jax
 from jax import numpy as jnp
@@ -35,10 +35,10 @@ PARAMS = base_layer.PARAMS
 def compute_moments(
     inputs: JTensor,
     padding: JTensor,
-    reduce_over_dims: List[int],
-    cumulative_axis: Optional[int] = None,
+    reduce_over_dims: list[int],
+    cumulative_axis: int | None = None,
     keepdims: bool = False,
-) -> Tuple[JTensor, JTensor]:
+) -> tuple[JTensor, JTensor]:
   """Computes mean and variance over the valid data points in inputs.
 
   Args:
@@ -96,9 +96,9 @@ class BaseNormalization(base_layer.BaseLayer):
   """
   dim: int = 0
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies the normalization."""
     raise NotImplementedError(
         'Normalization layers are expected to implement fprop().')
@@ -107,10 +107,9 @@ class BaseNormalization(base_layer.BaseLayer):
 class IdentityNorm(BaseNormalization):
   """Return the input as-is with BaseNormalization-compatible HParams."""
 
-
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Returns inputs.
 
     Args:
@@ -156,9 +155,11 @@ class BatchNorm(BaseNormalization):
   use_moving_avg_in_training: bool = False
   set_padded_output_to_zero: bool = True
   force_eval_mode: bool = False
-  gamma_init: WeightInit = WeightInit.Constant(0.0)
+  gamma_init: WeightInit = dataclasses.field(
+      default_factory=lambda: WeightInit.Constant(0.0)
+  )
 
-  def _get_weight_shape(self) -> List[int]:
+  def _get_weight_shape(self) -> list[int]:
     return [self.dim]
 
   def setup(self) -> None:
@@ -197,7 +198,7 @@ class BatchNorm(BaseNormalization):
     in_shape[-1] = 1
     return jnp.zeros(in_shape, dtype=inputs.dtype)
 
-  def _get_beta_gamma(self) -> Tuple[JTensor, JTensor]:
+  def _get_beta_gamma(self) -> tuple[JTensor, JTensor]:
     if self.use_moving_avg_in_training:
       beta = 0.0
       gamma = 1.0
@@ -207,8 +208,8 @@ class BatchNorm(BaseNormalization):
     return beta, gamma  # pytype: disable=bad-return-type  # jax-ndarray
 
   def compute_and_update_moments(
-      self, inputs: JTensor,
-      paddings: JTensor) -> Tuple[JTensor, JTensor, JTensor, JTensor]:
+      self, inputs: JTensor, paddings: JTensor
+  ) -> tuple[JTensor, JTensor, JTensor, JTensor]:
     """Computes moments and updates state.
 
     Args:
@@ -262,9 +263,9 @@ class BatchNorm(BaseNormalization):
     beta, gamma = self._get_beta_gamma()
     return norm_mean, norm_variance, beta, gamma
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies batch normalization.
 
     Args:
@@ -301,12 +302,15 @@ class LayerNorm(BaseNormalization):
   """Layer normalization.
 
   Attributes:
+    direct_scale: Whether to apply scale directly without a +1.0. Var is
+      initialized to 1.0 instead when true.
     epsilon: Tiny value to guard rsqrt.
     use_scale: Whether to use a learned scaling.
     use_bias: Whether to use bias.
-    reductions_in_fp32: Whether to compute mean and variance 
-      in fp32. Recommended for stable training on GPUs.
+    reductions_in_fp32: Whether to compute mean and variance in fp32.
+      Recommended for stable training on GPUs.
   """
+  direct_scale: bool = False
   epsilon: float = 1e-6
   use_scale: bool = True
   use_bias: bool = True
@@ -320,11 +324,12 @@ class LayerNorm(BaseNormalization):
       # Simply replicate the weights.
       wp_scale = [-1]
     if self.use_scale:
+      init_value = 1.0 if self.direct_scale else 0.0
       self.create_variable(
           'scale',
           WeightHParams(
               shape=[self.dim],
-              init=WeightInit.Constant(0.0),
+              init=WeightInit.Constant(init_value),
               mesh_shape=self.mesh_shape,
               tensor_split_dims_mapping=wp_scale,
               collections=[
@@ -347,9 +352,9 @@ class LayerNorm(BaseNormalization):
           ),
       )
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies layer norm to inputs.
 
     Args:
@@ -370,7 +375,8 @@ class LayerNorm(BaseNormalization):
     if self.reductions_in_fp32:
       normed_inputs = normed_inputs.astype(inputs_dtype)
     if self.use_scale:
-      normed_inputs *= (1 + self.theta.scale)
+      scale = self.theta.scale if self.direct_scale else (1 + self.theta.scale)
+      normed_inputs *= scale
     if self.use_bias:
       normed_inputs += self.theta.bias
     return normed_inputs
@@ -389,7 +395,7 @@ class RmsNorm(BaseNormalization):
   """
   epsilon: float = 1e-6
   direct_scale: bool = True
-  intermediate_dtype: Optional[jnp.dtype] = None
+  intermediate_dtype: jnp.dtype | None = None
 
   def setup(self) -> None:
     """Creates RMS normalization variables."""
@@ -409,17 +415,10 @@ class RmsNorm(BaseNormalization):
             tensor_split_dims_mapping=wp_scale,
         ),
     )
-  def _norm(self, x: jnp.ndarray) -> jnp.ndarray:
-    x_square = jnp.square(x)
-    x_mean = x_square.mean(-1, keepdims=True)
-    x_eps = x_mean + self.epsilon
-    x_rsqrt = jax.lax.rsqrt(x_eps)
-    x_cheng = x * x_rsqrt
-    return x_cheng
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies RMS norm to inputs.
 
     Args:
@@ -429,24 +428,16 @@ class RmsNorm(BaseNormalization):
     Returns:
       Output after applying RMS normalization, with the same shape as 'inputs'.
     """
-    # del paddings  # Unused.
-    # if self.intermediate_dtype is not None: # lsp： float32
-    #   inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
-    # var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
-    # normed_inputs = jnp.asarray(
-    #     inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
-    # )
-    # scale = self.theta.scale if self.direct_scale elsxe 1 + self.theta.scale
-    # normed_inputs *= scale
-    # return normed_inputs
-    # return inputs
-    # self.add_summary('[lsp]theta_scale', self.theta.scale)
-    # self.add_summary('[lsp]_norm_inputs', inputs[1])
-    output = self._norm(inputs.astype(self.fprop_dtype)).astype(self.fprop_dtype)
-    # print(f'fprop_dtype: {self.fprop_dtype}========== self.eps: {self.epsilon}')
-    # self.add_summary('[lsp]norm_input', output[1])
-    weight = jnp.asarray(self.theta.scale, self.fprop_dtype)
-    return output * weight
+    del paddings  # Unused.
+    if self.intermediate_dtype is not None:
+      inputs = jnp.asarray(inputs, dtype=self.intermediate_dtype)
+    var = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)
+    normed_inputs = jnp.asarray(
+        inputs * jax.lax.rsqrt(var + self.epsilon), self.fprop_dtype
+    )
+    scale = self.theta.scale if self.direct_scale else 1 + self.theta.scale
+    normed_inputs *= scale
+    return normed_inputs
 
 
 class RmsNormNoScale(BaseNormalization):
@@ -457,9 +448,9 @@ class RmsNormNoScale(BaseNormalization):
   """
   epsilon: float = 1e-6
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies RMS norm to inputs.
 
     Args:
@@ -486,7 +477,7 @@ class GroupNorm(BaseNormalization):
     num_groups: Number of groups for GroupNorm.
     min_group_size: Minimum group size for GroupNorm.
     cumulative: If true, only normalize by current and previous time steps.
-    input_rank: Rank of input. Only 3(BTD) and 4(NHWC) are supported.
+    input_rank: Rank of input. Only 3(BTD), 4(NHWC) and 5 (NTHWC) are supported.
     epsilon: Epsilon added when computing the rsqrt.
     set_padded_output_to_zero: bool. whether to pad padding part to zero.
     use_scale: Whether to use a learned scaling.
@@ -495,7 +486,7 @@ class GroupNorm(BaseNormalization):
   num_groups: int = 32
   min_group_size: int = 1
   cumulative: bool = False
-  input_rank: Optional[int] = None
+  input_rank: int | None = None
   epsilon: float = 0.001
   set_padded_output_to_zero: bool = True
   use_scale: bool = True
@@ -518,9 +509,9 @@ class GroupNorm(BaseNormalization):
           ),
       )
 
-    asserts.in_set(self.input_rank, (3, 4))
+    asserts.in_set(self.input_rank, (3, 4, 5))
 
-    shape = [1, 1, 1, self.dim] if self.input_rank == 4 else [1, 1, self.dim]
+    shape = [1] * (self.input_rank - 1) + [self.dim]
     pc = WeightHParams(
         shape,
         init=WeightInit.Constant(0.0),
@@ -541,15 +532,6 @@ class GroupNorm(BaseNormalization):
 
   def _normalize(self, grouped_inputs: JTensor, group_mean: JTensor,
                  group_variance: JTensor) -> JTensor:
-    moment_shape = list(grouped_inputs.shape)
-    if self.input_rank == 4:
-      moment_shape[2] = 1
-    moment_shape[-1] = 1
-
-    if not self.cumulative:
-      # If not cumulative, the seqlen dimension is also reduced.
-      moment_shape[1] = 1
-
     group_stddev_inv = jax.lax.rsqrt(group_variance + self.epsilon)
 
     grouped_inputs = (grouped_inputs - group_mean) * group_stddev_inv
@@ -565,14 +547,15 @@ class GroupNorm(BaseNormalization):
       outputs += self.theta.beta
     return outputs
 
-  def __call__(self,
-               inputs: JTensor,
-               paddings: Optional[JTensor] = None) -> JTensor:
+  def __call__(
+      self, inputs: JTensor, paddings: JTensor | None = None
+  ) -> JTensor:
     """Applies group normalization.
 
     Args:
       inputs: The inputs JTensor. Shaped [batch_size, height, width, channel] if
-        p.rank == 4, else [batch, height, channel].
+        p.rank == 4, [batch_size, time, height, width, channel] if p.rank == 5,
+        else [batch, height, channel].
       paddings: The paddings JTensor. Shaped [batch_size, height]. Intended to
         be used for sequence processing where `height` is `time`.
 
@@ -609,8 +592,9 @@ class GroupNorm(BaseNormalization):
           x,
           expanded_paddings,
           reduce_over_dims,
-          cumulative_axis=1,
-          keepdims=True)
+          cumulative_axis=1 if self.cumulative else None,
+          keepdims=True,
+      )
 
     gn_output = self._normalize(x, group_mean, group_variance)
     if self.set_padded_output_to_zero and paddings is not None:
@@ -636,7 +620,7 @@ class WeightNormL2(BaseNormalization):
     )
 
   def __call__(
-      self, inputs: JTensor, paddings: Optional[JTensor] = None
+      self, inputs: JTensor, paddings: JTensor | None = None
   ) -> JTensor:
     """Applies the L2 weight normalization."""
     del paddings  # unused.
@@ -669,7 +653,7 @@ class SpectralNorm(BaseNormalization):
     )
 
   def __call__(
-      self, inputs: pytypes.JTensor, paddings: Optional[pytypes.JTensor] = None
+      self, inputs: pytypes.JTensor, paddings: pytypes.JTensor | None = None
   ) -> pytypes.JTensor:
     del paddings  # Unused.
     w = jnp.reshape(inputs, [-1, self.dim])

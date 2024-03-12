@@ -17,8 +17,10 @@
 
 import dataclasses
 import enum
-from typing import Optional
+
 import jax.numpy as jnp
+
+# Internal import for internal quantization hyper parameters.
 
 
 @enum.unique
@@ -29,11 +31,14 @@ class QuantizationType(str, enum.Enum):
   AQT: Accurate Quantized Training, which is one flavor of QAT.
   FQ:  Fake Quantization, which is one flavor of QAT.
   FQ_VN:  Use variational noise to emulate quantization noise.
+  FR: Fr quantization.
   """
   PTQ = 'ptq'
   AQT = 'aqt'
   FQ = 'fq'
   FQ_VN = 'fq_vn'
+  FR = 'fr'
+  # Internal quantization type.
 
 
 @enum.unique
@@ -46,10 +51,14 @@ class QuantizationMode(str, enum.Enum):
     INFERENCE. This mode is referenced only by `ServableModelParams` for
     serving.
   INFERENCE indicates that the model is in inference mode.
+  QT indicates the model will train with quantization.
+  CALIB inidates that the model is going to be calibrated.
   """
   TRAINING = 'training'
   MATERIALIZE = 'materialize'
   INFERENCE = 'inference'
+  QT = 'qt'
+  CALIB = 'calib'
 
 
 @dataclasses.dataclass
@@ -67,6 +76,8 @@ class ActQuantizationParams:
     stability. Note: this is numerically incorrect.
   fp16: clip activation to fp16. This overrides the int8 activation quantization
     for QAT.
+  per_channel: Whether or not to quantize activation channel-wisely.
+  symmetric: Whether or not to quantize activation symmetrically.
   """
   precision: int = 8
   unsigned_int_bounds: bool = False
@@ -75,6 +86,8 @@ class ActQuantizationParams:
   stats_config = None
   stop_scale_gradient: bool = False
   fp16: bool = False
+  per_channel: bool = True
+  symmetric: bool = True
 
 
 @dataclasses.dataclass
@@ -110,6 +123,16 @@ class WeightQuantizationParams:
   use_int4_packed_weights: If True, pack/unpack int4 weights into int32 or int8.
     It is for int4 weights only and has not effect on other type.
     If False int4 weights will be kept in int8.
+    There are several edge cases:
+      1. use_int4_packed_weights=True, precision=4, dtype=jnp.int8
+        It keeps int4 values in int8 type and packs it into int8 or int32
+        depending on int4_packed_weights_container_dtype.
+      2. use_int4_packed_weights=False, precision=4, dtype=jnp.int8
+        It keeps int4 values in int8 type.
+      3. use_int4_packed_weights=False, precision=4, dtype=jnp.int4
+        It will use native jnp.int4 type.
+      4. use_int4_packed_weights=True, precision=4, dtype=jnp.int4
+        it will raise an error.
   int4_packed_weights_container_dtype: Container type for int4 weights:
     int32 to pack 8 int4s, or int8 to pack 2 int4s.
   vn_scale: Scale coefficient for VN quantization. TODO(rybakov) use bits.
@@ -125,31 +148,38 @@ class WeightQuantizationParams:
     It is based on paper: "Robust Quantization: One Model to Rule Them All".
   block_size: block size for sub channel quantization. 0 to set it off. Defaults
     to off.
+  quant_method: Quantization method:
+    * 'default' - extracts min and max for quantization scale estimation.
+      It is well applied for int8, in4, int2 quantization.
+    * 'bin' - binarization, where scale is defined by mean|w|.
+    * 'bin_norm' - binarization with weight normalization.
   """
   precision: int = 8
   unsigned_int_bounds: bool = False
   clipping_coeff: float = 1.0
   stop_scale_gradient: bool = False
-  min_clipping: Optional[float] = None
-  num_optimize_clipping: Optional[int] = None
+  min_clipping: float | None = None
+  num_optimize_clipping: int | None = None
   use_symmetric: bool = True
-  add_scale_eps: Optional[bool] = True
+  add_scale_eps: bool | None = True
   dequant_upfront: bool = False
   dtype: jnp.dtype = jnp.int8
-  quant_loss_weight: Optional[float] = None
+  quant_loss_weight: float | None = None
   optimize_clipping_per_channel: bool = False
-  sub_channels: Optional[int] = None
+  sub_channels: int | None = None
   calculation_dtype: jnp.dtype = jnp.float32
   use_step_count: bool = False
   use_int4_packed_weights: bool = True
   int4_packed_weights_container_dtype: jnp.dtype = jnp.int32
-  vn_scale: Optional[float] = None
+  vn_scale: float | None = None
   vn_start_step: int = 0
   vn_noise_type: str = 'uniform'
   vn_weight_norm_type: str = 'PerChannelLinf'
-  kurt_loss_weight: Optional[float] = None
+  kurt_loss_weight: float | None = None
   kurt: float = 1.8
   block_size: int = 0
+  # Internal quantization parameters.
+  quant_method: str = 'default'
 
 
 @dataclasses.dataclass
@@ -162,9 +192,9 @@ class QuantizationParams:
     act_params: Config for activation quantization.
     weight_params: Config for weight quantization.
   """
-  # lsp
-  # quantization_type: QuantizationType = QuantizationType.PTQ
-  quantization_type: QuantizationType = QuantizationType.AQT
+  quantization_type: QuantizationType = QuantizationType.PTQ
   mode: QuantizationMode = QuantizationMode.INFERENCE
-  act_params: Optional[ActQuantizationParams] = None
-  weight_params: WeightQuantizationParams = WeightQuantizationParams()
+  act_params: ActQuantizationParams | None = None
+  weight_params: WeightQuantizationParams = dataclasses.field(
+      default_factory=WeightQuantizationParams
+  )

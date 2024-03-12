@@ -25,17 +25,21 @@ import os
 import pickle
 import re
 import threading
-from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Iterable, Iterator, Sequence
 
 from absl import flags
 from absl import logging
 from etils import epath
 import jax
 import numpy as np
+from praxis import lazy_loader
 from praxis import py_utils
-import tensorflow.compat.v2 as tf
 
-from paxml import checkpoints  # mapped to internal
+# Those modules are slow to import, so we do it lazily.
+tf = lazy_loader.LazyLoader('tf', globals(), 'tensorflow.compat.v2')
+checkpoints = lazy_loader.LazyLoader(
+    'checkpoints', globals(), 'paxml.checkpoints'  # mapped to internal
+)
 
 FLAGS = flags.FLAGS
 
@@ -182,6 +186,8 @@ class JnpEncoder(json.JSONEncoder):
       return float(o)
     elif isinstance(o, np.ndarray):
       return o.tolist()
+    elif isinstance(o, tf.Tensor):
+      return o.numpy().tolist()
     elif isinstance(o, bytes):
       return o.decode('utf-8')
     elif dataclasses.is_dataclass(o):
@@ -192,15 +198,17 @@ class JnpEncoder(json.JSONEncoder):
       return super().default(o)
 
 
-def write_key_value_pairs(filename: epath.PathLike,
-                          key_value_pairs: Sequence[Tuple[Optional[str], Any]],
-                          cast_to_ndarray: bool = True,
-                          write_pickle: bool = True) -> None:
+def write_key_value_pairs(
+    filename: epath.PathLike,
+    key_value_pairs: Sequence[tuple[str | None, Any]],
+    cast_to_ndarray: bool = True,
+    write_pickle: bool = True,
+) -> None:
   """Writes `key_value_pairs` to pkl and jsonl files."""
   filename = epath.Path(filename)
 
   if cast_to_ndarray:
-    key_value_pairs = jax.tree_map(_to_ndarray, key_value_pairs)
+    key_value_pairs = jax.tree.map(_to_ndarray, key_value_pairs)
 
   if write_pickle:
     with filename.with_suffix('.pickle').open('wb') as pkl_f:
@@ -211,8 +219,9 @@ def write_key_value_pairs(filename: epath.PathLike,
       jsonl_f.write(json.dumps(v, cls=JnpEncoder) + '\n')
 
 
-def _validate_filenames(filenames: Iterable[epath.PathLike],
-                        step: Optional[int] = None) -> Tuple[int, int]:
+def _validate_filenames(
+    filenames: Iterable[epath.PathLike], step: int | None = None
+) -> tuple[int, int]:
   """Validates the list of file names."""
   if not filenames:
     raise ValueError('Expecting at least one file. Found none.')
@@ -250,10 +259,9 @@ def _validate_filenames(filenames: Iterable[epath.PathLike],
   return step, num_shards
 
 
-def load_outputs(basedir: epath.Path,
-                 pname: str,
-                 fname_prefix: str,
-                 step: Optional[int] = None) -> List[Any]:
+def load_outputs(
+    basedir: epath.Path, pname: str, fname_prefix: str, step: int | None = None
+) -> list[Any]:
   """Loads and returns the eval/decode outputs.
 
   Args:
@@ -330,6 +338,7 @@ def get_checkpoint_step(
     job_log_dir: epath.Path,
     restore_checkpoint_dir: epath.Path,
     mode: EvaluationMode,
+    checkpoint_type: Any | None = None,
 ) -> int:
   """Gets the latest checkpoint step to eval/decode on.
 
@@ -340,6 +349,7 @@ def get_checkpoint_step(
       Note that this may not necessarily be the same as job_log_dir.
     mode: a EvaluationMode enum type indicating the mode in which the model is
       being evaluated
+    checkpoint_type: checkpoints.CheckpointType enum.
 
   Returns:
     Returns the step with partially completed eval/decode if a job was preempted
@@ -349,12 +359,26 @@ def get_checkpoint_step(
   """
   progress_fname = (
       job_log_dir / _INTERNAL_ARTIFACTS_SUBDIR / mode.progress_filename)
+  checkpoint_type = checkpoint_type or checkpoints.CheckpointType.UNSPECIFIED
+  step = None
   if progress_fname.exists():
     with progress_fname.open() as f:
       progress_json = json.load(f)
-
     step = progress_json[_PROGRESS_CKPT_STEP_KEY]
-    logging.info('Resuming %s from step %d.', mode.value, step)
-    return step
+    if checkpoints.make_checkpoint_step_dir(
+        restore_checkpoint_dir, step, checkpoint_type
+    ).exists():
+      logging.info('Resuming %s from step %d.', mode.value, step)
+    else:
+      logging.info(
+          'Progress file for %s indicated restoration for step %d, which did'
+          ' not exist. Retrieving the latest checkpoint instead.',
+          mode.value,
+          step,
+      )
+      step = None
 
-  return checkpoints.retrieve_latest_checkpoint_step(restore_checkpoint_dir)
+  if step is None:
+    return checkpoints.retrieve_latest_checkpoint_step(restore_checkpoint_dir)
+  else:
+    return step

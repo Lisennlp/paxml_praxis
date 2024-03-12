@@ -29,7 +29,7 @@ If you are using TPU Pod slices, please refer to [this guide](https://cloud.goog
 ```bash
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE \
 --worker=all --command="<commmands>"
-``` 
+```
 
 The following quickstart sections assume you run on a single-host TPU, so you can ssh to the VM and run the commands there.
 
@@ -53,13 +53,13 @@ If you encounter issues with transitive dependencies and you are using the nativ
 
 ```bash
 git clone -b rX.Y.Z https://github.com/google/paxml
-pip install --no-deps paxml/paxml/pip_package/requirements.txt
+pip install --no-deps -r paxml/paxml/pip_package/requirements.txt
 ```
 
 For installing the dev version from github, and for the ease of editing code:
 
 ```bash
-# install the dev version of praxis first 
+# install the dev version of praxis first
 git clone https://github.com/google/praxis
 pip install -e praxis
 git clone https://github.com/google/paxml
@@ -84,7 +84,7 @@ python3 .local/lib/python3.8/site-packages/paxml/main.py \
 Please visit our [docs folder](https://github.com/google/paxml/tree/main/paxml/docs) for documentations and Jupyter Notebook tutorials. Please see the following section for instructions of running Jupyter Notebooks on a Cloud TPU VM.
 
 ### Run a notebook
-You can run the [example notebooks](paxml/docs/tutorials) in the TPU VM in which you just installed paxml. 
+You can run the [example notebooks](paxml/docs/tutorials) in the TPU VM in which you just installed paxml.
 ####Steps to enable a notebook in a `v4-8`
 
 1. ssh in TPU VM with port forwarding
@@ -96,7 +96,7 @@ You can run the [example notebooks](paxml/docs/tutorials) in the TPU VM in which
  pip install markupsafe==2.0.1
  ```
 3. export `jupyter` path
-`export PATH=/home/$USER/.local/bin:$PATH` 
+`export PATH=/home/$USER/.local/bin:$PATH`
 
 4. scp the [example notebooks](paxml/docs/tutorials) to your TPU VM
 `gcloud compute tpus tpu-vm scp  $TPU_NAME:<path inside TPU> <local path of the notebooks>   --zone=$ZONE --project=$PROJECT`
@@ -107,8 +107,86 @@ You can run the [example notebooks](paxml/docs/tutorials) in the TPU VM in which
 6. then in your local browser go to: http://localhost:8080/ and enter the token provided
 
 Note: In case you need to start using a second notebook while the first notebook is still occupying the TPUs, you can run
-`pkill -9 python3` 
+`pkill -9 python3`
 to free up the TPUs.
+
+### Run on GPU
+
+Note: NVIDIA has released an updated version of Pax with H100 FP8 support and broad GPU performance improvements. Please visit the [NVIDIA Rosetta](https://github.com/NVIDIA/JAX-Toolbox/tree/main/rosetta/rosetta/projects/pax) repository for more details and usage instructions.
+
+#### Run PGLE workflow on GPU
+
+
+The Profile Guided Latency Estimator (PGLE) workflow measures the actual running time
+of compute and collectives, the the profile information is fed back into XLA compiler
+for a better scheduling decision.
+
+The workflow to use the Profile Guided Latency Estimator workflow in XLA/GPU is:
+
+- 1. Run your workload once, with async collectives and latency hiding scheduler enabled.
+
+You could do so by setting:
+
+```bash
+export XLA_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_async_all_gather=true --xla_gpu_enable_async_reduce_scatter=true"
+```
+
+- 2. Collect and post process a profile by using JAX profiler, saving the extracted instruction latencies into a binary protobuf file.
+
+```python
+import os
+from etils import epath
+import jax
+from jax.experimental import profiler as exp_profiler
+
+# Define your profile directory
+profile_dir = 'gs://my_bucket/profile'
+jax.profiler.start_trace(profile_dir)
+
+# run your workflow
+# for i in range(10):
+#   train_step()
+
+# Stop trace
+jax.profiler.stop_trace()
+profile_dir = epath.Path(profile_dir)
+directories = profile_dir.glob('plugins/profile/*/')
+directories = [d for d in directories if d.is_dir()]
+rundir = directories[-1]
+logging.info('rundir: %s', rundir)
+
+# Post process the profile
+fdo_profile = exp_profiler.get_profiled_instructions_proto(os.fspath(rundir))
+
+# Save the profile proto to a file.
+dump_dir = rundir / 'profile.pb'
+dump_dir.parent.mkdir(parents=True, exist_ok=True)
+dump_dir.write_bytes(fdo_profile)
+
+```
+
+After this step, you will get a `profile.pb` file under the `rundir` printed in the code.
+
+- 3. Run the workload again feeding that file into the compilation.
+
+You need to pass the `profile.pb` file to the `--xla_gpu_pgle_profile_file_or_directory_path` flag.
+
+```bash
+ export XLA_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_async_all_gather=true --xla_gpu_enable_async_reduce_scatter=true --xla_gpu_pgle_profile_file_or_directory_path=/path/to/profile/profile.pb"
+```
+
+To enable logging in the XLA and check if the profile is good, set the logging level to include `INFO`:
+
+```bash
+export TF_CPP_MIN_LOG_LEVEL=0
+```
+
+Run the real workflow, if you found these loggings in the running log, it means the profiler is used in the latency hiding scheduler:
+
+```
+2023-07-21 16:09:43.551600: I external/xla/xla/service/gpu/gpu_hlo_schedule.cc:478] Using PGLE profile from /tmp/profile/plugins/profile/2023_07_20_18_29_30/profile.pb
+2023-07-21 16:09:43.551741: I external/xla/xla/service/gpu/gpu_hlo_schedule.cc:573] Found profile, using profile guided latency estimator
+```
 
 ### FAQs
 
@@ -122,12 +200,12 @@ Here are some sample convergence runs on [c4 dataset](https://www.tensorflow.org
 
 ### 1B model on c4 dataset
 
-You can run a `1B` params model on c4 dataset on TPU `v4-8`using the config `C4Spmd1BAdam4Replicas`from [c4.py](paxml/tasks/lm/params/c4.py) as follows:  
+You can run a `1B` params model on c4 dataset on TPU `v4-8`using the config `C4Spmd1BAdam4Replicas`from [c4.py](paxml/tasks/lm/params/c4.py) as follows:
 
 ```bash
 python3 .local/lib/python3.8/site-packages/paxml/main.py \
 --exp=tasks.lm.params.c4.C4Spmd1BAdam4Replicas \
---job_log_dir=gs://<your-bucket> 
+--job_log_dir=gs://<your-bucket>
 ```
 You can observe loss curve and `log perplexity` graph as follows:
 
@@ -141,7 +219,7 @@ You can run a `16B` params model on c4 dataset on TPU `v4-64`using the config `C
 ```bash
 python3 .local/lib/python3.8/site-packages/paxml/main.py \
 --exp=tasks.lm.params.c4.C4Spmd16BAdam32Replicas \
---job_log_dir=gs://<your-bucket> 
+--job_log_dir=gs://<your-bucket>
 ```
 You can observe loss curve and `log perplexity` graph as follows:
 
@@ -155,7 +233,7 @@ You can run the GPT3-XL model on c4 dataset on TPU `v4-128`using the config `C4S
 ```bash
 python3 .local/lib/python3.8/site-packages/paxml/main.py \
 --exp=tasks.lm.params.c4.C4SpmdPipelineGpt3SmallAdam64Replicas \
---job_log_dir=gs://<your-bucket> 
+--job_log_dir=gs://<your-bucket>
 ```
 You can observe loss curve and `log perplexity` graph as follows:
 
@@ -176,7 +254,7 @@ The multislice configs in this repo refer to
 [1. Singlie slice configs](https://github.com/google/paxml/blob/main/paxml/tasks/lm/params/c4.py)
 for syntax / model architecture
 and
-[2. MaxText repo](https://github.com/google/maxtexthttps://github.com/google/maxtext)
+[2. MaxText repo](https://github.com/google/maxtext)
 for config values.
 
 
@@ -235,7 +313,7 @@ From Terminal 0, run training command for slice 0 as follows:
 ```bash
 export TPU_PREFIX=<your-prefix>
 export EXP_NAME=C4Spmd22BAdam2xv4_128
-export LIBTPU_INIT_ARGS=\"--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_enable_async_all_gather=true --jax_enable_async_collective_offload=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE\" 
+export LIBTPU_INIT_ARGS=\"--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_enable_async_all_gather=true --jax_enable_async_collective_offload=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE\"
 gcloud compute tpus tpu-vm ssh $TPU_PREFIX-0 --zone=us-central2-b --worker=all \
 --command="LIBTPU_INIT_ARGS=$LIBTPU_INIT_ARGS JAX_USE_PJRT_C_API_ON_TPU=1 \
 python3 /home/yooh/.local/lib/python3.8/site-packages/paxml/main.py \
@@ -248,7 +326,7 @@ From Terminal 1, concurrently run training command for slice 1 as follows:
 ```bash
 export TPU_PREFIX=<your-prefix>
 export EXP_NAME=C4Spmd22BAdam2xv4_128
-export LIBTPU_INIT_ARGS=\"--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_tpu_spmd_rewrite_einsum_with_reshape=true --xla_enable_async_all_gather=true --jax_enable_async_collective_offload=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE\" 
+export LIBTPU_INIT_ARGS=\"--xla_jf_spmd_threshold_for_windowed_einsum_mib=0 --xla_tpu_spmd_threshold_for_allgather_cse=10000 --xla_enable_async_all_gather=true --jax_enable_async_collective_offload=true --xla_tpu_enable_latency_hiding_scheduler=true TPU_MEGACORE=MEGACORE_DENSE\"
 gcloud compute tpus tpu-vm ssh $TPU_PREFIX-1 --zone=us-central2-b --worker=all \
 --command="LIBTPU_INIT_ARGS=$LIBTPU_INIT_ARGS JAX_USE_PJRT_C_API_ON_TPU=1 \
 python3 /home/yooh/.local/lib/python3.8/site-packages/paxml/main.py \

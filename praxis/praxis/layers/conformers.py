@@ -15,8 +15,6 @@
 
 """Conformer-related layers."""
 
-from typing import Optional, Tuple
-
 import fiddle as fdl
 import jax.numpy as jnp
 from praxis import asserts
@@ -48,8 +46,8 @@ class DotProductAttentionWithContext(attentions.DotProductAttention):
   For use case (2) it is more efficient to use LocalSelfAttention.
   """
 
-  left_context: Optional[int] = None
-  right_context: Optional[int] = None
+  left_context: int | None = None
+  right_context: int | None = None
 
   def _dot_atten(
       self,
@@ -57,8 +55,8 @@ class DotProductAttentionWithContext(attentions.DotProductAttention):
       key: JTensor,
       value: JTensor,
       atten_mask: JTensor,
-      relative_bias: Optional[JTensor] = None,
-  ) -> Tuple[JTensor, JTensor]:
+      relative_bias: JTensor | None = None,
+  ) -> tuple[JTensor, JTensor]:
     """Main attention function.
 
     Args:
@@ -99,8 +97,8 @@ class DotProductAttentionWithContextXL(attentions.DotProductAttentionXL):
   For use case (2) it is more efficient to use LocalSelfAttentionXL.
   """
 
-  left_context: Optional[int] = None
-  right_context: Optional[int] = None
+  left_context: int | None = None
+  right_context: int | None = None
 
   def _dot_atten(
       self,
@@ -108,8 +106,8 @@ class DotProductAttentionWithContextXL(attentions.DotProductAttentionXL):
       key: JTensor,
       value: JTensor,
       atten_mask: JTensor,
-      relative_bias: Optional[JTensor] = None,
-  ) -> Tuple[JTensor, JTensor]:
+      relative_bias: JTensor | None = None,
+  ) -> tuple[JTensor, JTensor]:
     """Main attention function.
 
     Args:
@@ -139,6 +137,7 @@ class DotProductAttentionWithContextXL(attentions.DotProductAttentionXL):
 
 
 class SelfAttentionWithNormAndResidual(base_layer.BaseLayer):
+  # pyformat:disable
   """Self attention sub-layer used in the Conformer layer.
 
   Input is first normalized using norm_tpl. Output is processed using
@@ -155,20 +154,29 @@ class SelfAttentionWithNormAndResidual(base_layer.BaseLayer):
       residual_weight + x * input_weight.
     self_atten_tpl: Parameterization of the self attention layer.
     norm_tpl: Parameterization of the normalization layer.
-    pre_layer_norm: Whether to apply norm before or after the layer.
+    pre_layer_norm: Whether to apply norm before or after the layer. Only one of
+      this and `norm_policy` should be set. If set to False, the essential
+      pre_layer_norm is 'post_skip' (for legacy reason).
     residual_dropout_prob: Probability at which we apply dropout to the residual
       layers, such that, residual(x, y) = (x + dropout(y)).
     residual_dropout_tpl: Parameterization of residual dropout layer. keep_prop
       will be reset to (1.0 - residual_dropout_prob).
+    norm_policy: 'primer_hybrid', 'pre', 'post', 'post_skip'. This and
+      `pre_layer_norm` can not be both set.
+      - pre: applied before transformation.
+      - primer_hybrid: applied before and after transformation.
+      - post: applied after transformation.
+      - post_skip: applied after the skip connection.
   """
-
+  # pyformat:enable
   residual_weight: float = 1.0
   input_weight: float = 1.0
   self_atten_tpl: LayerTpl = template_field(DotProductAttentionWithContext)
   norm_tpl: LayerTpl = template_field(normalizations.LayerNorm)
-  pre_layer_norm: bool = True
+  pre_layer_norm: bool | None = True
   residual_dropout_prob: float = 0.0
   residual_dropout_tpl: LayerTpl = template_field(stochastics.Dropout)
+  norm_policy: str | None = None
 
   def _create_self_atten(self):
     """Expects to be overridden in subclasses."""
@@ -176,24 +184,48 @@ class SelfAttentionWithNormAndResidual(base_layer.BaseLayer):
 
   def setup(self) -> None:
     asserts.not_none(self.self_atten_tpl)
+    assert not all(
+        [x is not None for x in (self.pre_layer_norm, self.norm_policy)]
+    ), (self.pre_layer_norm, self.norm_policy)
+    if self.norm_policy:
+      assert self.norm_policy in (
+          'pre',
+          'post',
+          'post_skip',
+          'primer_hybrid',
+      ), self.norm_policy
+    if self.unified_norm_policy() != 'primer_hybrid':
+      self.create_child('norm', self.norm_tpl)
+    else:
+      self.create_child('pre_norm', self.norm_tpl)
+      self.create_child('post_norm', self.norm_tpl)
+
     self._create_self_atten()
-    self.create_child('norm', self.norm_tpl)
 
     # Initialize residual dropout.
     params = self.residual_dropout_tpl.clone()
     params.keep_prob = 1.0 - self.residual_dropout_prob
     self.create_child('residual_dropout', params)
 
+  def unified_norm_policy(self) -> str | None:
+    if self.pre_layer_norm is not None:
+      return 'pre' if self.pre_layer_norm else 'post_skip'
+    else:
+      return self.norm_policy
+
   def __call__(
       self,
       inputs: JTensor,
       paddings: JTensor,
-      atten_mask: Optional[JTensor] = None,
+      atten_mask: JTensor | None = None,
   ) -> JTensor:
+
     unnormalized_inputs = inputs
 
-    if self.pre_layer_norm:
+    if self.unified_norm_policy() == 'pre':
       inputs = self.norm(inputs)
+    elif self.unified_norm_policy() == 'primer_hybrid':
+      inputs = self.pre_norm(inputs)
 
     # Convert padding to mask for attention: [B, 1, 1, S]
     padding_mask = attentions.convert_paddings_to_mask(paddings, inputs.dtype)
@@ -229,11 +261,17 @@ class SelfAttentionWithNormAndResidual(base_layer.BaseLayer):
         atten_mask=atten_mask,
     )[0]
 
+    if self.unified_norm_policy() == 'primer_hybrid':
+      result = self.post_norm(result)
+    elif self.unified_norm_policy() == 'post':
+      result = self.norm(result)
+
     result = (
         self.residual_dropout(result) * self.residual_weight
         + unnormalized_inputs * self.input_weight
     )
-    if not self.pre_layer_norm:
+
+    if self.unified_norm_policy() == 'post_skip':
       result = self.norm(result)
     return result
 
@@ -290,7 +328,7 @@ class Conformer(base_layer.BaseLayer):
 
   # TODO(nanxinchen): add causal support
 
-  input_dims: Optional[int] = None
+  input_dims: int | None = None
   model_dims: int = 512
   kernel_size: int = 32
   ff_activation_tpl: pax_fiddle.Config[activations.BaseActivation] = (
@@ -300,24 +338,24 @@ class Conformer(base_layer.BaseLayer):
   ffn_dim_multiplier: int = 4
   atten_num_heads: int = 8
   layer_order: str = 'mhsa_before_conv'
-  dropout_prob: Optional[float] = None
-  conv_residual_dropout: Optional[float] = None
-  atten_residual_dropout: Optional[float] = None
-  ffn_residual_dropout: Optional[float] = None
-  atten_dropout: Optional[float] = None
-  ffn_relu_dropout: Optional[float] = None
-  fflayer_start_tpl: Optional[LayerTpl] = template_field(
+  dropout_prob: float | None = None
+  conv_residual_dropout: float | None = None
+  atten_residual_dropout: float | None = None
+  ffn_residual_dropout: float | None = None
+  atten_dropout: float | None = None
+  ffn_relu_dropout: float | None = None
+  fflayer_start_tpl: LayerTpl | None = template_field(
       transformers.TransformerFeedForward
   )
   trans_atten_tpl: LayerTpl = template_field(SelfAttentionWithNormAndResidual)
-  lconv_tpl: Optional[LayerTpl] = template_field(convolutions.LightConv1D)
-  fflayer_end_tpl: Optional[LayerTpl] = template_field(
+  lconv_tpl: LayerTpl | None = template_field(convolutions.LightConv1D)
+  fflayer_end_tpl: LayerTpl | None = template_field(
       transformers.TransformerFeedForward
   )
   fflayer_weight_sharing: bool = False
   final_ln_tpl: LayerTpl = template_field(normalizations.LayerNorm)
 
-  def _dropout_prob(self, prob: Optional[float]) -> float:
+  def _dropout_prob(self, prob: float | None) -> float:
     if self.dropout_prob is not None:
       return self.dropout_prob
     elif prob is not None:
@@ -351,11 +389,14 @@ class Conformer(base_layer.BaseLayer):
       )
       self.create_child('lconv', lconv_p)
 
-  def setup(self) -> None:
+  def _assert_layer_order(self):
     asserts.in_set(
         self.layer_order,
         ['mhsa', 'conv', 'mhsa_before_conv', 'conv_before_mhsa'],
     )
+
+  def setup(self) -> None:
+    self._assert_layer_order()
 
     if self.dropout_prob is not None:
       all_dropouts = [
@@ -431,7 +472,7 @@ class Conformer(base_layer.BaseLayer):
       self,
       inputs: JTensor,
       paddings: JTensor,
-      atten_mask: Optional[JTensor] = None,
+      atten_mask: JTensor | None = None,
   ) -> JTensor:
     """Conformer layer.
 

@@ -1,3 +1,49 @@
+# Version: 1.3.1
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.3.1
+*   Build Date: 20240220
+*   Paxml commit: f11a938628cf78d6df5a9956a9b0930cd62668d7
+*   Praxis version: 1.3.1
+*   Praxis commit: a935384da88ec739d48696c2d0a55657a183de00
+# Version: 1.3.0
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.3.0
+*   Build Date: 20240216
+*   Paxml commit: 30043ed0edcb13a22a76277055af089343a8171d
+*   Praxis version: 1.3.0
+*   Praxis commit: ca8ad2ba8be5b77092a8e5f0a0774a39cc3ad766
+# Version: 1.2.0
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.2.0
+*   Build Date: 20231016
+*   Paxml commit: 4486d690773ba5d15d9e54b05a4e916b1a955de9
+*   Praxis version: 1.2.0
+*   Praxis commit: 7bd63412bf86a68e09fcd9455f76a4909d19377e
+# Version: 1.1.0
+## Major Features and Improvements
+* Support multislice on Cloud TPU: example configs and instructions added ([link](https://github.com/google/paxml#pax-on-multislice)).
+* Move to python 3.10 as the minimal python requirement (previously on python 3.8).
+* Checkpoint improvements:
+  * OCDBT support (off by default).
+  * Pax can take advantage of [Orbax-style transformations](https://github.com/google/orbax/blob/main/docs/checkpoint.md#transformations) to gain support for additional features.
+  * Users can provide their own Checkpointer to allow for custom logic and reading from a custom checkpoint location.
+* Eval customization support.
+* Support for [tf.data.experimental.service](https://www.tensorflow.org/api_docs/python/tf/data/experimental/service).
+## Note
+*   Version: 1.1.0
+*   Build Date: 20230824
+*   Paxml commit: fe4d87fe90dcbe2ef6db881d495c7d40270a3033
+*   Praxis version: 1.1.0
+*   Praxis commit: 2a7d0407871502a1d79dcd0e01411e73f1d15d36
 # Version: 1.0.0
 ## Major Features and Improvements
 * **Fiddle** - Pax's layer library, Praxis, now has layers and BaseParameterizable configured with [Fiddle](https://github.com/google/fiddle), a Python-first configuration library. Fiddle reduces boilerplate, and adds productivity features including history tracking, graphviz visualization, support for aliasing objects, and more.

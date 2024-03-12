@@ -22,21 +22,21 @@ import inspect
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, Mapping, NamedTuple, Sequence
 
 from absl import flags
 from absl import logging
 import flax
 import jax
+from jax import lax
 from jax.experimental import mesh_utils
 from jax.experimental import multihost_utils
-from jax.experimental import pjit
-from jax.interpreters import pxla
 import jax.numpy as jnp
 import numpy as np
 import optax
 from praxis import lingvo_lib
 from praxis import pytypes
+from praxis import trees
 
 flags.DEFINE_bool(
     'pmap_use_tensorstore', False,
@@ -58,28 +58,12 @@ def pmap_use_tensorstore():
 # No other imports from lingvo should be accessed by core JAX library.
 current_cluster = lingvo_lib.current_cluster
 infeed_context_scope = lingvo_lib.infeed_context_scope
-TFDatasetSource = lingvo_lib.TFDatasetSource
 InstantiableParams = pytypes.InstantiableParams
 NestedMap = pytypes.NestedMap
 HParams = pytypes.HParams
 Nested = pytypes.Nested
 
 JTensor = jnp.ndarray
-
-
-# A utility function to flatten copied from jax/_src/util.py
-def _unzip2(xys):
-  xs = []
-  ys = []
-  for x, y in xys:
-    xs.append(x)
-    ys.append(y)
-  return tuple(xs), tuple(ys)
-
-
-jax.tree_util.register_pytree_node(NestedMap,
-                                   lambda xs: _unzip2(sorted(xs.items()))[::-1],
-                                   lambda keys, xs: NestedMap(zip(keys, xs)))
 
 
 def merge_dict(dict1, dict2):
@@ -117,18 +101,24 @@ def sharded_file_pattern_to_glob(file_pattern: str) -> str:
   return f'{path}-?????-of-{int(shards):05}'
 
 
-def _nested_map_to_state_dict(xs: NestedMap) -> Dict[str, Any]:
+def _nested_map_to_state_dict(xs: NestedMap) -> dict[str, Any]:
   return flax.serialization.to_state_dict(dict(xs))
 
 
-def _nested_map_from_state_dict(xs: NestedMap, states: Dict[str,
-                                                            Any]) -> NestedMap:
+def _nested_map_from_state_dict(
+    xs: NestedMap, states: dict[str, Any]
+) -> NestedMap:
   return NestedMap(flax.serialization.from_state_dict(dict(xs), states))
 
-
-flax.serialization.register_serialization_state(NestedMap,
-                                                _nested_map_to_state_dict,
-                                                _nested_map_from_state_dict)
+try:
+  flax.serialization.register_serialization_state(
+      NestedMap, _nested_map_to_state_dict, _nested_map_from_state_dict
+  )
+except ValueError:
+  logging.error(
+      'ValueError: a serialization handler for "NestedMap" is already'
+      ' registered'
+  )
 
 
 @functools.partial(functools.partial, jax.tree_map)
@@ -257,7 +247,8 @@ def extract_prefixed_keys_from_nested_map(
     key_separator: str = '/',
     left_separator: str = '[',
     right_separator: str = ']',
-    is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> Any:
   """Extracts a NestedMap with the nested prefix keys from its NestedMap node.
   """
   if is_leaf is not None and is_leaf(node):
@@ -343,8 +334,9 @@ def sync_global_devices(name: str) -> None:
                name, global_device_count)
 
 
-def put_to_devices(host_array: np.ndarray,
-                   local_devices: Sequence[Any]) -> List[Any]:
+def put_to_devices(
+    host_array: np.ndarray, local_devices: Sequence[Any]
+) -> list[Any]:
   """Transfers a host array to the local devices."""
   local_device_count = len(local_devices)
   try:
@@ -361,10 +353,11 @@ def put_to_devices(host_array: np.ndarray,
 # which would cause a circular dependency.
 # TODO(pax-dev): Rename globally into e.g. create_jax_array()
 def make_array(
-    host_arrays: Union[np.ndarray, Any],
-    global_shapes: Union[jax.ShapeDtypeStruct, Any],
+    host_arrays: np.ndarray | Any,
+    global_shapes: jax.ShapeDtypeStruct | Any,
     global_mesh: jax.sharding.Mesh,
-    pspecs: Any,
+    pspecs: Any | None = None,
+    sharding: Mapping[str, jax.sharding.Sharding] | None = None,
 ) -> Any:
   """Makes a Jax Array from host array.
 
@@ -374,49 +367,33 @@ def make_array(
     host_arrays: host-local arrays.
     global_shapes: global shapes of the resultant Array.
     global_mesh: global mesh of the resultant Array.
-    pspecs: partition specs of the resultant Array.
+    pspecs: Optional partition specs of the resultant Array.
+    sharding: Optional sharding of the resultant Array. Either pspecs or
+      sharding must be provided.
 
   Returns:
     A Jax Array with x as the host-local data.
   """
-
-
+  assert (pspecs is not None) != (
+      sharding is not None
+  ), 'Either pspecs or sharding must be provided.'
   local_devices = global_mesh.local_devices
 
   def _put_to_devices(x):
-    # lsp: 把数据放到当前host的每个core上
     return put_to_devices(x, local_devices)
 
   device_buffers = jax.tree_map(_put_to_devices, host_arrays)
 
-  def _jax_array(global_shape, pspec, dbs):
-    # This is cached because creating new sharding objects everytime is
-    # expensive in pjit dispatch path for inputs.
-    s = jax.sharding.NamedSharding(global_mesh, pspec)
-    return jax.make_array_from_single_device_arrays(global_shape.shape, s, dbs)
+  def _jax_array(global_shape, dbs, sharding):
+    return jax.make_array_from_single_device_arrays(
+        global_shape.shape, sharding, dbs
+    )
 
-  return jax.tree_map(_jax_array, global_shapes, pspecs, device_buffers)
-
-
-# ===========================================================================
-from jax.experimental.multihost_utils import (
-    host_local_array_to_global_array,
-    global_array_to_host_local_array,
-)
-
-def make_array2(
-    host_arrays: Union[np.ndarray, Any],
-    global_shapes: Union[jax.ShapeDtypeStruct, Any],
-    global_mesh: jax.sharding.Mesh,
-    pspecs: Any,
-) -> Any:
-  logging.info(f'global_mesh: {global_mesh}')
-  logging.info(f'host_arrays: {host_arrays}')
-  logging.info(f'local_mesh: {global_mesh.local_mesh}')
-
-  def _jax_array(array, pspec):
-    return jax.experimental.multihost_utils.host_local_array_to_global_array(array, global_mesh, pspec)
-  return jax.tree_map(_jax_array, host_arrays, pspecs)
+  # If sharding not provided, create it from the partition spec.
+  sharding = sharding or jax.tree_map(
+      lambda x: jax.sharding.NamedSharding(global_mesh, x), pspecs
+  )
+  return jax.tree_map(_jax_array, global_shapes, device_buffers, sharding)
 
 
 def convert_fully_replicated_array_to_pmap_array(arr):
@@ -432,20 +409,12 @@ def convert_fully_replicated_array_to_pmap_array(arr):
   assert isinstance(arr, jax.Array)
   with jax.transfer_guard('disallow'):
     local_shape = (jax.local_device_count(),) + arr.shape
-    device_buffers = arr.device_buffers  # pytype: disable=attribute-error
-    devices = np.array([d.device() for d in device_buffers])
+    device_buffers = [shard.data for shard in arr.addressable_shards]
+    devices = np.array([shard.device for shard in arr.addressable_shards])
 
-    # TODO(pax-dev): Remove the branching when jax 0.4.9 is a minimum
-    # requirement version of praxis.
-    if jax.__version_info__ >= (0, 4, 9):
-      s = jax.sharding.PmapSharding.default(local_shape, sharded_dim=0,
-                                            devices=devices)
-    else:
-      sharded_aval = jax.core.ShapedArray(local_shape[1:], arr.dtype)
-      sharding_spec = pxla._pmap_sharding_spec(  # pylint: disable=protected-access
-          local_shape[0], local_shape[0], 1, None, sharded_aval, 0)
-      s = jax.sharding.PmapSharding(devices, sharding_spec)
-
+    s = jax.sharding.PmapSharding.default(
+        local_shape, sharded_dim=0, devices=devices
+    )
     return jax.make_array_from_single_device_arrays(local_shape, s,
                                                     device_buffers)
 
@@ -460,12 +429,19 @@ def convert_host_local_array_to_global_array(arr):
     A global array similar to GDA.
   """
   # input `arr` is fully replicated, so it's shape is the global shape.
-  global_shape = arr.device_buffers[0].shape
+  global_shape = arr.addressable_data(0).shape
   # Create a 1D mesh to create fully replicated global jax.Array.
   mesh = jax.sharding.Mesh(np.array(jax.devices()), axis_names=('x',))
-  partition_spec = jax.sharding.PartitionSpec(None)
+  partition_spec = (
+      jax.sharding.PartitionSpec(None)
+      if global_shape
+      else jax.sharding.PartitionSpec()
+  )
   # pmap-produced Array has a "scrambled" device order.
-  dbs = sorted(arr.device_buffers, key=lambda x: x.device().id)
+  dbs = sorted(
+      [shard.data for shard in arr.addressable_shards],
+      key=lambda x: list(x.devices())[0].id,
+  )
   return jax.make_array_from_single_device_arrays(
       global_shape, jax.sharding.NamedSharding(mesh, partition_spec), dbs
   )
@@ -475,7 +451,6 @@ def get_global_input_shape_dtype(x: jnp.ndarray) -> jax.ShapeDtypeStruct:
   """Get global input shape/dtype assuming fully sharded batch dim."""
   assert len(x.shape) >= 1
   # Assume fully sharded batch dim.
-  # lsp：第一个维度乘以host数量
   x_shape = (x.shape[0] * jax.process_count(),) + tuple(x.shape[1:])
   return jax.ShapeDtypeStruct(x_shape, x.dtype)
 
@@ -501,15 +476,13 @@ def global_mesh_defined() -> bool:
 # This wrapped with_sharding_constraint will not throw error for eval_shape
 # outside pjit. It is also used in p5x.
 def with_sharding_constraint(
-    x: JTensor, axis_resources: Optional[jax.sharding.PartitionSpec]
+    x: JTensor, axis_resources: jax.sharding.PartitionSpec | None
 ) -> JTensor:
-  """Wrapper for pjit with_sharding_constraint, no-op on cpu or outside pjit."""
-  if jax.devices()[0].platform == 'cpu' or not global_mesh_defined():
+  """Wrapper for lax.with_sharding_constraint, no-op outside pjit."""
+  if not global_mesh_defined():
     return x
   else:
-    # lsp: jax==4.25 遗弃pjit.with_sharding_constraint
-    return jax.lax.with_sharding_constraint(x, axis_resources)
-    # return pjit.with_sharding_constraint(x, axis_resources)
+    return lax.with_sharding_constraint(x, axis_resources)
 
 
 def get_uneven_sharding_paddings(
@@ -534,12 +507,13 @@ def is_optax_masked_node(x: Any) -> bool:
   return isinstance(x, optax.MaskedNode)
 
 
-def maybe_pad_uneven_sharding(xs: JTensor,
-                              partition_specs: Union[jax.sharding.PartitionSpec,
-                                                     flax.struct.PyTreeNode],
-                              unpadded_shapes: Sequence[int],
-                              mesh_shape: Sequence[int],
-                              mesh_axis_names: Sequence[str]) -> JTensor:
+def maybe_pad_uneven_sharding(
+    xs: pytypes.NestedJTensor,
+    partition_specs: jax.sharding.PartitionSpec | flax.struct.PyTreeNode,
+    unpadded_shapes: Sequence[int],
+    mesh_shape: Sequence[int],
+    mesh_axis_names: Sequence[str],
+) -> pytypes.NestedJTensor:
   """Pads xs to make them evenly shardable, if needed."""
 
   def _maybe_pad(x, pspec, shape):
@@ -547,7 +521,7 @@ def maybe_pad_uneven_sharding(xs: JTensor,
       return x
     paddings = get_uneven_sharding_paddings(pspec, shape, mesh_shape,
                                             mesh_axis_names)
-    if all([p == 0 for p in paddings]):
+    if all(p == 0 for p in paddings):
       return x
     # Annotate before pad to make sure they have the same sharding.
     # (Pad does not have the highest sharding propagation priority.)
@@ -559,15 +533,16 @@ def maybe_pad_uneven_sharding(xs: JTensor,
       xs,
       partition_specs,
       unpadded_shapes,
-      is_leaf=is_optax_masked_node)
+      is_leaf=is_optax_masked_node,
+  )
 
 
 def maybe_slice_uneven_sharding(
-    xs: JTensor,
+    xs: pytypes.NestedJTensor,
     partition_spec: jax.sharding.PartitionSpec,
-    padded_shapes: Sequence[int],
+    unpadded_shapes: Sequence[int],
     is_leaf: Any = None,
-) -> JTensor:
+) -> pytypes.NestedJTensor:
   """Slices xs to remove padding due to uneven sharding, if needed."""
 
   def _maybe_slice(x, pspec, shape):
@@ -583,7 +558,7 @@ def maybe_slice_uneven_sharding(
     return with_sharding_constraint(x, pspec)
 
   return jax.tree_map(
-      _maybe_slice, xs, partition_spec, padded_shapes, is_leaf=is_leaf
+      _maybe_slice, xs, partition_spec, unpadded_shapes, is_leaf=is_leaf
   )
 
 
@@ -613,31 +588,29 @@ def select_nodes_by_indices(indices, *trees):
   return jax.tree_map(lambda idx, *arrays: arrays[idx], indices, *trees)
 
 
-Patterns = Union[str, re.Pattern, Iterable[Union[re.Pattern, str]]]
+Patterns = str | re.Pattern | Iterable[re.Pattern | str]
 
 
-def match_variable_names(tree: NestedMap, patterns: Patterns) -> NestedMap:
+def match_variable_names(
+    tree: NestedMap,
+    patterns: Patterns,
+    is_leaf: Callable[..., bool] | None = None,
+) -> NestedMap:
   """Checks if a prefix key of each variable is matching to one of `patterns`.
 
   Args:
     tree: NestedMap to be matched against `patterns`.
     patterns: `re.Pattern`, `str` that can be compiled into `re.Pattern`, or an
       iterator of those.
+    is_leaf: an optional Callable returning a boolean. When it is true, the
+      prefix is replaced by None.
 
   Returns:
     A nested map with the same structure as `tree`. Each node of the tree is
     a boolean flag denoting whether the prefix name of the variable is matching
     to one of `patterns`.
   """
-  # Convert singleton to the list
-  if isinstance(patterns, (str, re.Pattern)):
-    patterns = [patterns]
-  # Compile (`re.compile` acts as an identity func when p is `Pattern`)
-  patterns = [re.compile(p) for p in patterns]
-
-  var_prefix = extract_prefixed_keys_from_nested_map(tree)
-  return jax.tree_map(
-      lambda x: any(p.fullmatch(x) is not None for p in patterns), var_prefix)
+  return trees.fullmatch_path(tree, patterns, is_leaf=is_leaf)
 
 
 def update_matched_variables(old_tree: NestedMap,
@@ -684,7 +657,7 @@ def update_matched_variables(old_tree: NestedMap,
 
 
 def l2_normalize(
-    x: JTensor, axis: Union[int, Sequence[int]] = -1, epsilon: float = 1e-12
+    x: JTensor, axis: int | Sequence[int] = -1, epsilon: float = 1e-12
 ) -> JTensor:
   """L2-normalize a Jax tensor along certain dimension."""
   norm = jnp.sqrt(jnp.sum(x * x, axis=axis, keepdims=True) + epsilon)
@@ -693,8 +666,8 @@ def l2_normalize(
 
 def create_device_mesh(
     ici_mesh_shape: Sequence[int],
-    dcn_mesh_shape: Optional[Sequence[int]] = None,
-    contiguous_submeshes: Optional[bool] = False,
+    dcn_mesh_shape: Sequence[int] | None = None,
+    contiguous_submeshes: bool | None = False,
 ):
   """Creates a single- or multi-slice device mesh from mesh shapes.
 
@@ -722,10 +695,11 @@ def create_device_mesh(
         device_mesh = mesh_utils.create_hybrid_device_mesh(
             ici_mesh_shape, dcn_mesh_shape, devices=devices)
       except AssertionError as e:
-        raise ValueError('Setting a nontrivial dcn_mesh_shape requires '
-                         'multiple slices') from e
+        raise ValueError(
+            'Setting a nontrivial dcn_mesh_shape requires multiple slices. '
+            f'[{ici_mesh_shape=}, {dcn_mesh_shape=}, {devices=}]'
+        ) from e
   else:
-    # lsp: here
     device_mesh = mesh_utils.create_device_mesh(
         ici_mesh_shape, contiguous_submeshes=contiguous_submeshes
     )
@@ -766,15 +740,13 @@ def apply_mask_to_logits(logits: JTensor, mask: JTensor) -> JTensor:
     Masked logits.
   """
 
-  # min_value = get_large_negative_number(logits.dtype)
-  # lsp
-  min_value = jnp.finfo(jnp.bfloat16).min
+  min_value = get_large_negative_number(logits.dtype)
   return jnp.where((mask >= min_value * 0.5), logits, min_value)
 
 
-def sequence_mask(lengths: Union[JTensor, Sequence[int]],
-                  maxlen: int,
-                  dtype=jnp.bool_) -> JTensor:
+def sequence_mask(
+    lengths: JTensor | Sequence[int], maxlen: int, dtype=jnp.bool_
+) -> JTensor:
   """Creates a sequence mask where 1s are valid positions and 0s are padded.
 
   Args:
@@ -790,9 +762,9 @@ def sequence_mask(lengths: Union[JTensor, Sequence[int]],
           lengths[..., jnp.newaxis]).astype(dtype)
 
 
-def sequence_paddings(lengths: Union[JTensor, Sequence[int]],
-                      maxlen: int,
-                      dtype=jnp.float32) -> JTensor:
+def sequence_paddings(
+    lengths: JTensor | Sequence[int], maxlen: int, dtype=jnp.float32
+) -> JTensor:
   """Creates sequence paddings based on the lengths.
 
   Args:
@@ -816,7 +788,7 @@ def flip_sequence(inputs: JTensor, lengths: JTensor):
 
 def concat_sequences_with_padding(
     input0: JTensor, paddings0: JTensor, input1: JTensor, paddings1: JTensor
-) -> Tuple[JTensor, JTensor]:
+) -> tuple[JTensor, JTensor]:
   """Concatenates input sequences with varying lengths as defined by paddings.
 
   This is a helper function for concatenating 2 batches of input sequences,
@@ -917,11 +889,13 @@ def tree_unstack(tree: Any, axis: int) -> Sequence[Any]:
   return flat_pytrees
 
 
-def apply_padding(inputs: JTensor,
-                  padding: JTensor,
-                  pad_value: Optional[JTensor] = None,
-                  use_select: bool = True,
-                  axis: Optional[int] = None) -> JTensor:
+def apply_padding(
+    inputs: JTensor,
+    padding: JTensor,
+    pad_value: JTensor | None = None,
+    use_select: bool = True,
+    axis: int | None = None,
+) -> JTensor:
   """Applies padding to a tensor.
 
   `inputs` and `padding` should be broadcast compatible.
@@ -972,28 +946,27 @@ class RunningPeriod:
   """Information about a running period."""
 
   start: float
-  end: Optional[float] = None
+  end: float | None = None
   min_elapsed: float = 0
 
   @property
   def elapsed(self) -> float:
     """Returns the elapsed time in second."""
-    assert self.end is not None
-    return max(self.end - self.start, self.min_elapsed)
+    right_boundary = time.time() if self.end is None else self.end
+    return max(right_boundary - self.start, self.min_elapsed)
 
 
 @contextlib.contextmanager
 def timeit(min_elapsed: float = 1e-6) -> Iterator[RunningPeriod]:
-  """A context manager that times a running period.
+  """A context manager that times an interval of execution.
 
   Usage:
     with py_utils.timeit() as period:
-      run_logics()
-    period.elapsed
+      run_logic()
+    print(period.elapsed)
 
   Args:
-    min_elapsed: the minimal elapsed to use if elapsed is smaller than this
-      number.
+    min_elapsed: the smallest time interval (seconds) period.elapsed will yield.
 
   Yields:
     A `RunningPeriod` object that contains time information for execution
@@ -1014,7 +987,7 @@ def _contract_path(s: str):
   return f'.../{"/".join(s.split("/")[-2:])}'
 
 
-def benchmark(prefix: str = '', first_n: Optional[int] = None):
+def benchmark(prefix: str = '', first_n: int | None = None):
   """Log walltime elapsed around the decorated function.
 
   Args:
@@ -1070,8 +1043,8 @@ def benchmark(prefix: str = '', first_n: Optional[int] = None):
 
 
 def filter_by_matching_keys(
-    batch: Dict[str, Nested], prefixes: Sequence[str]
-) -> Tuple[Dict[str, Nested], Dict[str, Nested]]:
+    batch: dict[str, Nested], prefixes: Sequence[str]
+) -> tuple[dict[str, Nested], dict[str, Nested]]:
   """Filter a map into one that matches any prefix and one that doesn't."""
 
   def _matching_fn(k: str) -> bool:
@@ -1089,8 +1062,9 @@ def filter_by_matching_keys(
   return matching, non_matching
 
 
-def get_enumeration_id(example: Dict[str, Any],
-                       pop: bool = False) -> Optional[str]:
+def get_enumeration_id(
+    example: dict[str, Any], pop: bool = False
+) -> str | None:
   """Build enumeration ID string from example map's enumeration fields.
 
   Args:
@@ -1121,8 +1095,8 @@ def get_enumeration_id(example: Dict[str, Any],
 
 
 def pad_or_trim_to(
-    x: Optional[JTensor], shape: Sequence[int], pad_val=0
-) -> Optional[JTensor]:
+    x: JTensor | None, shape: Sequence[int], pad_val=0
+) -> JTensor | None:
   """Pad and slice x to the given shape.
 
   Args:
@@ -1150,7 +1124,7 @@ def pad_or_trim_to(
 
 def append_eos(
     x: JTensor, paddings: JTensor, eos_id: int, extend_if_overflow: bool = True
-) -> Tuple[JTensor, JTensor]:
+) -> tuple[JTensor, JTensor]:
   """Ensure each sequence ends with eos by padding.
 
   Args:
@@ -1204,3 +1178,35 @@ class BpropMaskedNode(NamedTuple):
 def is_bprop_masked_node(x: Any) -> bool:
   """Returns if x is an instance of BpropMaskedNode."""
   return isinstance(x, BpropMaskedNode)
+
+
+def concat_nested_maps(map_list: list[NestedMap], axis: int) -> NestedMap:
+  """Recursively concat tensors in a list of NestMaps.
+
+  If a key exists in map_list[0] and in map_list[1] then it assumed to exist in
+  all map_list[:]. Keys in map_list[0] that aren't JTensors, Maps, don't
+  exist in map_list[1], or have a ndims <= axis will be copied directly.
+
+  Args:
+    map_list: A list of NestedMaps.
+    axis: The axis to concat tensors along.
+
+  Returns:
+    A single NestedMap with all JTensors in all maps concatenated along axis.
+  """
+  if len(map_list) < 2:
+    return map_list[0]
+  results = NestedMap()
+  for k in map_list[0].keys():
+    results[k] = map_list[0][k]
+    if (
+        isinstance(map_list[0][k], JTensor)
+        and k in map_list[1]
+        and len(map_list[0][k].shape) > axis
+    ):
+      tensor_list = [output[k] for output in map_list]
+      results[k] = jnp.concatenate(tensor_list, axis=axis)
+    elif isinstance(map_list[0][k], Dict) and k in map_list[1]:
+      next_map_list = [output[k] for output in map_list]
+      results[k] = concat_nested_maps(next_map_list, axis=axis)
+  return results

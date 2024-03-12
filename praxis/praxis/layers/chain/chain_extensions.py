@@ -45,7 +45,7 @@ chain = praxis.layers.chain
 """
 import collections
 import copy
-from typing import Any, Dict, Optional, Sequence, Tuple, List
+from typing import Any, Sequence
 
 from absl import logging
 from jax import numpy as jnp
@@ -69,7 +69,7 @@ Chain = chain_lib.Chain
 
 def chain(*layers_tpl: Any, **kwargs: Any) -> Config[Chain]:
   """Parameterizes Chain passing output from one layer to the next."""
-  return Config(
+  return Config(  # pytype: disable=wrong-arg-types  # use-fiddle-overlay
       Chain,
       layers=_name_layers_uniquely(layers_tpl),
       **kwargs_with_name('chain', **kwargs),
@@ -121,7 +121,7 @@ def repeat(
   )
 
 
-def _name_layers_uniquely(layers_tpl: Sequence[LayerTpl]) -> List[LayerTpl]:
+def _name_layers_uniquely(layers_tpl: Sequence[LayerTpl]) -> list[LayerTpl]:
   """Returns layers with unique names assigned."""
   layers_tpl = [l for l in layers_tpl if l]
   if not layers_tpl:
@@ -180,7 +180,7 @@ class AddResidual(chain_lib.Chain):
 
 def add_residual(*layers: Any, **kwargs: Any) -> Config[AddResidual]:
   """`Config(AddResidual)`; stacks `layers` and adds a residual."""
-  return Config(
+  return Config(  # pytype: disable=wrong-arg-types  # use-fiddle-overlay
       AddResidual,
       layers=_name_layers_uniquely(layers),
       **kwargs_with_name('add_residual', **kwargs),
@@ -196,13 +196,14 @@ class DictToArgs(BaseLayer):
 
   keys: Sequence[str] = ()
 
-  def __call__(self, input_batch: Dict[str, JTensor]) -> Tuple[JTensor, ...]:
+  def __call__(self, input_batch: dict[str, JTensor]) -> tuple[JTensor, ...]:
     """Looks up tensors."""
     outputs = []
     for k in self.keys:
-      if k not in input_batch:
-        raise KeyError(f'key=`{k}` not in {input_batch.keys()}')
-      outputs.append(input_batch[k])
+      val = input_batch.get(k)
+      if val is None:
+        raise ValueError(f'Key not found {k}')
+      outputs.append(val)
     if len(outputs) > 1:
       return tuple(outputs)
     return outputs[0]  # pytype: disable=bad-return-type  # jax-ndarray
@@ -225,7 +226,7 @@ class LogArgs(BaseLayer):
     log_values: If tensor values should be logged or only the shape.
   """
 
-  message: Optional[str] = None
+  message: str | None = None
   log_values: bool = False
 
   def __call__(self, *args: Any, **kwargs: Any) -> None:
@@ -251,7 +252,7 @@ class LogArgs(BaseLayer):
 
 
 def log_args(
-    message: Optional[str] = None, log_values: bool = False, **kwargs: Any
+    message: str | None = None, log_values: bool = False, **kwargs: Any
 ) -> Config[LogArgs]:
   """`Config(LogArgs)`; logs the arguments (for easy debugging)."""
   return Config(
@@ -287,7 +288,7 @@ def full_like(fill_value: float, **kwargs: Any) -> Config[FullLike]:
 def feed_forward(
     input_dims: int,
     output_dims: int,
-    activation_tpl: Optional[LayerTpl] = None,
+    activation_tpl: LayerTpl | None = None,
     **kwargs: Any,
 ) -> Config[linears.FeedForward]:
   """Wraps `Config(linears.FeedForward)`."""

@@ -68,15 +68,18 @@ pytype_strict_library(
         # Implicit absl.app dependency.
         # Implicit absl.flags dependency.
         # Implicit absl.logging dependency.
+        # Implicit etils dependency.
         # Implicit fiddle.absl_flags dependency.
         # Implicit jax dependency.
         # Implicit numpy dependency.
         "//paxml:base_experiment",
         "//paxml:experiment_registry",
+        "//paxml:experiment_utils",
         "//praxis:base_hyperparams",
         "//praxis:base_layer",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
+        "//praxis:pytypes",
         # Implicit pyglove dependency.
         # Implicit tensorflow_no_contrib dependency.
     ],

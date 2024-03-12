@@ -18,17 +18,21 @@
 from __future__ import annotations
 
 import itertools
-from typing import Optional, Sequence, Tuple, Union
+from typing import Sequence
 
 from absl import logging
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from praxis import base_layer
 from praxis import pax_fiddle
+from praxis import py_utils
 from praxis import pytypes
 from praxis.layers.quantization import operations
 from praxis.layers.quantization import quantization_hparams
 from praxis.layers.quantization import utils
+
+# Internal import for internal quantization support.
 
 
 WeightHParams = base_layer.WeightHParams
@@ -53,17 +57,34 @@ class QuantizationLayer(base_layer.BaseLayer):
       given layer. Defaults to default QuantizationParams.
   """
 
-  quantization: Optional[QuantizationParams] = instance_field(
-      QuantizationParams
-  )
+  quantization: QuantizationParams | None = instance_field(QuantizationParams)
+  _PACK_4BIT_DIM = None
+
+  def create_tensor_quantizers(self):
+    weight_params = (
+        self.quantization.weight_params if self.quantization else None
+    )
+    act_params = self.quantization.act_params if self.quantization else None
+    self.create_child(
+        'act_quantizer',
+        create_tensor_quantizer('act_quantizer', act_params),
+    )
+    self.create_child(
+        'weight_quantizer',
+        create_tensor_quantizer('weight_quantizer', weight_params),
+    )
+
+  def _do_static_activation_quantization(self) -> bool:
+    act_params = self.quantization.act_params if self.quantization else None
+    return act_params is not None and act_params.stats_config is not None
 
   def set_up_weights(
       self,
       *,
       weight_name: str,
       weight_params: base_layer.WeightHParams,
-      scale_shape: list[int],
-      pack_dim: int,
+      scale_shape: list[int] = [],
+      scale_hparams: base_layer.WeightHParams | None = None,
   ):
     """Set up weights, quantizer, steps."""
     if not self.quantization:
@@ -71,11 +92,25 @@ class QuantizationLayer(base_layer.BaseLayer):
       return
 
     dtype = self.quantization.weight_params.dtype
+    precision = self.quantization.weight_params.precision
+    if utils.dtype_to_bits(dtype) < precision:
+      raise ValueError(
+          f'Expected {dtype=} to be able to contain the weight {precision=}'
+      )
+
     if self.quantization.mode == QuantizationMode.INFERENCE:
+      if self.quantization.quantization_type == QuantizationType.FR:
+        raise NotImplementedError(
+            'FRAME Quantization is not supported yet for inference.'
+        )
       if (
-          self.quantization.weight_params.precision == 4
+          precision == 4
           and self.quantization.weight_params.use_int4_packed_weights
       ):
+        assert self._PACK_4BIT_DIM is not None, (
+            '_PACK_4BIT_DIM must be set on the QuantizationLayer subclass if '
+            'use_int4_packed_weights is True.'
+        )
         # For 4bit pack/unpack.
         # TODO(jianlijianli): Replace this with proper 4bit type.
         # Type to store int4 values, int32 or int8 are supported.
@@ -84,7 +119,9 @@ class QuantizationLayer(base_layer.BaseLayer):
         )
         packing_factor = 2 if dtype == jnp.int8 else 8
         weight_params.shape = utils.get_packed_shape(
-            weight_params.shape, pack_dim, packing_factor=packing_factor
+            weight_params.shape,
+            self._PACK_4BIT_DIM,
+            packing_factor=packing_factor,
         )
       if do_static_activation_quantization(self.quantization.act_params):
         raise NotImplementedError(
@@ -99,9 +136,19 @@ class QuantizationLayer(base_layer.BaseLayer):
           weight_name,
           weight_params,
           scale_shape,
+          scale_hparams=scale_hparams,
           dtype=dtype,
           use_symmetric=self.quantization.weight_params.use_symmetric,
       )
+    elif self.quantization.mode == QuantizationMode.CALIB:
+      assert self.quantization.quantization_type == QuantizationType.FR
+      stats = base_layer.WeightHParams(
+          shape=[1],
+          init=base_layer.WeightInit.Constant(0),
+          dtype=jnp.bfloat16,
+      )
+      self.create_variable('framestat', stats, trainable=False)
+      self.create_variable(weight_name, weight_params)
     else:
       self.create_variable(weight_name, weight_params)
 
@@ -124,21 +171,53 @@ class QuantizationLayer(base_layer.BaseLayer):
       )
       self.create_variable('step_count', step_count_pc, trainable=False)
 
+  @nn.nowrap
+  def get_quantized_weight(
+      self, name: str, use_symmetric: bool = True
+  ) -> tuple[JTensor, JTensor, JTensor | None]:
+    q_w, q_s, zp = super().get_quantized_weight(name, use_symmetric)
+    assert self.quantization is not None, (
+        'get_quantized_weight is called during serving for quantized'
+        ' model, please set quantized config for the model.'
+    )
+    if (
+        self.quantization.weight_params.precision == 4
+        and self.quantization.weight_params.use_int4_packed_weights
+    ):
+      assert self._PACK_4BIT_DIM is not None, (
+          '_PACK_4BIT_DIM must be set on the QuantizationLayer subclass if '
+          'use_int4_packed_weights is True.'
+      )
+      q_w = utils.unpack_4bit(
+          q_w, self._PACK_4BIT_DIM, self.quantization.weight_params.dtype
+      )
+    if not py_utils.is_tpu() and q_w.dtype in utils.INT4_TYPES:
+      # (u)int4 is only supported for convert operations on XLA CPU and GPU, but
+      # the double cast is useful for other compilers.
+      q_w = q_w.astype(jnp.int8)
+    return q_w, q_s, zp
+
   def quantized_einsum(
       self,
       *,
       eqn: str,
       x: JTensor,
       w: JTensor,
-      pack_dim: int,
       reshape: list[int],
+      weight_name: str = 'w',
+      scale_eqn: str | None = None,
+      zp_eqn: str | None = None,
+      swap_xw: bool = False,
   ) -> JTensor:
     """Quantized Einsum for inference and training."""
 
     if not self.quantization:
       if reshape:
         w = jnp.reshape(w, reshape)
-      return jnp.einsum(eqn, x, w)
+      if swap_xw:
+        return jnp.einsum(eqn, w, x)
+      else:
+        return jnp.einsum(eqn, x, w)
 
     # Optionally create step count.
     step_count = None
@@ -149,29 +228,41 @@ class QuantizationLayer(base_layer.BaseLayer):
       self.add_summary('step_count', step_count)
 
     if self.quantization.mode == QuantizationMode.INFERENCE:
+      if self.quantization.quantization_type == QuantizationType.FR:
+        # It takes extra parameters during infernece.
+        raise NotImplementedError(
+            'FR Quantization is not supported yet for inference.'
+        )
       # PTQ, QAT has the same inference graph, only difference is on activation.
       # No matter which quantization type is used, the weight and scale
       # dimensions are the same for all types.
       # Note: lower-bit types are not reflected during inference for now due to
       # b/259306620.
       w, s, zp = self.get_quantized_weight(
-          'w', use_symmetric=self.quantization.weight_params.use_symmetric
+          weight_name,
+          use_symmetric=self.quantization.weight_params.use_symmetric,
       )
-      if (
-          self.quantization.weight_params.precision == 4
-          and self.quantization.weight_params.use_int4_packed_weights
-      ):
-        w = utils.unpack_4bit(
-            w, pack_dim, self.quantization.weight_params.dtype
-        )
+      scale_act, zp_act = None, None
       if do_static_activation_quantization(self.quantization.act_params):
         # This is for benchmarking only, to get the headroom.
         # TODO(jianlijianli): implement this properly.
         x = x.astype(jnp.int8)
         logging.info('Static activation quantization is not supported yet.')
       elif self.quantization.act_params is not None:
-        x, act_scale = operations.reduce_precision_activation(x)
-        s = jnp.multiply(jnp.squeeze(act_scale), s)
+        act_params = self.quantization.act_params
+        x, scale_act, zp_act = operations.reduce_einsum_activation_precision(
+            eqn,
+            x,
+            bits=act_params.precision,
+            per_channel=act_params.per_channel,
+            symmetric=act_params.symmetric,
+            percentile=act_params.clipping_coeff,
+        )
+        if act_params.precision <= 8:
+          if act_params.symmetric:
+            # TODO(rybakov): add support for asymmetric too.
+            x = x.astype(jnp.int8)
+
       dtype = self.quantization.weight_params.dtype
       if (
           jax.dtypes.scalar_type_of(dtype) == float
@@ -180,9 +271,32 @@ class QuantizationLayer(base_layer.BaseLayer):
         w = jax.lax.bitcast_convert_type(w, dtype)
         # cast to bf16 since bf16 x fp8 is not supported.
         w = w.astype(jnp.bfloat16)
-      out = operations.einsum(eqn, x, w, s, zp)
+      out = operations.einsum(
+          eqn,
+          x,
+          w,
+          s,
+          zp=zp,
+          scale_act=scale_act,
+          zp_act=zp_act,
+          scale_eqn=scale_eqn,
+          zp_eqn=zp_eqn,
+          swap_xw=swap_xw,
+      )
+
       return out
+    elif self.quantization.mode == QuantizationMode.QT:
+      key = self.next_prng_key()
+      return operations.custom_einsum(x, w, key)
+    elif self.quantization.mode == QuantizationMode.CALIB:
+      stat = self.get_var('framestat')
+      new_stat = jnp.maximum(jnp.max(x), stat)
+      self.update_var('framestat', new_stat.astype(jnp.bfloat16))
+      x = jax.lax.stop_gradient(x)
+      w = jax.lax.stop_gradient(w)
+      return jnp.einsum(eqn, x, w)
     else:
+      assert not swap_xw, 'Swapping xw is only supported in inference mode.'
       if reshape:
         w = jnp.reshape(w, reshape)
 
@@ -197,14 +311,22 @@ class QuantizationLayer(base_layer.BaseLayer):
         return out
       elif self.quantization.quantization_type == QuantizationType.FQ:
         if self.quantization.act_params is not None:
-          x = operations.fakequant_activation(x)
+          x = operations.fakequant_activation(
+              x,
+              bits=self.quantization.act_params.precision,
+              eqn=eqn,
+              per_channel=self.quantization.act_params.per_channel,
+              symmetric=self.quantization.act_params.symmetric,
+              percentile=self.quantization.act_params.clipping_coeff,
+          )
         w = operations.fakequant_einsum(
             eqn,
             w,
             bits=self.quantization.weight_params.precision,
             use_symmetric=self.quantization.weight_params.use_symmetric,
-            calculation_type=self.quantization.weight_params.calculation_dtype,
+            calculation_dtype=self.quantization.weight_params.calculation_dtype,
             block_size=self.quantization.weight_params.block_size,
+            quant_method=self.quantization.weight_params.quant_method,
         )
         out = jnp.einsum(eqn, x, w)
         if (
@@ -226,6 +348,7 @@ class QuantizationLayer(base_layer.BaseLayer):
         )
         out = jnp.einsum(eqn, x, w)
         return out
+      # Internal quantization type support.
       # Fall back to regular einsum.
       return jnp.einsum(eqn, x, w)
 
@@ -234,21 +357,19 @@ def quantized_conv(
     layer: base_layer.BaseLayer,
     x: JTensor,
     padding: str,
-    dimension_numbers: Tuple[str, ...],
+    dimension_numbers: tuple[str, ...],
     feature_group_count: int,
-    pack_dim: int,
 ) -> JTensor:
   """Quantized Conv for inference and training.
 
   Static activation quantization is to be added.
 
   Args:
-    layer: the layer that calls this function.
-    x: input tensor.
-    padding: the padding dims on input.
-    dimension_numbers: the dimension numbers
-    feature_group_count: feature groups
-    pack_dim: pack dimension for int4 packing.
+    layer: The layer that calls this function.
+    x: Input tensor.
+    padding: The padding dims on input.
+    dimension_numbers: The dimension numbers
+    feature_group_count: Feature groups
 
   Returns:
     the convolution output.
@@ -257,19 +378,21 @@ def quantized_conv(
     raise ValueError('Conv supports only symmetric weight quantization.')
   if layer.quantization.mode == QuantizationMode.INFERENCE:
     w, s, _ = layer.get_quantized_weight('w')
-    if (
-        layer.quantization.weight_params.precision == 4
-        and layer.quantization.weight_params.use_int4_packed_weights
-    ):
-      w = utils.unpack_4bit(
-          w, pack_dim, layer.quantization.weight_params.dtype
-      )
     if do_static_activation_quantization(layer.quantization.act_params):
       raise NotImplementedError(
           'Static activation quantization is not supported yet.'
       )
     elif layer.quantization.act_params is not None:
-      x, act_scale = operations.reduce_precision_activation(x)
+      if not layer.quantization.act_params.symmetric:
+        raise NotImplementedError(
+            'Asymmetric activation quantization '
+            'is not supported yet for quantized_conv.'
+        )
+      x, act_scale, _ = operations.reduce_precision_activation(
+          x,
+          bits=layer.quantization.act_params.precision,
+          percentile=layer.quantization.act_params.clipping_coeff,
+      )
       s = jnp.multiply(jnp.squeeze(act_scale), s)
     dtype = layer.quantization.weight_params.dtype
     if (
@@ -297,15 +420,15 @@ def quantized_conv(
     raise NotImplementedError('QAT not supported for conv.')
 
 
-def do_static_activation_quantization(act_params) -> bool:
+def do_static_activation_quantization(
+    act_params: ActQuantizationParams,
+) -> bool:
   return act_params is not None and act_params.stats_config is not None
 
 
 def create_tensor_quantizer(
     name: str,
-    quant_params: Optional[
-        Union[ActQuantizationParams, WeightQuantizationParams]
-    ],
+    quant_params: ActQuantizationParams | WeightQuantizationParams | None,
 ) -> pax_fiddle.Config[TensorQuantizer]:
   """Creates tensor quantizer.
 
@@ -371,19 +494,19 @@ class TensorQuantizer(base_layer.BaseLayer):
       per channel, else per-tensor.
     sub_channels: Number of sub channels for splitting channelwise quantization.
   """
-  precision: Optional[int] = 8 # lsp: None -> 8
-  stop_scale_gradient: bool = False # lsp: -> true
-  min_clipping: Optional[float] = None
-  num_optimize_clipping: Optional[int] = None
-  clipping_coeff: Optional[float] = None
-  add_scale_eps: Optional[bool] = False # True -> False
-  unsigned_int_bounds: bool = False 
+  precision: int | None = None
+  stop_scale_gradient: bool = False
+  min_clipping: float | None = None
+  num_optimize_clipping: int | None = None
+  clipping_coeff: float | None = None
+  add_scale_eps: bool | None = True
+  unsigned_int_bounds: bool = False
   use_symmetric: bool = True
-  quant_loss_weight: Optional[float] = None
-  kurt_loss_weight: Optional[float] = None
+  quant_loss_weight: float | None = None
+  kurt_loss_weight: float | None = None
   kurt: float = 1.8
   optimize_clipping_per_channel: bool = False
-  sub_channels: Optional[int] = None
+  sub_channels: int | None = None
 
   def setup(self):
     del self.dtype  # not used
@@ -423,27 +546,23 @@ class TensorQuantizer(base_layer.BaseLayer):
     # Since TensorQuantizer does nothing when initialized, __call__ is a no-op.
     pass
 
-    # lsp
   def _get_scale_and_min(
       self,
       x: JTensor,
-      contract_dims: Union[int, Sequence[int]],
-      clipping_coeff: Optional[float] = None,
-  ) -> Tuple[JTensor, Optional[JTensor]]:
+      contract_dims: int | Sequence[int],
+      clipping_coeff: float | None = None,
+  ) -> tuple[JTensor, JTensor | None]:
     if self.precision is None:
       return jnp.ones(shape=(1,) * x.ndim, dtype=x.dtype), None
-    # unsigned_int_bounds: False,  precision: None  (-128, 127)
+
     clip_bound_min, clip_bound_max = operations.get_min_max(
         self.precision, self.unsigned_int_bounds
     )
-    # True
+
     if self.use_symmetric:
-      # contract_dims: 2 , bsz * length * dim, 相当于aqt def get_bound
       x_bound = jnp.max(jnp.abs(x), axis=contract_dims, keepdims=True)
-      # lsp: from aqt
-      x_bound = jnp.where(x_bound == 0.0, jnp.ones_like(x_bound), x_bound)
       x_min = None
-      range_bound = clip_bound_max # 127
+      range_bound = clip_bound_max
     else:
       x_max = jnp.max(x, axis=contract_dims, keepdims=True)
       x_min = jnp.min(x, axis=contract_dims, keepdims=True)
@@ -455,28 +574,25 @@ class TensorQuantizer(base_layer.BaseLayer):
       if x_min is not None:
         x_min *= clipping_coeff
 
-    # lsp
-    # scale = x_bound / range_bound 
-    scale = range_bound / x_bound
-    
+    scale = x_bound / range_bound
     if self.stop_scale_gradient:
       scale = jax.lax.stop_gradient(scale)
 
-    # if self.add_scale_eps:
-    #   # Add epsilon to avoid NaN gradients for near-zero inputs during training.
-    #   scale = scale + jnp.finfo(x.dtype).eps
-    # else:
-    #   scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
+    if self.add_scale_eps:
+      # Add epsilon to avoid NaN gradients for near-zero inputs during training.
+      scale = scale + jnp.finfo(x.dtype).eps
+    else:
+      scale = jnp.where(scale == 0, jnp.ones_like(scale), scale)
 
     return scale, x_min
 
   def _get_optimal_scale_and_min(
       self,
       x: JTensor,
-      contract_dims: Union[int, Sequence[int]],
-  ) -> Tuple[JTensor, Optional[JTensor]]:
+      contract_dims: int | Sequence[int],
+  ) -> tuple[JTensor, JTensor | None]:
     def quantization_error_and_scale(clipping):
-      q_scale, x_min = self._get_scale_and_min(
+      q_scale, x_min = self._get_scale_and_min(  # pytype: disable=wrong-arg-types  # jnp-type
           x, contract_dims, clipping_coeff=clipping
       )
       x_scaled, zp_time_scale = self._scale(x, q_scale, x_min)
@@ -543,8 +659,8 @@ class TensorQuantizer(base_layer.BaseLayer):
   def get_quant_scale(
       self,
       x: JTensor,
-      contract_dims: Union[int, Sequence[int]],
-  ) -> Tuple[JTensor, Optional[JTensor]]:
+      contract_dims: int | Sequence[int],
+  ) -> tuple[JTensor, JTensor | None]:
     """Computes scale for quantization.
 
     It can compute standard scale or scale optimized over different
@@ -561,8 +677,6 @@ class TensorQuantizer(base_layer.BaseLayer):
     if self.min_clipping is not None and self.num_optimize_clipping is not None:
       return self._get_optimal_scale_and_min(x, contract_dims)
     else:
-      # here
-      logging.info(f'x shape: {x.shape} contract_dims: {contract_dims} clipping_coeff: {self.clipping_coeff}')
       return self._get_scale_and_min(
           x, contract_dims, clipping_coeff=self.clipping_coeff
       )
@@ -572,7 +686,6 @@ class TensorQuantizer(base_layer.BaseLayer):
     # statistics update will be performed through this function.
     pass
 
-  # 相当于MaxText的vjp_fwd
   def to_quant(self, x: JTensor) -> JTensor:
     """Converts normalized float x to quantized value.
 
@@ -582,20 +695,15 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Quantized tensor.
     """
-    logging.info(f'precision: {self.precision}')
+
     if self.precision is None:
       return x
 
-    max_int8 = 127
-    x = jnp.clip(jnp.round(x), -max_int8, max_int8).astype(jnp.int8)
-
-    # # x = operations.pass_through(x + 0.5, jnp.floor)
-    # # -128, 127
-    # clip_bound_min, clip_bound_max = operations.get_min_max(
-    #     self.precision, self.unsigned_int_bounds
-    # )
-    # x = jnp.clip(x, clip_bound_min, clip_bound_max)
-    # logging.info(f'precision22: {self.precision}')
+    x = operations.pass_through(x + 0.5, jnp.floor)
+    clip_bound_min, clip_bound_max = operations.get_min_max(
+        self.precision, self.unsigned_int_bounds
+    )
+    x = jnp.clip(x, clip_bound_min, clip_bound_max)
 
     return x
 
@@ -610,8 +718,9 @@ class TensorQuantizer(base_layer.BaseLayer):
       self,
       q_x: JTensor,
       q_scale: JTensor,
-      contract_dims: Union[int, Sequence[int]],
-      zp_time_scale: Optional[JTensor] = None) -> JTensor:
+      contract_dims: int | Sequence[int],
+      zp_time_scale: JTensor | None = None,
+  ) -> JTensor:
     """Dequantizes quantized q_x.
 
     Args:
@@ -629,7 +738,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     if not self.use_symmetric and zp_time_scale is None:
       raise ValueError('Asymmetric quantization need zp_time_scale.')
 
-    if self.use_symmetric: # True
+    if self.use_symmetric:
       deq_q_x = q_x * q_scale
     else:
       deq_q_x = q_x * q_scale - zp_time_scale
@@ -639,8 +748,8 @@ class TensorQuantizer(base_layer.BaseLayer):
       self,
       x: JTensor,
       q_scale: JTensor,
-      x_min: Optional[JTensor] = None,
-  ) -> Tuple[JTensor, Optional[JTensor]]:
+      x_min: JTensor | None = None,
+  ) -> tuple[JTensor, JTensor | None]:
     """Rescales input x for quantization.
 
     Args:
@@ -652,7 +761,7 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Rescaled tensor.
     """
-    # lsp
+
     if self.use_symmetric:
       if x_min is not None:
         raise ValueError('x_min has to be None for symmetric quantization.')
@@ -670,10 +779,10 @@ class TensorQuantizer(base_layer.BaseLayer):
   def quantize(
       self,
       x: JTensor,
-      contract_dims: Union[int, Sequence[int]],
+      contract_dims: int | Sequence[int],
       squeeze_scale=True,
-      quantized_dtype: Union[jnp.dtype, None] = None,
-  ) -> Tuple[JTensor, JTensor, Optional[JTensor]]:
+      quantized_dtype: jnp.dtype | None = None,
+  ) -> tuple[JTensor, JTensor, JTensor | None]:
     """Quantizes input x.
 
     Args:
@@ -685,18 +794,10 @@ class TensorQuantizer(base_layer.BaseLayer):
     Returns:
       Quantized tensor with scale (used for dequantization).
     """
-    # q_s 即 scale = x_bound / range_bound， x_bound： bsz * length, range_bound: constant
-    # x_min: None
+
     q_s, x_min = self.get_quant_scale(x, contract_dims)
-    logging.info(f'q_s: {q_s.shape} x_min: {x_min}')
-    # x_scaled = x / q_s, zp_time_scale: None
-    zp_time_scale = None
-    x_scaled = x * q_s
-    # x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
-    # clip
+    x_scaled, zp_time_scale = self._scale(x, q_s, x_min)
     q_x = self.to_quant(x_scaled)
-    # lsp
-    q_s = jax.lax.reciprocal(q_s)
 
     if (
         quantized_dtype != jnp.int8  # it is used for materialization

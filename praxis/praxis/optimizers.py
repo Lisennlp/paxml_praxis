@@ -17,11 +17,12 @@
 
 from __future__ import annotations
 
+import abc
 import copy
 import dataclasses
 import functools
 import re
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Literal, NamedTuple, Protocol, Sequence, runtime_checkable
 
 from absl import logging
 import jax
@@ -58,9 +59,9 @@ NestedJTensor = pytypes.NestedJTensor
 NestedHParams = pytypes.NestedHParams
 
 # Initializes sharding spec for the optimizer state variables.
-TransformInitPartitionSpecFn = Callable[[NestedHParams],
-                                        Union[NestedHParams,
-                                              Sequence[NestedHParams]]]
+TransformInitPartitionSpecFn = Callable[
+    [NestedHParams], NestedHParams | Sequence[NestedHParams]
+]
 
 instantiate = base_hyperparams.instantiate
 
@@ -95,8 +96,9 @@ class ShardedGradientTransformation:
   init_partition_spec: TransformInitPartitionSpecFn
 
 
-GeneralGradientTransformation = Union[optax.GradientTransformation,
-                                      ShardedGradientTransformation]
+GeneralGradientTransformation = (
+    optax.GradientTransformation | ShardedGradientTransformation
+)
 
 
 def count_init_fn(_):
@@ -114,11 +116,50 @@ def count_init_partition_spec_fn(
           init=None,
           dtype=jnp.int32,
           collections=None,
-          tensor_split_dims_mapping=[]))
+          tensor_split_dims_mapping=[],
+      )
+  )
 
 
-def sharded_sgd(learning_rate_fn: optax.Schedule, momentum: Optional[float],
-                nesterov: bool) -> ShardedGradientTransformation:
+def partition_params(
+    grad_tx: optax.GradientTransformation,
+    var_weight_hparams: NestedWeightHParams | None,
+    opt_states: optax.OptState,
+) -> optax.OptState:
+  """Applies sharding for optimizer params with tree_map_params."""
+
+  def sharding_function(
+      params: Any, spec: base_layer.WeightHParams
+  ) -> base_layer.WeightHParams | None:
+    if isinstance(params, optax.MaskedNode):
+      return None
+    return spec
+
+  def sharding_for_non_parameter_fields(_: Any) -> base_layer.WeightHParams:
+    # Typically the non-parameter fields are 'count'.
+    return base_layer.WeightHParams(
+        shape=[],
+        init=None,
+        dtype=jnp.int32,
+        collections=None,
+        tensor_split_dims_mapping=[],
+    )
+
+  opt_states_pspec = optax.tree_map_params(
+      grad_tx,
+      sharding_function,
+      opt_states,
+      var_weight_hparams,
+      # Count is the only non-params in the current optimizers.
+      transform_non_params=sharding_for_non_parameter_fields,
+      is_leaf=lambda v: isinstance(v, optax.MaskedNode),
+  )
+  return opt_states_pspec
+
+
+def sharded_sgd(
+    learning_rate_fn: optax.Schedule, momentum: float | None, nesterov: bool
+) -> ShardedGradientTransformation:
   """A Stochastic Gradient Descent optimiser that supports spmd sharding.
 
   This implements stochastic gradient descent. It also includes support for
@@ -255,7 +296,7 @@ class _ShardedAdamHelper:
   def init_opt_state(self, var_hparams: WeightHParams) -> _AdamOptState:
     """Returns optimizer state for one particular variable."""
     return _AdamOptState(
-        m=jnp.zeros_like(var_hparams), v=jnp.zeros_like(var_hparams))
+        m=jnp.zeros_like(var_hparams), v=jnp.zeros_like(var_hparams))  # pytype: disable=wrong-arg-types  # jnp-type
 
   def inf_to_nan(self, array: JTensor):
     """Converting Infinity values to the more sticky NaN."""
@@ -324,7 +365,7 @@ class _ShardedLionHelper(_ShardedAdamHelper):
                      var_hparams: WeightHParams,
                      m_dtype: jnp.dtype = jnp.float32) -> _LionOptState:
     """Returns optimizer state for one particular variable."""
-    return _LionOptState(m=jnp.zeros_like(var_hparams, dtype=m_dtype))
+    return _LionOptState(m=jnp.zeros_like(var_hparams, dtype=m_dtype))  # pytype: disable=wrong-arg-types  # jnp-type
 
   def update_moments(self, step: JTensor, update: JTensor,  # pytype: disable=signature-mismatch  # overriding-return-type-checks
                      moments: _LionOptState,
@@ -402,9 +443,9 @@ def sharded_chain(
 
 
 def sharded_masked(
-    inner: GeneralGradientTransformation, mask: Union[NestedHParams,
-                                                      Callable[[NestedHParams],
-                                                               NestedHParams]]
+    inner: GeneralGradientTransformation,
+    mask: NestedHParams | Callable[[NestedHParams], NestedHParams],
+    use_custom_masked: bool = False,
 ) -> GeneralGradientTransformation:
   """Mask updates so only some are transformed, the rest are passed through.
 
@@ -416,11 +457,13 @@ def sharded_masked(
       a Callable that returns such a pytree given the params/updates. The leaves
       should be booleans, ``True`` for leaves/subtrees you want to apply the
       transformation to, and ``False`` for those you want to skip.
+    use_custom_masked:  Whether to use custom masked implementation. Since Optax
+      masked does not work with tree_map_params. This is unused presently.
 
   Returns:
     New ShardedGradientTransformation wrapping ``inner``.
   """
-
+  del use_custom_masked
   def init_partition_spec_fn(mdl_vars):
     init_partition_spec = getattr(inner, 'init_partition_spec', None)
     if callable(init_partition_spec):
@@ -438,10 +481,11 @@ def sharded_masked(
 
 def apply_lp_regularizer(
     var_lp_mask: NestedHParams,
-    regularizer_weight: Optional[float] = 0.0,
-    p: Optional[float] = 2.0,
-    skip_lp_1d_vectors: Optional[bool] = False,
-) -> ShardedGradientTransformation:
+    regularizer_weight: float | None = 0.0,
+    p: float | None = 2.0,
+    skip_lp_1d_vectors: bool | None = False,
+    use_optax_gradient_transformations: bool = False,
+) -> GeneralGradientTransformation:
   """Applies Lp regularization by adjusting gradients.
 
   Note, lp regularizers add loss to final loss objective, while decoupled
@@ -455,9 +499,11 @@ def apply_lp_regularizer(
     regularizer_weight: Weight for L2 regularization.
     p: 1 or 2 as L1/L2 regularization.
     skip_lp_1d_vectors: If True, skip L1/L2 regularization for 1d vector vars.
+    use_optax_gradient_transformations: If True, returns an instance of
+      optax.GradientTransformationExtraArgs
 
   Returns:
-    A ShardedGradientTransformation applying Lp regularizers.
+    A GeneralGradientTransformation applying Lp regularizers.
   """
   asserts.in_set(p, [1.0, 2.0])
 
@@ -474,13 +520,18 @@ def apply_lp_regularizer(
         raise ValueError('Params must not be empty when applying weight decay.')
 
       if p == 1.0:
-        fn = lambda g, p, m=1.0: g + regularizer_weight * jnp.sign(
-            p) * skip_mask(p) * m if not py_utils.is_optax_masked_node(
-                g) else optax.MaskedNode()
+        fn = (
+            lambda g, p, m=1.0: g  # pylint: disable=g-long-lambda, g-long-ternary
+            + regularizer_weight * jnp.sign(p) * skip_mask(p) * m
+            if not py_utils.is_optax_masked_node(g)
+            else optax.MaskedNode()
+        )
       elif p == 2.0:
-        fn = lambda g, p, m=1.0: g + regularizer_weight * p * skip_mask(
-            p) * m if not py_utils.is_optax_masked_node(
-                g) else optax.MaskedNode()
+        fn = (
+            lambda g, p, m=1.0: g + regularizer_weight * p * skip_mask(p) * m  # pylint: disable=g-long-lambda
+            if not py_utils.is_optax_masked_node(g)
+            else optax.MaskedNode()
+        )
 
       if var_lp_mask is None:
         updates = jax.tree_map(fn, updates, params)
@@ -490,9 +541,15 @@ def apply_lp_regularizer(
             updates,
             params,
             var_lp_mask,
-            is_leaf=py_utils.is_optax_masked_node)
+            is_leaf=py_utils.is_optax_masked_node,
+        )
     updated_state = NestedMap(count=count + 1)
     return updates, updated_state
+
+  if use_optax_gradient_transformations:
+    return optax.GradientTransformationExtraArgs(
+        init=count_init_fn, update=update_fn
+    )
 
   return ShardedGradientTransformation(
       init=count_init_fn,
@@ -503,8 +560,9 @@ def apply_lp_regularizer(
 def apply_decoupled_weight_decay(
     learning_rate_fn: optax.Schedule,
     var_wd_mask: NestedHParams,
-    regularizer_weight: Optional[float] = 0.0,
-) -> ShardedGradientTransformation:
+    regularizer_weight: float | None = 0.0,
+    use_optax_gradient_transformations: bool = False,
+) -> GeneralGradientTransformation:
   """Applies decoupled weight decay on weights.
 
   Note, lp regularizers add loss to final loss objective, while decoupled
@@ -517,9 +575,11 @@ def apply_decoupled_weight_decay(
     var_wd_mask: mask to apply weight decay based on SKIP_LP_REGULARIZATION. If
       it is 0, the weight decay is not applied.
     regularizer_weight: Weight for decoupled weight decay.
+    use_optax_gradient_transformations: If True, returns an instance of
+      optax.GradientTransformationExtraArgs
 
   Returns:
-    A ShardedGradientTransformation applying weight decay.
+    A GeneralGradientTransformation applying weight decay.
   """
 
   def update_fn(updates, state, params):
@@ -529,15 +589,29 @@ def apply_decoupled_weight_decay(
       if params is None:
         raise ValueError('Params must not be empty when applying weight decay.')
 
-      fn = lambda g, p, m=1.0: g - lr * regularizer_weight * p * m
+      fn = (
+          lambda g, p, m=1.0: g - lr * regularizer_weight * p * m  # pylint: disable=g-long-lambda
+          if not py_utils.is_optax_masked_node(g)
+          else optax.MaskedNode()
+      )
 
       if var_wd_mask is None:
         updates = jax.tree_map(fn, updates, params)
       else:
-        updates = jax.tree_map(fn, updates, params, var_wd_mask)
+        updates = jax.tree_map(
+            fn,
+            updates,
+            params,
+            var_wd_mask,
+            is_leaf=py_utils.is_optax_masked_node,
+        )
     updated_state = NestedMap(count=count + 1)
     return updates, updated_state
 
+  if use_optax_gradient_transformations:
+    return optax.GradientTransformationExtraArgs(
+        init=count_init_fn, update=update_fn
+    )
   return ShardedGradientTransformation(
       init=count_init_fn,
       update=update_fn,
@@ -708,16 +782,18 @@ def sharded_lion(learning_rate_fn: optax.Schedule, beta1: float,
 
     updated_states = NestedMap(
         count=count + 1,
-        m=jax.tree_map(lambda x: x.m.astype(m_dtype), updated_moments))
+        m=jax.tree_map(lambda x: x.m.astype(m_dtype), updated_moments),
+    )
     return updates, updated_states
 
   return ShardedGradientTransformation(
-      init=init_fn,
-      update=update_fn,
-      init_partition_spec=init_partition_spec_fn)
+      init=init_fn, update=update_fn, init_partition_spec=init_partition_spec_fn
+  )
 
 
-def apply_ema_weights(decay: float) -> ShardedGradientTransformation:
+def apply_ema_weights(
+    decay: float, use_optax_gradient_transformations: bool = False
+) -> GeneralGradientTransformation:
   """Applies exponential moving average on weights.
 
   Note, this implementation averages the weight before optimization because
@@ -732,9 +808,11 @@ def apply_ema_weights(decay: float) -> ShardedGradientTransformation:
 
   Args:
     decay: A float number represents the weight on the moving average.
+    use_optax_gradient_transformations: Whether to use Optax based gradient
+      transformation.
 
   Returns:
-    A GradientTransformation applying ema.
+    A GeneralGradientTransformation applying ema.
   """
 
   def init_fn(params):
@@ -781,6 +859,8 @@ def apply_ema_weights(decay: float) -> ShardedGradientTransformation:
             tensor_split_dims_mapping=[]),
         ema=jax.tree_map(_infer_ema_pspec, params))
 
+  if use_optax_gradient_transformations:
+    return optax.GradientTransformationExtraArgs(init=init_fn, update=update_fn)
   return ShardedGradientTransformation(
       init=init_fn,
       update=update_fn,
@@ -790,8 +870,9 @@ def apply_ema_weights(decay: float) -> ShardedGradientTransformation:
 def apply_ewc_regularization(
     learning_rate_fn: optax.Schedule,
     ewc_regularizer_weight: float = 0.0,
-    ewc_weight_per_var: Optional[bool] = False
-    ) -> ShardedGradientTransformation:
+    ewc_weight_per_var: bool | None = False,
+    use_optax_gradient_transformations: bool = False,
+) -> GeneralGradientTransformation:
   """Applies EWC regularization on weights.
 
   paper: https://arxiv.org/abs/1612.00796
@@ -800,23 +881,20 @@ def apply_ewc_regularization(
 
   Args:
     learning_rate_fn: Learning rate function.
-    ewc_regularizer_weight: A float number as the EWC regularization weight.
-      if ewc_regularizer_weight <= 0, EWC is disabled.
+    ewc_regularizer_weight: A float number as the EWC regularization weight. if
+      ewc_regularizer_weight <= 0, EWC is disabled.
     ewc_weight_per_var: EWC weight for each variable.
+    use_optax_gradient_transformations: Whether to use Optax based gradient
+      transformation.
 
   Returns:
-    A GradientTransformation applying EWC regularizers.
+    A GeneralGradientTransformation applying EWC regularizers.
   """
   def init_fn(params):
     if ewc_regularizer_weight > 0.0:
-      if ewc_weight_per_var:
-        var_weights = jax.tree_map(
-            lambda p, v: jnp.array(ewc_regularizer_weight * 1./ 2 * v, p.dtype),
-            params, ewc_weight_per_var)
-      else:
-        var_weights = jax.tree_map(
-            lambda v: jnp.array(ewc_regularizer_weight * 1./ 2, v.dtype),
-            params)
+      var_weights = jax.tree_map(
+          lambda v: jnp.array(ewc_regularizer_weight * 1.0 / 2, v.dtype), params
+      )
       return NestedMap(count=jnp.array(0, dtype=jnp.int32),
                        pretrain_vars=jax.tree_map(jnp.copy, params),
                        var_weights=var_weights)
@@ -836,6 +914,15 @@ def apply_ewc_regularization(
 
       def pretrain_fn(p, v):
         return jnp.where(jnp.equal(state.count, 0), p, v)
+
+      if ewc_weight_per_var:
+        if jnp.equal(state.count, 0):
+          state.var_weights = jax.tree_map(
+              lambda v, p, ewc_w: jnp.array(v * ewc_w, p.dtype),
+              state.var_weights,
+              params,
+              ewc_weight_per_var,
+          )
 
       updates = jax.tree_map(
           fn,
@@ -888,16 +975,51 @@ def apply_ewc_regularization(
               init=None,
               dtype=jnp.int32,
               collections=None,
-              tensor_split_dims_mapping=[]))
+              tensor_split_dims_mapping=[],
+          )
+      )
 
+  if use_optax_gradient_transformations:
+    return optax.GradientTransformationExtraArgs(init=init_fn, update=update_fn)
   return ShardedGradientTransformation(
-      init=init_fn,
-      update=update_fn,
-      init_partition_spec=init_partition_spec_fn)
+      init=init_fn, update=update_fn, init_partition_spec=init_partition_spec_fn
+  )
 
 
-class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
-  """Base class for all optimizers.
+@runtime_checkable
+class Optimizer(Protocol):
+  """A protocol for Optimizer to be used in Learner."""
+
+  @property
+  def clip_gradient_norm_to_value(self) -> float:
+    """Clips gradient by global norm to this value."""
+    pass
+
+  @property
+  def clip_gradient_single_norm_to_value(self) -> float:
+    """Clip gradient by single tensor norm to this value."""
+    pass
+
+  @property
+  def ema_decay(self) -> float:
+    """Exposed hparams for optimizer."""
+    pass
+
+  @abc.abstractmethod
+  def get_grad_transformation(
+      self,
+      var_weight_hparams: NestedWeightHParams | None = None,
+      include_ema: bool = True,
+  ) -> GeneralGradientTransformation:
+    pass
+
+  @abc.abstractmethod
+  def get_learning_rate(self, step_count: JTensor) -> JTensor:
+    pass
+
+
+class OptaxOptimizer(base_hyperparams.FiddleBaseParameterizable):
+  """Class that encapsulates optax transformations with common regularizers.
 
   Attributes:
     l2_regularizer_weight: If not None, L2 regularization to apply to the model
@@ -928,19 +1050,163 @@ class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
     ewc_weight_per_var: If not None, set weight for each model weight, e.g.,
       refer to https://arxiv.org/abs/1612.00796 by using a Fisher information
       matrix.
+    grad_tx: The gradient transformation used by this optimizer.
   """
 
-  l2_regularizer_weight: Optional[float] = None
-  l1_regularizer_weight: Optional[float] = None
+  l2_regularizer_weight: float | None = None
+  l1_regularizer_weight: float | None = None
   skip_lp_1d_vectors: bool = False
-  decoupled_weight_decay: Optional[float] = None
+  decoupled_weight_decay: float | None = None
   clip_gradient_norm_to_value: float = 0.0
   clip_gradient_single_norm_to_value: float = 0.0
   learning_rate: float = 0.0
-  lr_schedule: Optional[pax_fiddle.Config[schedules.BaseSchedule]] = None
+  lr_schedule: pax_fiddle.Config[schedules.BaseSchedule] | None = None
   ema_decay: float = 0.0
   ewc_regularizer_weight: float = 0.0
-  ewc_weight_per_var: Optional[NestedMap] = None
+  ewc_weight_per_var: NestedMap | None = None
+  grad_tx: optax.GradientTransformation | None = None
+
+  _lr_schedule_inst: Any = dataclasses.field(init=False, repr=False)
+
+  def __post_init__(self):
+    self._lr_schedule_inst = instantiate(self.lr_schedule)
+    # Should not mix L1, L2 regularizer and weight decay together.
+    if self.l2_regularizer_weight and self.l1_regularizer_weight:
+      raise ValueError('Should not mix L1 and L2 regularization.')
+    if self.decoupled_weight_decay and (
+        self.l2_regularizer_weight or self.l1_regularizer_weight
+    ):
+      raise ValueError(
+          'Should not mix decoupled weight decay with L1 or L2 regularization.'
+      )
+
+  def get_grad_transformation(
+      self,
+      var_weight_hparams: NestedWeightHParams | None = None,
+      include_ema: bool = True,
+  ) -> optax.GradientTransformation:
+    """Get the grad transformation corresponds to this optimizer config.
+
+    This is the final gradient transformation that incorporates all
+    transformations.
+
+    Args:
+      var_weight_hparams: Weight params of the vars. If provided, apply lp
+        regularization and weight decay based on variable collections.
+      include_ema: whether to include ema. For multi optimizer case, we disable
+        it here and instead add ema in the beginning.
+
+    Returns:
+      Chained optax.GradientTransformation.
+    """
+
+    # Compute the mask for lp regularization
+    if var_weight_hparams:
+      var_lp_mask = jax.tree_map(
+          lambda x: not base_layer.var_skip_lp_regularization(x),
+          var_weight_hparams,
+      )
+    else:
+      var_lp_mask = None
+
+    transformations = [
+        apply_lp_regularizer(
+            var_lp_mask=var_lp_mask,
+            regularizer_weight=self.l1_regularizer_weight,
+            p=1.0,
+            skip_lp_1d_vectors=self.skip_lp_1d_vectors,
+            use_optax_gradient_transformations=True,
+        ),
+        apply_lp_regularizer(
+            var_lp_mask=var_lp_mask,
+            regularizer_weight=self.l2_regularizer_weight,
+            p=2.0,
+            skip_lp_1d_vectors=self.skip_lp_1d_vectors,
+            use_optax_gradient_transformations=True,
+        ),
+        self.grad_tx,
+        apply_decoupled_weight_decay(
+            self.get_learning_rate,
+            var_wd_mask=var_lp_mask,
+            regularizer_weight=self.decoupled_weight_decay,
+            use_optax_gradient_transformations=True,
+        ),
+    ]
+    if self.ewc_regularizer_weight > 0.0:
+      transformations.append(
+          apply_ewc_regularization(
+              self.get_learning_rate,
+              ewc_regularizer_weight=self.ewc_regularizer_weight,
+              ewc_weight_per_var=self.ewc_weight_per_var,
+              use_optax_gradient_transformations=True,
+          )
+      )
+    if self.ema_decay > 0.0 and include_ema:
+      # EMA adds extra optimizer states making checkpoints not backward
+      # compatible
+      asserts.lt(self.ema_decay, 1.0)
+      transformations.append(
+          apply_ema_weights(
+              decay=self.ema_decay, use_optax_gradient_transformations=True
+          )
+      )
+    return optax.chain(*transformations)
+
+  def get_learning_rate(self, step_count: JTensor) -> JTensor:
+    """Get the learning rate of this optimizer at a particular step."""
+    return self._lr_schedule_inst.value_at(step_count) * self.learning_rate
+
+
+# TODO(b/277132394): OptaxOptimizer is introduced to use standard optax
+# transforms with common regularizers. Learners can use OptaxOptimizer with
+# optax gradient transforms directly. Custom optimizers won't need to depend on
+# BaseOptimizer in the future, but will be implemented as standard optax
+# transforms. Thus, BaseOptimizer class can, be removed.
+class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
+  """Base class for all optimizers.
+
+  Attributes:
+    l2_regularizer_weight: If not None, L2 regularization to apply to the model
+      weights. Otherwise, disable L2 regularization.
+    l1_regularizer_weight: If not None, L1 regularization to apply to the model
+      weights. Otherwise, disable L1 regularization.
+    skip_lp_1d_vectors: If True, skip L1/L2 regularization for 1d vector vars.
+    decoupled_weight_decay: If not None, (decoupled) weight decay to apply to
+      the model weights. Otherwise, disable weight decay. Note, lp regularizers
+      add loss to final loss objective, while decoupled weight decay adds decay
+      directly into weights. They are different especially when there are moment
+      statistics in optimizers. A good reference can be found in:
+      https://www.fast.ai/2018/07/02/adam-weight-decay/#adamw
+    clip_gradient_norm_to_value: Clip gradient by global norm to this value.
+      This is similar to the behaviour of tf.clip_by_global_norm. If you are
+      looking for tf.clip_by_norm refer to clip_gradient_single_norm_to_value.
+      Note these are mutually exclusive.
+    clip_gradient_single_norm_to_value: Clip gradient by single tensor norm to
+      this value. This is similar to the behaviour of tf.clip_by_norm. Note this
+      is mutually exclusive to using clip_gradient_norm_to_value.
+    learning_rate: learning rate to use.
+    lr_schedule: Learning rate decay schedule. The value returned by this
+      schedule is *multiplied* by your base learning rate.
+    ema_decay: If > 0, enable ExponentialMovingAverage during training with the
+      give decay. Must be < 1. Disabled if <= 0.
+    ewc_regularizer_weight: If > 0, EWC regularization is applied to the model
+      weights.
+    ewc_weight_per_var: If not None, set weight for each model weight, e.g.,
+      refer to https://arxiv.org/abs/1612.00796 by using a Fisher information
+      matrix.
+  """
+
+  l2_regularizer_weight: float | None = None
+  l1_regularizer_weight: float | None = None
+  skip_lp_1d_vectors: bool = False
+  decoupled_weight_decay: float | None = None
+  clip_gradient_norm_to_value: float = 0.0
+  clip_gradient_single_norm_to_value: float = 0.0
+  learning_rate: float = 0.0
+  lr_schedule: pax_fiddle.Config[schedules.BaseSchedule] | None = None
+  ema_decay: float = 0.0
+  ewc_regularizer_weight: float = 0.0
+  ewc_weight_per_var: NestedMap | None = None
   _lr_schedule_inst: Any = dataclasses.field(init=False, repr=False)
 
   def __post_init__(self):
@@ -960,8 +1226,9 @@ class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
 
   def get_grad_transformation(
       self,
-      var_weight_hparams: Optional[NestedWeightHParams] = None,
-      include_ema: bool = True) -> GeneralGradientTransformation:
+      var_weight_hparams: NestedWeightHParams | None = None,
+      include_ema: bool = True,
+  ) -> GeneralGradientTransformation:
     """Get the grad transformation corresponds to this optimizer config.
 
     This is the final gradient transformation that incorporates all
@@ -984,8 +1251,7 @@ class BaseOptimizer(base_hyperparams.FiddleBaseParameterizable):
           var_weight_hparams)
     else:
       var_lp_mask = None
-    # lsp: 
-    var_lp_mask = None
+
     optax_list = [
         apply_lp_regularizer(
             var_lp_mask=var_lp_mask,
@@ -1043,7 +1309,7 @@ class Sgd(BaseOptimizer):
       not used.
     nesterov: Whether Nesterov momentum is used or not.
   """
-  momentum: Optional[float] = None
+  momentum: float | None = None
   nesterov: bool = False
 
   def _get_raw_grad_transformation(
@@ -1077,7 +1343,7 @@ class Lamb(BaseOptimizer):
   eps: float = 1e-6
   eps_root: float = 0.0
   weight_decay: float = 0.0
-  mask: Optional[Any] = None
+  mask: Any | None = None
 
   def _get_raw_grad_transformation(
       self, lr: optax.Schedule
@@ -1093,6 +1359,53 @@ class Lamb(BaseOptimizer):
     )
 
 
+class Lars(BaseOptimizer):
+  """Canonical Lars optimizer.
+
+  Please check optax lars doc
+  (https://optax.readthedocs.io/en/latest/api.html#optax.lars) for more details.
+
+  Attributes:
+    weight_decay: Strength of the weight decay regularization.
+    weight_decay_mask: a PyTree with same structure as (or a prefix of) the
+      params PyTree, or a Callable that returns such a pytree given the
+      params/updates. The leaves should be booleans, ``True`` for
+      leaves/subtrees you want to apply the transformation for weight decay to,
+      and ``False`` for those you want to skip.
+    trust_coefficient: A multiplier for the trust ratio.
+    eps: Optional additive constant in the trust ratio denominator.
+    trust_ratio_mask: a PyTree with same structure as (or a prefix of) the
+      params PyTree, or a Callable that returns such a pytree given the
+      params/updates. The leaves should be booleans, ``True`` for
+      leaves/subtrees you want to apply the transformation for trust ratio to,
+      and ``False`` for those you want to skip.
+    momentum: Decay rate for momentum.
+    nesterov: Whether to use Nesterov momentum.
+  """
+
+  weight_decay: float = 0.0
+  weight_decay_mask: Any = True
+  trust_coefficient: float = 0.001
+  eps: float = 0.0
+  trust_ratio_mask: Any = True
+  momentum: float = 0.9
+  nesterov: bool = False
+
+  def _get_raw_grad_transformation(
+      self, lr: optax.Schedule
+  ) -> optax.GradientTransformation:
+    return optax.lars(
+        learning_rate=lr,
+        weight_decay=self.weight_decay,
+        weight_decay_mask=self.weight_decay_mask,
+        trust_coefficient=self.trust_coefficient,
+        eps=self.eps,
+        trust_ratio_mask=self.trust_ratio_mask,
+        momentum=self.momentum,
+        nesterov=self.nesterov,
+    )
+
+
 class ShardedSgd(BaseOptimizer):
   """Sharded SGD optimizer.
 
@@ -1101,7 +1414,7 @@ class ShardedSgd(BaseOptimizer):
       not used.
     nesterov: Whether Nesterov momentum is used or not.
   """
-  momentum: Optional[float] = None
+  momentum: float | None = None
   nesterov: bool = False
 
   def _get_raw_grad_transformation(
@@ -1246,10 +1559,10 @@ class Adafactor(BaseOptimizer):
   decay_rate: float = 0.8
   decay_offset: int = 0
   multiply_by_parameter_scale: bool = True
-  clip_threshold: Optional[float] = 1.0
-  momentum: Optional[float] = None
+  clip_threshold: float | None = 1.0
+  momentum: float | None = None
   dtype_momentum: str = 'float32'
-  weight_decay_rate: Optional[float] = None
+  weight_decay_rate: float | None = None
   eps: float = 1e-30
   factored: bool = True
 
@@ -1336,14 +1649,14 @@ class DistributedShampoo(BaseOptimizer):
   statistics_compute_steps: int = 1
   graft_type: Any = GraftingType.ADAGRAD
   batch_axis_name: str = 'batch'
-  mesh_axis_names: Optional[Sequence[str]] = None
-  num_devices_for_pjit: Optional[int] = None
+  mesh_axis_names: Sequence[str] | None = None
+  num_devices_for_pjit: int | None = None
   nesterov: bool = True
   exponent_override: int = 0
   inverse_failure_threshold: float = 0.1
   moving_average_for_momentum: bool = False
   skip_preconditioning_dim_size_gt: int = 4096
-  clip_by_scaled_gradient_norm: Optional[float] = None
+  clip_by_scaled_gradient_norm: float | None = None
   best_effort_shape_interpretation: bool = True
   tensor_split_dims_mapping: Sequence[int] = pax_fiddle.instance_field(
       default_factory=lambda: [-1, 1, -1]
@@ -1432,8 +1745,9 @@ class DistributedShampoo(BaseOptimizer):
         # collates generated prefixes perfectly for any top-down flatten
         # ordering.
         is_metrics = lambda l: isinstance(l, TrainingMetrics)
-        flatten = lambda tree: jax.tree_util.tree_flatten(
-            tree, is_leaf=is_metrics)[0]
+        flatten = lambda tree: jax.tree_util.tree_flatten(  # pylint: disable=g-long-lambda
+            tree, is_leaf=is_metrics
+        )[0]
         training_metrics = [x for x in flatten(param_stats) if is_metrics(x)]
         training_metrics_keys = [x for x in flatten(keys) if is_metrics(x)]
 
@@ -1567,7 +1881,6 @@ class ShardedDistributedShampoo(DistributedShampoo):
   def init_partition_spec_fn(self, init_pspec, init_shapes_dtypes, axes_names,
                              params):
     """Annotates the PartitionSpec for optimizer states."""
-    p = self._hparams
     param_pspec_flattened, _ = jax.tree_util.tree_flatten(params)
     assert param_pspec_flattened
     first_param = param_pspec_flattened[0]
@@ -1596,7 +1909,6 @@ class ShardedDistributedShampoo(DistributedShampoo):
         else:
           tensor_split_dims_mapping = []
       else:
-        tensor_split_dims_mapping = []
         if len(pspec) == 1 and not pspec[0]:
           if len(shapes_and_dtypes[0]) == 1:
             tensor_split_dims_mapping = [-1]
@@ -1680,8 +1992,9 @@ class Adagrad(BaseOptimizer):
     )
 
 
-def to_quantized(fvalue: JTensor,
-                 quantized_dtype: jnp.dtype) -> Tuple[JTensor, JTensor]:
+def to_quantized(
+    fvalue: JTensor, quantized_dtype: jnp.dtype
+) -> tuple[JTensor, JTensor]:
   """Converts floating point values `fvalues` to quantized values.
 
   We use a very simple quantization scheme where the range is symmetric around
@@ -1828,22 +2141,22 @@ def reduce_rms(array: JTensor) -> JTensor:
 @dataclasses.dataclass(frozen=True)
 class _ShardedAdafactorUpdateResult:
   """Structure containing per-variable info for Adafactor."""
-  update: Optional[Any]
-  m: Optional[Any]
-  m_scale: Optional[Any]
-  vr: Optional[Any]
-  vc: Optional[Any]
-  v: Optional[Any]
+  update: Any | None
+  m: Any | None
+  m_scale: Any | None
+  vr: Any | None
+  vc: Any | None
+  v: Any | None
 
 
 class ShardedAdafactorState(NamedTuple):
   """Overall state of the ShardedAdafactor optimizer."""
   count: JTensor
-  m: Optional[NestedJTensor]
-  m_scale: Optional[NestedJTensor]
-  vr: Optional[NestedJTensor]
-  vc: Optional[NestedJTensor]
-  v: Optional[NestedJTensor]
+  m: NestedJTensor | None
+  m_scale: NestedJTensor | None
+  vr: NestedJTensor | None
+  vc: NestedJTensor | None
+  v: NestedJTensor | None
 
 
 class _ShardedAdafactorHelper:
@@ -1852,25 +2165,26 @@ class _ShardedAdafactorHelper:
   def __init__(
       self,
       learning_rate_fn: optax.Schedule,
-      weight_decay: Optional[float],
+      weight_decay: float | None,
       layerwise_adaptation: bool,
       decay_method: str,
       decay_adam: float,
       decay_pow: float,
       beta1: float,
-      clip_threshold: Optional[float],
+      clip_threshold: float | None,
       factored: bool,
       epsilon1_grad_sq_reg: float,
       quantized_dtype: jnp.dtype,
       # TODO(bf-jax) Update default value to True, once this is supported.
       respect_skip_lp_regularization: bool,
-      exclude_from_layerwise_adaptation: Optional[List[str]],
+      exclude_from_layerwise_adaptation: list[str] | None,
       per_var_learning_summary: bool,
       sort_factored_second_moment_dims: bool,
       min_dim_size_to_factor: int,
       multiply_by_parameter_scale: bool,
       epsilon2_param_scale_reg: float,
       maybe_inf_to_nan: bool,
+      name: str,
   ) -> None:
     """Constructor. See ShardedAdafactor() below."""
     if weight_decay:
@@ -1895,6 +2209,7 @@ class _ShardedAdafactorHelper:
     self._multiply_by_parameter_scale = multiply_by_parameter_scale
     self._epsilon2 = epsilon2_param_scale_reg
     self._maybe_inf_to_nan = maybe_inf_to_nan
+    self._name = name
 
   def should_use_factored_second_moment_estimate(self, shape):
     """Should we use a factored second moment estimator.
@@ -2141,20 +2456,51 @@ class _ShardedAdafactorHelper:
     """
     return jnp.maximum(reduce_rms(var), jnp.asarray(self._epsilon2, var.dtype))
 
-  def compute_var_and_slot_update(self, count, grad, m, m_scale, vr, vc, v,
-                                  param, var_name):
+  def compute_subtrahend(self, x, shape, update_scale, m, m_scale):
+    """Computes the subtrahend for a single variable."""
+    output_m = jnp.zeros((1,))
+    output_m_scale = jnp.zeros((1,))
+
+    subtrahend = update_scale * x
+    if self._beta1:
+      m_init_dtype = m.dtype
+      if jnp.issubdtype(self._quantized_dtype, jnp.floating):
+        m = m.astype(jnp.float32)
+      elif self.should_store_momentum_in_qint(shape):
+        m = to_float(m, m_scale)
+      subtrahend = self._beta1 * m + (1.0 - self._beta1) * subtrahend
+      subtrahend = self.inf_to_nan(subtrahend)
+      if self._quantized_dtype == jnp.bfloat16:
+        new_m = subtrahend.astype(jnp.bfloat16)
+        output_m = new_m
+      elif self.should_store_momentum_in_qint(shape):
+        # Update the momentum values.
+        new_m_val, new_m_scale = to_quantized(subtrahend, m_init_dtype)
+        output_m = new_m_val
+        output_m_scale = new_m_scale
+      else:
+        output_m = subtrahend
+
+    return subtrahend, output_m, output_m_scale
+
+  def compute_var_and_slot_update(
+      self, count, grad, m, m_scale, vr, vc, v, param, var_name
+  ):
     """Computes the var and optimizer slots updates for a single variable."""
     # We can probably skip this step
     grad = grad.astype(jnp.float32)
     grad = self.inf_to_nan(grad)
     grad_squared = jnp.square(grad)
 
+    prefix_name = '' if not self._name else f'{self._name}/'
+
     if self._per_var_learning_summary:
       grad_num_elements = jnp.array(grad.size, dtype=grad.dtype)
       num_zeros_in_grad = jnp.sum(grad_squared < 0.01 * self._epsilon1) * 1.0
       fraction_zero_grad = num_zeros_in_grad / grad_num_elements
-      base_layer.add_global_summary(f'fraction_zero_grad/{var_name}',
-                                    fraction_zero_grad)
+      base_layer.add_global_summary(
+          f'{prefix_name}fraction_zero_grad/{var_name}', fraction_zero_grad
+      )
 
     # Add epsilon1_grad_sq_reg as per Algorithm 4
     # of https://arxiv.org/pdf/1804.04235.pdf
@@ -2179,8 +2525,9 @@ class _ShardedAdafactorHelper:
       if self._per_var_learning_summary:
         # Add summary for this var.
         base_layer.add_global_summary(
-            f'sharded_adafactor_parameter_scale/{var_name}',
-            self.parameter_scale(old_val).astype(update_scale.dtype))
+            f'{prefix_name}sharded_adafactor_parameter_scale/{var_name}',
+            self.parameter_scale(old_val).astype(update_scale.dtype),
+        )
 
     # Q(yonghui): Can we remove the hack now?
     # HACK: Make things dependent on grad.
@@ -2190,15 +2537,19 @@ class _ShardedAdafactorHelper:
     decay_rate += grad_squared_mean * 1e-30
     update_scale += grad_squared_mean * 1e-30
     # END HACK
+
     if self._per_var_learning_summary:
       base_layer.add_global_summary(
-          f'sharded_adafactor_update_scale/{var_name}', update_scale)
+          f'{prefix_name}sharded_adafactor_decay_rate/{var_name}', decay_rate
+      )
+      base_layer.add_global_summary(
+          f'{prefix_name}sharded_adafactor_update_scale/{var_name}',
+          update_scale,
+      )
 
-    mixing_rate = 1. - decay_rate
+    mixing_rate = 1.0 - decay_rate
     shape = param.shape
 
-    output_m = jnp.zeros((1,))
-    output_m_scale = jnp.zeros((1,))
     output_vr = jnp.zeros((1,))
     output_vc = jnp.zeros((1,))
     output_v = jnp.zeros((1,))
@@ -2209,18 +2560,23 @@ class _ShardedAdafactorHelper:
       # reduce_mean().
       vr_axis, vc_axis = factored_second_moment_dims
       grad_squared_row_mean = self.inf_to_nan(
-          jnp.mean(grad_squared, axis=vr_axis))
+          jnp.mean(grad_squared, axis=vr_axis)
+      )
       grad_squared_col_mean = self.inf_to_nan(
-          jnp.mean(grad_squared, axis=vc_axis))
+          jnp.mean(grad_squared, axis=vc_axis)
+      )
       new_vr = decay_rate * vr + mixing_rate * grad_squared_row_mean
       new_vc = decay_rate * vc + mixing_rate * grad_squared_col_mean
       output_vr = new_vr
       output_vc = new_vc
       long_term_mean = jnp.mean(new_vr, axis=-1, keepdims=True)
-      r_factor = 1. / jnp.sqrt(new_vr / long_term_mean)
-      c_factor = 1. / jnp.sqrt(new_vc)
-      x = grad * jnp.expand_dims(r_factor, vr_axis) * jnp.expand_dims(
-          c_factor, vc_axis)
+      r_factor = 1.0 / jnp.sqrt(new_vr / long_term_mean)
+      c_factor = 1.0 / jnp.sqrt(new_vc)
+      x = (
+          grad
+          * jnp.expand_dims(r_factor, vr_axis)
+          * jnp.expand_dims(c_factor, vc_axis)
+      )
     else:
       # v with sharding annotation.
       new_v = decay_rate * v + mixing_rate * grad_squared
@@ -2230,44 +2586,32 @@ class _ShardedAdafactorHelper:
     if self._per_var_learning_summary:
       # Add summary for this var.
       x_l2_scale = jnp.sqrt(reduce_mean(x * x))
-      base_layer.add_global_summary(f'sharded_adafactor_learning/{var_name}',
-                                    x_l2_scale)
+      base_layer.add_global_summary(
+          f'{prefix_name}sharded_adafactor_learning/{var_name}', x_l2_scale
+      )
 
     if self._clip_threshold is not None:
-      clipping_denom = jnp.maximum(1., reduce_rms(x) / self._clip_threshold)
+      clipping_denom = jnp.maximum(1.0, reduce_rms(x) / self._clip_threshold)
       clipping_denom = self.inf_to_nan(clipping_denom)
       x /= clipping_denom
       if self._per_var_learning_summary:
         # Add summary for this var.
         base_layer.add_global_summary(
-            f'sharded_adafactor_clipping_denom/{var_name}', clipping_denom)
+            f'{prefix_name}sharded_adafactor_clipping_denom/{var_name}',
+            clipping_denom,
+        )
 
     if self._per_var_learning_summary:
       # Add summary for this var.
       x_l2_scale_after_clipping = jnp.sqrt(reduce_mean(x * x))
       base_layer.add_global_summary(
-          f'sharded_adafactor_learning_after_clipping/{var_name}',
-          x_l2_scale_after_clipping)
+          f'{prefix_name}sharded_adafactor_learning_after_clipping/{var_name}',
+          x_l2_scale_after_clipping,
+      )
 
-    subtrahend = update_scale * x
-    if self._beta1:
-      if jnp.issubdtype(self._quantized_dtype, jnp.floating):
-        m = m.astype(jnp.float32)
-      elif self.should_store_momentum_in_qint(shape):
-        m_init_dtype = m.dtype
-        m = to_float(m, m_scale)
-      subtrahend = self._beta1 * m + (1. - self._beta1) * subtrahend
-      subtrahend = self.inf_to_nan(subtrahend)
-      if self._quantized_dtype == jnp.bfloat16:
-        new_m = subtrahend.astype(jnp.bfloat16)
-        output_m = new_m
-      elif self.should_store_momentum_in_qint(shape):
-        # Update the momentum values.
-        new_m_val, new_m_scale = to_quantized(subtrahend, m_init_dtype)
-        output_m = new_m_val
-        output_m_scale = new_m_scale
-      else:
-        output_m = subtrahend
+    subtrahend, output_m, output_m_scale = self.compute_subtrahend(
+        x, shape, update_scale, m, m_scale
+    )
 
     if self._weight_decay is not None:
       # Apply decoupled weight decay to be consistent with AdamW.
@@ -2295,10 +2639,11 @@ class _ShardedAdafactorHelper:
       if include:
         w_norm = reduce_rms(old_val)
         g_norm = reduce_rms(subtrahend / update_scale) + self._epsilon1
-        ratio = w_norm / g_norm
         ratio = jnp.where(
             jnp.greater(w_norm, 0),
-            jnp.where(jnp.greater(g_norm, 0), (w_norm / g_norm), 1.0), 1.0)
+            jnp.where(jnp.greater(g_norm, 0), (w_norm / g_norm), 1.0),
+            1.0,
+        )
         subtrahend *= ratio
 
     return _ShardedAdafactorUpdateResult(
@@ -2307,33 +2652,75 @@ class _ShardedAdafactorHelper:
         m_scale=output_m_scale,
         vr=output_vr,
         vc=output_vc,
-        v=output_v)
+        v=output_v,
+    )
 
 
 def sharded_adafactor(
     learning_rate_fn: optax.Schedule,
-    weight_decay: Optional[Union[float, Dict[str, float]]] = None,
-    layerwise_adaptation: bool = False,
-    decay_method: str = '',
-    decay_adam: float = 0.0,
-    decay_pow: float = 0.0,
-    beta1: float = 0.0,
-    clip_threshold: Optional[float] = 1.0,
-    factored: bool = True,
-    epsilon1_grad_sq_reg: float = 1e-30,
-    quantized_dtype: jnp.dtype = jnp.int8,
-    # TODO(bf-jax) Update default value to True, once this is supported.
-    respect_skip_lp_regularization: bool = False,
-    exclude_from_layerwise_adaptation: Optional[List[str]] = None,
-    per_var_learning_summary=False,
-    sort_factored_second_moment_dims=False,
-    # min_dim_size_to_factor is only used when
-    # sort_factored_second_moment_dims=True.
-    min_dim_size_to_factor: int = 128,
-    multiply_by_parameter_scale: bool = False,
-    epsilon2_param_scale_reg: float = 1e-3,
-    maybe_inf_to_nan: bool = True,
+    sharded_adafactor_helper_fn: Any = _ShardedAdafactorHelper,
+    **kwargs,
 ) -> ShardedGradientTransformation:
+  """Sharded AdaFactor optimizer."""
+  sharded_adafactor_helper = sharded_adafactor_helper_fn(
+      learning_rate_fn=learning_rate_fn, **kwargs
+  )
+
+  def init_fn(params):
+    """Initializes the optimizer's state."""
+    return sharded_adafactor_helper.to_state(
+        jnp.zeros([], jnp.int32),
+        jax.tree_map(sharded_adafactor_helper.init, params),
+    )
+
+  def init_partition_spec_fn(
+      var_hparams: NestedWeightHParams,
+  ) -> NestedWeightHParams:
+    count = WeightHParams(
+        shape=[],
+        init=None,
+        dtype=jnp.int32,
+        collections=None,
+        tensor_split_dims_mapping=[],
+    )
+    return sharded_adafactor_helper.to_state(
+        count,
+        jax.tree_map(sharded_adafactor_helper.init_partition_spec, var_hparams),
+    )
+
+  def update_fn(updates, state, params=None):
+    if params is None:
+      raise ValueError(
+          'You are using a transformation that requires the current value of '
+          'parameters, but you are not passing `params` when calling `update`.'
+      )
+
+    compute_var_and_slot_update_fn = functools.partial(
+        sharded_adafactor_helper.compute_var_and_slot_update, state.count
+    )
+    var_names = py_utils.extract_prefixed_keys_from_nested_map(updates)
+    output = jax.tree_map(
+        compute_var_and_slot_update_fn,
+        updates,
+        state.m,
+        state.m_scale,
+        state.vr,
+        state.vc,
+        state.v,
+        params,
+        var_names,
+    )
+    updates = jax.tree_map(lambda o: o.update, output)
+    count_plus_one = state.count + jnp.array(1, jnp.int32)
+    updated_states = sharded_adafactor_helper.to_state(count_plus_one, output)
+    return updates, updated_states
+
+  return ShardedGradientTransformation(
+      init=init_fn, update=update_fn, init_partition_spec=init_partition_spec_fn
+  )
+
+
+class ShardedAdafactor(BaseOptimizer):
   """AdaFactor optimizer that supports SPMD sharding.
 
   Reference:
@@ -2358,7 +2745,7 @@ def sharded_adafactor(
      inverse-square-root learning-rate-decay in Adam.  We hope this works well
      for most applications.
 
-  Args:
+  Attributes:
     learning_rate_fn: a callable that given the current training step, returns
       the learning rate to apply.
     weight_decay: an optional float tensor as decoupled weight decay value, or a
@@ -2366,9 +2753,7 @@ def sharded_adafactor(
       weight decay float tensor. The value will apply to all variables under
       that scope name.
     layerwise_adaptation: a boolean, whether or not to use layer-wise adaptive
-      moments (LAMB): https://arxiv.org/abs/1904.00962.
-    exclude_from_layerwise_adaptation: A dictionary with key as regex scope
-      pattern for variables to be skipped.
+      moments (LAMB) - https://arxiv.org/abs/1904.00962.
     decay_method: a string, deciding how decay_rate should be computed.
       Permitted values are 'adam' and 'pow'.
     decay_adam: a float, decay if decay_method == 'adam'.
@@ -2383,6 +2768,8 @@ def sharded_adafactor(
       integers.
     respect_skip_lp_regularization: whether or not to respect lingvo
       SKIP_LP_REGULARIZATION var collection that skips decoupled weight decay.
+    exclude_from_layerwise_adaptation: A dictionary with key as regex scope
+      pattern for variables to be skipped.
     per_var_learning_summary: a bool, whether or not to export per-var learning
       summaries.
     sort_factored_second_moment_dims: a bool, whether to select dims to factor
@@ -2392,132 +2779,20 @@ def sharded_adafactor(
       used when sort_factored_second_moment_dims=True.
     multiply_by_parameter_scale: a boolean, if True, then scale learning_rate by
       parameter scale. if False provided learning_rate is absolute step size.
-      NOTE: False by default.
+      Set to False by default.
     epsilon2_param_scale_reg: Regularization constant for parameter scale. Only
       used when multiply_by_parameter_scale is True.
     maybe_inf_to_nan: Will use jax.nan_to_num during update when True.
-
-  Returns:
-    A `ShardedGradientTransformation`.
   """
-  if weight_decay:
-    logging.warning(_WEIGHT_DECAY_DEPRECATION)
 
-  # TODO(bf-jax):  skip regularization.
-  assert not respect_skip_lp_regularization
-  assert decay_adam >= 0
-  assert decay_pow >= 0
-  assert learning_rate_fn is not None
-  assert decay_method == 'adam' or decay_method == 'pow', (
-      f'decay_method: {decay_method} not supported. Supported methods are '
-      '"pow", or "adam".')
-
-  sharded_adafactor_helper = _ShardedAdafactorHelper(
-      learning_rate_fn=learning_rate_fn,
-      weight_decay=weight_decay,
-      layerwise_adaptation=layerwise_adaptation,
-      decay_method=decay_method,
-      decay_adam=decay_adam,
-      decay_pow=decay_pow,
-      beta1=beta1,
-      clip_threshold=clip_threshold,
-      factored=factored,
-      epsilon1_grad_sq_reg=epsilon1_grad_sq_reg,
-      quantized_dtype=quantized_dtype,
-      respect_skip_lp_regularization=respect_skip_lp_regularization,
-      exclude_from_layerwise_adaptation=exclude_from_layerwise_adaptation,
-      per_var_learning_summary=per_var_learning_summary,
-      sort_factored_second_moment_dims=sort_factored_second_moment_dims,
-      min_dim_size_to_factor=min_dim_size_to_factor,
-      multiply_by_parameter_scale=multiply_by_parameter_scale,
-      epsilon2_param_scale_reg=epsilon2_param_scale_reg,
-      maybe_inf_to_nan=maybe_inf_to_nan)
-
-  def init_fn(params):
-    """Initializes the optimizer's state."""
-    return sharded_adafactor_helper.to_state(
-        jnp.zeros([], jnp.int32),
-        jax.tree_map(sharded_adafactor_helper.init, params))
-
-  def init_partition_spec_fn(
-      var_hparams: NestedWeightHParams) -> NestedWeightHParams:
-    count = WeightHParams(
-        shape=[],
-        init=None,
-        dtype=jnp.int32,
-        collections=None,
-        tensor_split_dims_mapping=[])
-    return sharded_adafactor_helper.to_state(
-        count,
-        jax.tree_map(sharded_adafactor_helper.init_partition_spec, var_hparams))
-
-  def update_fn(updates, state, params=None):
-    if params is None:
-      raise ValueError(
-          'You are using a transformation that requires the current value of '
-          'parameters, but you are not passing `params` when calling `update`.')
-
-    compute_var_and_slot_update_fn = functools.partial(
-        sharded_adafactor_helper.compute_var_and_slot_update, state.count)
-    var_names = py_utils.extract_prefixed_keys_from_nested_map(updates)
-    output = jax.tree_map(compute_var_and_slot_update_fn, updates, state.m,
-                          state.m_scale, state.vr, state.vc, state.v, params,
-                          var_names)
-    updates = jax.tree_map(lambda o: o.update, output)
-    count_plus_one = state.count + jnp.array(1, jnp.int32)
-    updated_states = sharded_adafactor_helper.to_state(count_plus_one, output)
-    return updates, updated_states
-
-  return ShardedGradientTransformation(
-      init=init_fn,
-      update=update_fn,
-      init_partition_spec=init_partition_spec_fn)
-
-
-class ShardedAdafactor(BaseOptimizer):
-  """Sharded AdaFactor optimizer.
-
-  Attributes:
-    weight_decay: an optional float tensor as decoupled weight decay value, or a
-      dictionary with key as regex scope pattern and value as corresponding
-      weight decay float tensor. The value will apply to all variables under
-      that scope name.
-    layerwise_adaptation: A boolean, whether or not to use layer-wise adaptive
-      moments (LAMB): https://arxiv.org/abs/1904.00962.
-    exclude_from_layerwise_adaptation: A dictionary with key as regex scope
-      pattern for variables to be skipped.
-    decay_method: A string, deciding how decay_rate should be computed.
-      Permitted values are `adam` and `pow`.
-    decay_adam: A float, decay if decay_method == `adam`.
-    decay_pow: A float, decay if decay_method == `pow`.
-    beta1: A float value between 0 and 1 for the momentum.
-    clip_threshold: An optional float >= 1.
-    factored: A boolean, whether or not to use factored second order momentum.
-    epsilon1_grad_sq_reg: Regularization constant for squared gradient.
-    quantized_dtype: Type of the quantized input. Allowed options are jnp.int8,
-      jnp.int16, and jnp.bfloat16. If jnp.bfloat16 is specified, accumulators
-      are stored as bfloat16, instead of quantized integers.
-    respect_skip_lp_regularization: Whether or not to respect lingvo
-      SKIP_LP_REGULARIZATION var collection that skips decoupled weight decay.
-    per_var_learning_summary: If True, output per var learning summary.
-    sort_factored_second_moment_dims: If True, will select largest and second
-      largest dims as row and column dims for factored second moment.
-    min_dim_size_to_factor: Only factor the statistics if two array dimensions
-      have at least this size. NOTE: min_dim_size_to_factor threshold only
-      applies when
-    multiply_by_parameter_scale: If True, then scale learning_rate by parameter
-      norm. if False, provided learning_rate is absolute step size.
-    epsilon2_param_scale_reg: Regularization constant for parameter scale.
-    maybe_inf_to_nan: Will use jax.nan_to_num during update when True.
-  """
-  weight_decay: Optional[Union[float, Dict[str, float]]] = None
+  weight_decay: float | dict[str, float] | None = None
   layerwise_adaptation: bool = False
-  exclude_from_layerwise_adaptation: Optional[List[str]] = None
-  decay_method: str = ''
+  exclude_from_layerwise_adaptation: list[str] | None = None
+  decay_method: Literal['adam', 'pow', ''] = ''
   decay_adam: float = 0.0
   decay_pow: float = 0.0
   beta1: float = 0.0
-  clip_threshold: Optional[float] = 1.0
+  clip_threshold: float | None = 1.0
   factored: bool = True
   epsilon1_grad_sq_reg: float = 1e-30
   quantized_dtype: str = 'int8'
@@ -2528,6 +2803,7 @@ class ShardedAdafactor(BaseOptimizer):
   multiply_by_parameter_scale: bool = False
   epsilon2_param_scale_reg: float = 1e-3
   maybe_inf_to_nan: bool = True
+  name: str = ''
 
   @classmethod
   def HParamsAdamB(cls) -> pax_fiddle.Config[ShardedAdafactor]:  # pylint: disable=invalid-name
@@ -2539,12 +2815,20 @@ class ShardedAdafactor(BaseOptimizer):
         decay_adam=0.98,
         quantized_dtype='int8')
 
-  def _get_raw_grad_transformation(
-      self, lr: optax.Schedule) -> ShardedGradientTransformation:
+  def _get_sharded_adafactor_kwargs(self, lr: optax.Schedule) -> dict[str, Any]:
     if self.weight_decay:
       logging.warning(_WEIGHT_DECAY_DEPRECATION)
+      # TODO(bf-jax):  skip regularization.
+      assert not self.respect_skip_lp_regularization
+      assert self.decay_adam >= 0
+      assert self.decay_pow >= 0
+      assert lr is not None
+      assert self.decay_method == 'adam' or self.decay_method == 'pow', (
+          f'decay_method: {self.decay_method} not supported. Supported methods '
+          'are "pow", or "adam".'
+      )
 
-    return sharded_adafactor(
+    return dict(
         learning_rate_fn=lr,
         weight_decay=self.weight_decay,
         layerwise_adaptation=self.layerwise_adaptation,
@@ -2564,12 +2848,19 @@ class ShardedAdafactor(BaseOptimizer):
         multiply_by_parameter_scale=self.multiply_by_parameter_scale,
         epsilon2_param_scale_reg=self.epsilon2_param_scale_reg,
         maybe_inf_to_nan=self.maybe_inf_to_nan,
+        name=self.name,
     )
+
+  def _get_raw_grad_transformation(
+      self, lr: optax.Schedule
+  ) -> ShardedGradientTransformation:
+    return sharded_adafactor(**self._get_sharded_adafactor_kwargs(lr))
 
 
 def sharded_static_accumulation(
     num_sub_batches: int,
     base_tx: ShardedGradientTransformation,
+    accumulation_use_cond_op: bool = False,
 ) -> ShardedGradientTransformation:
   """Gradient transformation for ShardedStaticAccumulator optimizer."""
 
@@ -2611,23 +2902,11 @@ def sharded_static_accumulation(
         accumulated_update=accumulated_update,
         count=count)
 
-  def while_cond(predicate, compute_fn, init_state, *args, **kwargs):
-    """Rewrites a cond as a while loop."""
-
-    def _iter_body(unused_state):
-      results = compute_fn(*args, **kwargs)
-      return tuple([False] + list(results))
-
-    def _iter_condition(state):
-      return state[0]
-
-    results = jax.lax.while_loop(_iter_condition, _iter_body,
-                                 tuple([predicate] + init_state))
-    return tuple(results[1:])
-
-  def update_fn(updates: NestedJTensor,
-                state: NestedJTensor,
-                params: Optional[NestedJTensor] = None):
+  def update_fn(
+      updates: NestedJTensor,
+      state: NestedJTensor,
+      params: NestedJTensor | None = None,
+  ):
     new_accumulated_update = jax.tree_map(lambda acc, x: acc + x,
                                           state.accumulated_update, updates)  # pytype: disable=attribute-error  # jax-ndarray
 
@@ -2645,15 +2924,47 @@ def sharded_static_accumulation(
               jax.tree_map(lambda u: jnp.zeros_like(u, dtype=jnp.float32),
                            updates), emission_base_state)
 
-    # PAX makes use of vectorized map for repeated layers. XLA currently doesn't
-    # handle conds with-in vmap well and thus calls into both branches with a
-    # select. Here we rewrite a lax.cond as while_loop to get around this issue
-    # and get faster step time.
-    new_updates, new_accumulated_update, new_base_state = while_cond(
-        should_emit, _run_base_tx, [
-            jax.tree_map(jnp.zeros_like, updates), new_accumulated_update,
-            state.base_state  # pytype: disable=attribute-error  # jax-ndarray
-        ])
+    if accumulation_use_cond_op:
+
+      def _continue_accumulating():
+        return (
+            jax.tree_map(jnp.zeros_like, updates),
+            new_accumulated_update,
+            state.base_state,  # pytype: disable=attribute-error # jax-ndarray
+        )
+
+      new_updates, new_accumulated_update, new_base_state = lax.cond(
+          should_emit, _run_base_tx, _continue_accumulating
+      )
+    else:
+      # PAX makes use of vmap for repeated layers. XLA currently doesn't
+      # handle conds within vmap well and thus calls into both branches with a
+      # select. Here we rewrite lax.cond as while_loop to get around this issue
+      # and get faster step time.
+      def while_cond(predicate, compute_fn, init_state, *args, **kwargs):
+        """Rewrites a cond as a while loop."""
+
+        def _iter_body(unused_state):
+          results = compute_fn(*args, **kwargs)
+          return tuple([False] + list(results))
+
+        def _iter_condition(state):
+          return state[0]
+
+        results = jax.lax.while_loop(
+            _iter_condition, _iter_body, tuple([predicate] + init_state)
+        )
+        return tuple(results[1:])
+
+      new_updates, new_accumulated_update, new_base_state = while_cond(
+          should_emit,
+          _run_base_tx,
+          [
+              jax.tree_map(jnp.zeros_like, updates),
+              new_accumulated_update,
+              state.base_state,  # pytype: disable=attribute-error  # jax-ndarray
+          ],
+      )
 
     return new_updates, NestedMap(
         base_state=new_base_state,
@@ -2688,10 +2999,15 @@ class ShardedStaticAccumulator(BaseOptimizer):
     optimizer_tpl: Parameter for base optimizer.
     num_sub_batches: The number of batches whose updates should be accumulated
       before sending to the base optimizer transformation.
+    accumulation_use_cond_op: whether to use lax.while_loop (default) or
+      lax.cond operator for checking if current step needs to gradient
+      accumulation, using lax.cond may have memory benefits, but saw some cases
+      where it can have perf regression.
   """
-  optimizer_tpl: Optional[pax_fiddle.Config[BaseOptimizer]] = None
+  optimizer_tpl: pax_fiddle.Config[BaseOptimizer] | None = None
   num_sub_batches: int = 1
   base_optimizer: Any = dataclasses.field(init=False, repr=False)
+  accumulation_use_cond_op: bool = False
 
   def __post_init__(self):
     super().__post_init__()
@@ -2707,4 +3023,6 @@ class ShardedStaticAccumulator(BaseOptimizer):
   def _get_raw_grad_transformation(
       self, lr: optax.Schedule) -> GeneralGradientTransformation:
     base_tx = self.base_optimizer._get_raw_grad_transformation(lr)  # pylint: disable=protected-access
-    return sharded_static_accumulation(self.num_sub_batches, base_tx)
+    return sharded_static_accumulation(
+        self.num_sub_batches, base_tx, self.accumulation_use_cond_op
+    )

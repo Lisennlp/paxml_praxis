@@ -15,8 +15,11 @@
 
 """Tests for utilities."""
 
+import dataclasses
+
 from absl.testing import absltest
 from absl.testing import parameterized
+import fiddle as fdl
 import jax
 from jax import numpy as jnp
 import numpy as np
@@ -41,6 +44,12 @@ class UtilsTest(test_utils.TestCase):
           lhs_shape=(1, 2, 3, 4),
           rhs_shape=(4, 3, 1, 5),
       ),
+      dict(
+          # Tests einsum with non-matching contraction dimension orders.
+          eqn='ABCD,DC->AB',
+          lhs_shape=(1, 2, 3, 4),
+          rhs_shape=(4, 3),
+      ),
   )
   def test_einsum_equation_conversion(self, eqn, lhs_shape, rhs_shape):
     """Validate that lax.dot_general produces the same output as jnp.einsum."""
@@ -50,7 +59,8 @@ class UtilsTest(test_utils.TestCase):
     einsum_result = jnp.einsum(eqn, lhs, rhs)
     dimension_numbers, perm = utils.einsum_eqn_to_dimension_numbers(eqn)
     dot_general_result = jax.lax.dot_general(
-        lhs, rhs, dimension_numbers=dimension_numbers)
+        lhs, rhs, dimension_numbers=dimension_numbers
+    )
     if perm is not None:
       dot_general_result = jax.lax.transpose(dot_general_result, perm)
     self.assertAllClose(einsum_result, dot_general_result)
@@ -150,11 +160,168 @@ class UtilsTest(test_utils.TestCase):
     self.assertSequenceEqual(packed.shape, expected_packed_shape)
 
     unpacked = utils.unpack_4bit(packed, pack_dim, x.dtype)
-    self.assertArraysEqual(unpacked, x.astype(packed_dtype))
+    self.assertArraysEqual(unpacked, x)
 
   def test_get_packed_shape(self):
     self.assertSequenceEqual(utils.get_packed_shape((4, 8, 3), 1, 8), (4, 1, 3))
     self.assertRaises(ValueError, utils.get_packed_shape, (4, 7, 3), 1, 8)
+
+  @parameterized.named_parameters(
+      ('single target', True),
+      ('multiple targets', False),
+  )
+  def test_find_target_tpl(self, sequence_of_inputs):
+    @dataclasses.dataclass(frozen=True)
+    class Target:
+      marker: str = 'default'
+
+    @dataclasses.dataclass()
+    class Inner:
+      irrelevant: int
+      target1: Target
+
+    @dataclasses.dataclass()
+    class Outer:
+      irrelevant: int
+      target2: Target
+      inner_direct: Inner
+      inner_list: list[Inner]
+      inner_dict: dict[str, Inner]
+
+    outer_p = (
+        fdl.Config(
+            Outer,
+            irrelevant=-1,
+            target2=fdl.Config(Target, marker='target2'),
+            inner_direct=fdl.Config(
+                Inner,
+                irrelevant=-2,
+                target1=fdl.Config(Target, marker='target1_1'),
+            ),
+            inner_list=[
+                fdl.Config(
+                    Inner,
+                    irrelevant=-3,
+                    target1=fdl.Config(Target, marker='target1_2'),
+                ),
+                fdl.Config(
+                    Inner,
+                    irrelevant=-4,
+                    target1=fdl.Config(Target, marker='target1_3'),
+                ),
+            ],
+            inner_dict={
+                'a': fdl.Config(
+                    Inner,
+                    irrelevant=-5,
+                    target1=fdl.Config(Target, marker='target1_4'),
+                ),
+                'b': fdl.Config(
+                    Inner,
+                    irrelevant=-5,
+                    target1=fdl.Config(Target, marker='target1_5'),
+                ),
+            },
+        ),
+    )
+    if sequence_of_inputs:
+      targets = utils.find_target_tpl(outer_p, [Target, Target])
+    else:
+      targets = utils.find_target_tpl(outer_p, Target)
+    # NOTE(yinzhong): fdl.Config is not hashable or sortable, so we have to
+    # build before comparing.
+    self.assertSameElements(
+        fdl.build(targets),
+        fdl.build([
+            fdl.Config(Target, marker='target2'),
+            fdl.Config(Target, marker='target1_1'),
+            fdl.Config(Target, marker='target1_2'),
+            fdl.Config(Target, marker='target1_3'),
+            fdl.Config(Target, marker='target1_4'),
+            fdl.Config(Target, marker='target1_5'),
+        ]),
+    )
+
+  def test_lora_shape_and_eqn(self):
+    # One reduction dimension.
+    eqn = '...td,dD->...tD'
+    shape = (3, 5)
+    lora_size = 2
+    (
+        new_eqn_left,
+        new_eqn_right,
+        left_shape,
+        right_shape,
+        eqn_left_ind,
+        eqn_right_ind,
+    ) = utils.get_lora_shape_and_eqn(shape, lora_size, eqn)
+    self.assertEqual(new_eqn_left, '...td,da->...ta')
+    self.assertEqual(new_eqn_right, '...ta,aD->...tD')
+    self.assertEqual(left_shape, [3, 2])
+    self.assertEqual(right_shape, [2, 5])
+    self.assertEqual(eqn_left_ind, [1])
+    self.assertEqual(eqn_right_ind, [0])
+
+    # Two reduction dimensions.
+    eqn = '...tdh,dDh->...tD'
+    shape = (4, 5, 8)  # Max reduction dim is 'h' = 8
+    lora_size = 2
+    (
+        new_eqn_left,
+        new_eqn_right,
+        left_shape,
+        right_shape,
+        eqn_left_ind,
+        eqn_right_ind,
+    ) = utils.get_lora_shape_and_eqn(shape, lora_size, eqn)
+    self.assertEqual(new_eqn_left, '...tdh,ha->...tda')
+    self.assertEqual(new_eqn_right, '...tda,dDa->...tD')
+
+    self.assertEqual(left_shape, [8, 2])
+    self.assertEqual(right_shape, [4, 5, 2])
+    self.assertEqual(eqn_left_ind, [1])
+    self.assertEqual(eqn_right_ind, [2])
+
+    # Two reduction dimensions.
+    eqn = '...tdh,dDh->...tD'
+    shape = (8, 5, 4)  # Max reduction dim is 'd' = 8
+    lora_size = 2
+    (
+        new_eqn_left,
+        new_eqn_right,
+        left_shape,
+        right_shape,
+        eqn_left_ind,
+        eqn_right_ind,
+    ) = utils.get_lora_shape_and_eqn(shape, lora_size, eqn)
+    self.assertEqual(new_eqn_left, '...tdh,da->...tah')
+    self.assertEqual(new_eqn_right, '...tah,aDh->...tD')
+
+    self.assertEqual(left_shape, [8, 2])
+    self.assertEqual(right_shape, [2, 5, 4])
+    self.assertEqual(eqn_left_ind, [1])
+    self.assertEqual(eqn_right_ind, [0])
+
+    # Two reduction dimensions.
+    eqn = '...tdh,dDh->...tD'
+    shape = (8, 5, 4)  # Max reduction dim is 'd' = 8
+    lora_size = 2
+    (
+        new_eqn_left,
+        new_eqn_right,
+        left_shape,
+        right_shape,
+        eqn_left_ind,
+        eqn_right_ind,
+    ) = utils.get_lora_shape_and_eqn(shape, lora_size, eqn, max_reduction=False)
+
+    self.assertEqual(new_eqn_left, '...tdh,dhab->...tab')
+    self.assertEqual(new_eqn_right, '...tab,aDb->...tD')
+
+    self.assertEqual(left_shape, [8, 4, 2, 2])
+    self.assertEqual(right_shape, [2, 5, 2])
+    self.assertEqual(eqn_left_ind, [2, 3])
+    self.assertEqual(eqn_right_ind, [0, 2])
 
 
 if __name__ == '__main__':

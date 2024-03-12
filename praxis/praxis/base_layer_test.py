@@ -19,7 +19,7 @@ import copy
 import dataclasses
 import sys
 import typing
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -87,7 +87,7 @@ class Linear(base_layer.BaseLayer):
 
 
 class MultipleLinearLayer(base_layer.BaseLayer):
-  linear1: Optional[AddBias] = pax_fiddle.instance_field(Linear)
+  linear1: AddBias | None = pax_fiddle.instance_field(Linear)
   linear2_tpl: pax_fiddle.Config[Linear] = pax_fiddle.template_field(Linear)
 
   def setup(self):
@@ -98,6 +98,46 @@ class MultipleLinearLayer(base_layer.BaseLayer):
 
   def __call__(self, x: base_layer.JTensor) -> base_layer.JTensor:
     return self.linear2(self.linear1(x))
+
+
+class QuantizedSubChannelFFN(base_layer.BaseLayer):
+  # input_dim = sub_channels * block_size
+  sub_channels: int = 2
+  block_size: int = 2
+  output_dims: int = 3
+
+  def setup(self):
+    self.create_quantized_variable(
+        'w',
+        base_layer.WeightHParams(
+            shape=[self.sub_channels, self.block_size, self.output_dims],
+            init=self.params_init,
+        ),
+        use_symmetric=False,
+        scale_hparams=base_layer.WeightHParams(
+            shape=[self.sub_channels, self.output_dims]
+        ),
+    )
+
+  def __call__(self, inputs):
+    w, s, zp = self.get_quantized_weight('w', False)
+    inputs = jnp.reshape(
+        inputs, [inputs.shape[0], self.sub_channels, self.block_size]
+    )
+    out = jnp.einsum('...sc,scz,sz->...z', inputs, w, s)
+    return out - jnp.einsum('...sc,sz->...z', inputs, zp)
+
+  def quantized_partition_specs(self) -> Any:
+    scale_name = 'w' + base_layer.QUANTIZED_SCALE_NAME_POSTFIX
+    zp_name = 'w' + base_layer.QUANTIZED_ZP_NAME_POSTFIX
+    pspec = base_layer.BoxedPartitionSpec(meta=None)
+    return {base_layer.PARAMS: {'w': pspec, scale_name: pspec, zp_name: pspec}}
+
+  def quantize_weight(self) -> base_layer.NestedJTensor:
+    w, s, zp = self.get_quantized_weight('w', False)
+    scale_name = 'w' + base_layer.QUANTIZED_SCALE_NAME_POSTFIX
+    zp_name = 'w' + base_layer.QUANTIZED_ZP_NAME_POSTFIX
+    return {base_layer.PARAMS: {'w': w, scale_name: s, zp_name: zp}}
 
 
 class MultipleBiasLayer(base_layer.BaseLayer):
@@ -277,6 +317,38 @@ class BaseLayerTest(test_utils.TestCase):
         },
     )
 
+  def test_quantized_sub_channels(self):
+    layer_p = pax_fiddle.Config(QuantizedSubChannelFFN, name='test_sub_channel')
+    layer = base_layer.instantiate(layer_p)
+    x = jnp.arange(8).reshape(2, 4).astype(jnp.float32)
+    init_vars = layer.init(jax.random.PRNGKey(0), x)
+    quantized_types = {
+        'params': {
+            'w': jnp.int8,
+            'w_quantized_scale': jnp.float32,
+            'w_quantized_zp': jnp.float32,
+        }
+    }
+    dummy_pspec = base_layer.BoxedPartitionSpec(meta=None)
+    self.assertEqual(
+        jax.tree_map(lambda x: x.dtype, init_vars), quantized_types
+    )
+    qw, _ = layer.apply(init_vars, mutable=[], method=layer.quantize_weight)
+    self.assertEqual(jax.tree_map(lambda x: x.dtype, qw), quantized_types)
+    quantized_pspec, _ = layer.apply(
+        init_vars, mutable=[], method=layer.quantized_partition_specs
+    )
+    self.assertEqual(
+        quantized_pspec,
+        {
+            'params': {
+                'w': dummy_pspec,
+                'w_quantized_scale': dummy_pspec,
+                'w_quantized_zp': dummy_pspec,
+            }
+        },
+    )
+
   @parameterized.parameters((0, 2), (3, 0), (1, 4))
   def test_layer_building_nn_compact(self, num_child: int, num_children: int):
     x = jnp.array([[0.0, 1.0], [2.0, 3.0]], dtype=jnp.float32)
@@ -340,10 +412,10 @@ class BaseLayerTest(test_utils.TestCase):
     class ParentLayer(base_layer.BaseLayer):
       # instance fields:
       a: base_layer.BaseLayer = base_layer.instance_field(ChildLayer)
-      bs: List[base_layer.BaseLayer] = base_layer.instance_field(list)
+      bs: list[base_layer.BaseLayer] = base_layer.instance_field(list)
       # template fields:
       x_tpl: LayerTpl = base_layer.template_field(ChildLayer)
-      y_tpls: List[LayerTpl] = base_layer.template_field(list)
+      y_tpls: list[LayerTpl] = base_layer.template_field(list)
 
       def setup(self):
         self.create_child('x', self.x_tpl)
@@ -479,12 +551,12 @@ class BaseLayerTest(test_utils.TestCase):
     class FiddleParent(base_layer.BaseLayer):
 
       child_tpl: pax_fiddle.Config = base_layer.template_field(FiddleChild)
-      child_tpl_list: List[pax_fiddle.Config] = base_layer.template_field(None)
-      child_tpl_dict: Dict[str, pax_fiddle.Config] = base_layer.template_field(
+      child_tpl_list: list[pax_fiddle.Config] = base_layer.template_field(None)
+      child_tpl_dict: dict[str, pax_fiddle.Config] = base_layer.template_field(
           None
       )
-      child_instance_list: Optional[List[base_layer.BaseLayer]] = None
-      child_instance_dict: Optional[List[base_layer.BaseLayer]] = None
+      child_instance_list: list[base_layer.BaseLayer] | None = None
+      child_instance_dict: list[base_layer.BaseLayer] | None = None
 
       def setup(self):
         child_tpl = self.child_tpl.clone()
@@ -503,8 +575,8 @@ class BaseLayerTest(test_utils.TestCase):
         pax_fiddle.Config(FiddleChild, x=12),
     ]
     p.child_tpl_dict = {'x': pax_fiddle.Config(FiddleChild, x=12)}
-    p.child_instance_list = p.child_tpl_list
-    p.child_instance_dict = p.child_tpl_dict
+    p.child_instance_list = p.child_tpl_list  # pytype: disable=annotation-type-mismatch  # use-fiddle-overlay
+    p.child_instance_dict = p.child_tpl_dict  # pytype: disable=annotation-type-mismatch  # use-fiddle-overlay
     layer = p.Instantiate()
 
     hyper_params = layer.abstract_init_with_mdl_config()
@@ -678,26 +750,20 @@ class BaseLayerTest(test_utils.TestCase):
       self.assertEqual(layer2.weight_split_dims_mapping.x, 12)
       self.assertEqual(layer2.activation_split_dims_mapping.y, 'yellow')
 
-  def test_hparam_is_instance_of_fdl_buildable(self):
-
-    class Child(base_layer.BaseLayer):
-      size: int = 5
-
-    with self.assertRaisesRegex(
-        ValueError, 'default value is a mutable instance of fdl.Buildable'):
-
-      # Allowing the default value of `child_tpl` to be a Config object here
-      # would be problematic, because that mutable default value would be
-      # shared by all instances of Parent.  E.g., if `a` and `b` were two
-      # instances of Parent that did not override `child_tpl`, then setting
-      # `a.child_tpl.size = 20` would also modify `b.child_tpl.size` to be 20
-      # (since `a.child_tpl is b.child_tpl`).  We therefore raise an exception,
-      # indicating that the user should use a `default_factory` rather than a
-      # default value.
-      class Parent(base_layer.BaseLayer):
-        child_tpl: pax_fiddle.Config = pax_fiddle.Config(Child, size=2)
-
-      del Parent  # unused.
+  def test_unbox_meta(self):
+    meta = base_layer.WeightHParams([10, 10])
+    tree = {
+        'params': {
+            'whp': base_layer.BoxedParam(value=jnp.zeros([10, 10]), meta=meta),
+            'jarr': jnp.zeros([1, 1, 1]),
+        }
+    }
+    unboxed = base_layer.unbox_meta(tree)
+    self.assertEqual(unboxed['params']['whp'], meta)
+    self.assertIsInstance(unboxed['params']['jarr'], base_layer.WeightHParams)
+    self.assertSequenceEqual(unboxed['params']['jarr'].shape, [1, 1, 1])
+    self.assertEqual(unboxed['params']['jarr'].dtype, jnp.float32)
+    self.assertEmpty(unboxed['params']['jarr'].collections)
 
   def test_fprop_dtype(self):
     with self.subTest('default'):
@@ -772,44 +838,15 @@ class BaseLayerTest(test_utils.TestCase):
     ):
       layer.init(jax.random.PRNGKey(0), 0)
 
-  def testOverrideParamsInit(self):
-
-    class Child(base_layer.BaseLayer):
-      params_init: base_layer.WeightInit = (
-          base_layer.WeightInit.UniformUnitScaling(scale=0.5))
-
-      def __call__(self):
-        return 0.0
-
-    class Parent(base_layer.BaseLayer):
-
-      child_tpl: pax_fiddle.Config = base_layer.template_field(Child)
-
-      def setup(self):
-        self.create_child('child', self.child_tpl)
-
-      def __call__(self):
-        self.child()
-        return None
-
-    cfg = pax_fiddle.Config(Parent)
-    layer = pax_fiddle.build(cfg)
-    layer.init(jax.random.PRNGKey(0))
-
-    hyper_params = layer.abstract_init_with_mdl_config()
-    self.assertEqual(0.5, hyper_params['child']['_hparams'].params_init.scale)
-    self.assertEqual('uniform_unit_scaling',
-                     hyper_params['child']['_hparams'].params_init.method)
-
   def testTypeCheckingForDtype(self):
     layer_p = pax_fiddle.Config(SimpleBaseLayer)
     with self.assertRaisesRegex(
         TypeError, r'Please use `layer_p\.Instantiate\(\)` instead'):
-      SimpleBaseLayer(layer_p)
+      SimpleBaseLayer(layer_p)  # pytype: disable=wrong-arg-types  # jnp-type
 
     with self.assertRaisesRegex(
         TypeError, r'Please use `layer_p\.Instantiate\(\)` instead'):
-      SimpleBaseLayer('foo')
+      SimpleBaseLayer('foo')  # pytype: disable=wrong-arg-types  # jnp-type
 
   def test_get_fan_in_fan_out(self):
     self.assertEqual((None, None), base_layer.get_fan_in_fan_out(shape=[]))

@@ -16,7 +16,7 @@
 """GSPMD pipeline parallelism implementations."""
 
 import functools
-from typing import Callable, List, Optional
+from typing import Callable
 
 from flax import core as flax_core
 from flax import linen as nn
@@ -160,9 +160,9 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
       f32 precision.
   """
   num_stages: int = 1
-  single_stage_body: Optional[LayerTpl] = base_layer.template_field(None)
-  num_microbatches: Optional[int] = None
-  microbatch_size: Optional[int] = None
+  single_stage_body: LayerTpl | None = base_layer.template_field(None)
+  num_microbatches: int | None = None
+  microbatch_size: int | None = None
   unpack_summaries: bool = True
   stream_io: bool = False
   polluting_bubbles_with_nan: bool = False
@@ -173,6 +173,7 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
   optimizer_dims_mapping: SplitDimsMapping = None
   collect_intermediate_outputs: bool = False
   bf16_accum_in_fp32: bool = False
+  enable_bubble_grad_skipping: bool = True
 
   class WeightSharding(base_layer.BaseLayer.WeightSharding):
     """Represents how layer's learned parameters are partitioned across a mesh.
@@ -289,7 +290,7 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
       self,
       loop_iteration: JTensor,
       num_microbatches: int,
-      bf16_vars_to_convert: Optional[pytypes.PyTree],
+      bf16_vars_to_convert: pytypes.PyTree | None,
   ) -> Callable[..., JTensor]:
     """Returns a function that runs the fprop function of the stages."""
     del loop_iteration, num_microbatches
@@ -303,8 +304,10 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
                 *per_stage_args):
 
       def xform_collections(
-          var_tree: pytypes.PyTree, collections: List[str],
-          fn: Callable[[JTensor], JTensor]) -> pytypes.PyTree:
+          var_tree: pytypes.PyTree,
+          collections: list[str],
+          fn: Callable[[JTensor], JTensor],
+      ) -> pytypes.PyTree:
         mapped_vars = {}
         for key in var_tree:
           if key in collections:
@@ -319,17 +322,22 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
         # Assume there is no AUX_LOSS and SUMMARIES before function call.
         assert AUX_LOSS not in var_tree
         assert SUMMARIES not in var_tree
-        # Use stop_gradient in invalid iterations so that potential NaN
-        # gradients will not be propagated to the weights. This jnp.where will
-        # be optimized away by XLA, but in the backward pass it will be masking
-        # with zeros.
-        mapped_vars = xform_collections(
-            var_tree, [base_layer.PARAMS],
-            lambda x: jnp.where(is_valid_mb, x, jax.lax.stop_gradient(x)))
-        if NON_TRAINABLE in var_tree:
-          backups = jax.tree_map(lambda x: x, var_tree[NON_TRAINABLE])
-          mapped_vars[NON_TRAINABLE][non_trainable_backup_dict_key] = backups
-        return mapped_vars
+        if not self.enable_bubble_grad_skipping:
+          return var_tree
+        else:
+          # Use stop_gradient in invalid iterations so that potential NaN
+          # gradients will not be propagated to the weights. This jnp.where will
+          # be optimized away by XLA, but in backward pass it will be masking
+          # with zeros.
+          mapped_vars = xform_collections(
+              var_tree,
+              [base_layer.PARAMS],
+              lambda x: jnp.where(is_valid_mb, x, jax.lax.stop_gradient(x)),
+          )
+          if NON_TRAINABLE in var_tree:
+            backups = jax.tree_map(lambda x: x, var_tree[NON_TRAINABLE])
+            mapped_vars[NON_TRAINABLE][non_trainable_backup_dict_key] = backups
+          return mapped_vars
 
       def trans_out(var_tree: pytypes.PyTree) -> pytypes.PyTree:
         mapped_vars = xform_collections(
@@ -339,10 +347,15 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
         )
         if NON_TRAINABLE in var_tree:
           non_trainable = mapped_vars[NON_TRAINABLE]
-          backups = non_trainable[non_trainable_backup_dict_key]
-          del non_trainable[non_trainable_backup_dict_key]
-          mapped_vars[NON_TRAINABLE] = jax.tree_map(
-              lambda x, y: jnp.where(is_valid_mb, x, y), non_trainable, backups)
+          # non_trainable_backup_dict_key can be missing during init.
+          if non_trainable_backup_dict_key in non_trainable:
+            backups = non_trainable[non_trainable_backup_dict_key]
+            del non_trainable[non_trainable_backup_dict_key]
+            mapped_vars[NON_TRAINABLE] = jax.tree_map(
+                lambda x, y: jnp.where(is_valid_mb, x, y),
+                non_trainable,
+                backups,
+            )
         return mapped_vars
 
       def layer_fprop(layer, *args, **kwargs):
@@ -438,10 +451,15 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
         stage_id <= loop_iteration,
         loop_iteration - stage_id < self.num_valid_iterations(num_microbatches))
 
-  def body_fprop(self, loop_iteration: JTensor, num_microbatches: int,
-                 bf16_vars_to_convert: Optional[pytypes.PyTree],
-                 per_stage_inputs: JTensor, *per_stage_args,
-                 **per_stage_kwargs) -> NestedJTensor:
+  def body_fprop(
+      self,
+      loop_iteration: JTensor,
+      num_microbatches: int,
+      bf16_vars_to_convert: pytypes.PyTree | None,
+      per_stage_inputs: JTensor,
+      *per_stage_args,
+      **per_stage_kwargs,
+  ) -> NestedJTensor:
     per_stage_is_valid_mb = self.get_valid_microbatch_mask(
         loop_iteration, num_microbatches)
     if self.mesh_axis_names is not None:
@@ -492,10 +510,13 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
     # to avoid saving full buffers in each iteration.
     return self.stream_io
 
-  def _get_iteration_inputs(self, loop_iteration: JTensor,
-                            num_microbatches: int,
-                            per_stage_inputs: Optional[NestedJTensor],
-                            loop_state: NestedJTensor) -> NestedJTensor:
+  def _get_iteration_inputs(
+      self,
+      loop_iteration: JTensor,
+      num_microbatches: int,
+      per_stage_inputs: NestedJTensor | None,
+      loop_state: NestedJTensor,
+  ) -> NestedJTensor:
     if self.stream_io:
       stream_buf_idx = loop_iteration % (num_microbatches // self.num_stages)
       stream_slice = jax.tree_map(lambda x: x[:, stream_buf_idx],
@@ -823,6 +844,8 @@ class LayerwiseShardablePipelined(base_layer.BaseLayer):
         if self.unpack_summaries:
           def _unpack(vars_dict):
             per_stage = {}
+            # lsp
+            if isinstance(vars_dict, list): return {}
             for k, v in vars_dict.items():
               if not isinstance(v, JTensor):
                 per_stage[k] = _unpack(v)
@@ -1006,7 +1029,7 @@ class CircularLayerwiseShardablePipelined(LayerwiseShardablePipelined):
       self,
       loop_iteration: JTensor,
       num_microbatches: int,
-      bf16_vars_to_convert: Optional[pytypes.PyTree],
+      bf16_vars_to_convert: pytypes.PyTree | None,
   ) -> Callable[..., JTensor]:
     # TODO(chulayuth) Support intermediate outputs gathering in future.
     assert not self.collect_intermediate_outputs
@@ -1119,10 +1142,13 @@ class CircularLayerwiseShardablePipelined(LayerwiseShardablePipelined):
       )
     return state
 
-  def _get_iteration_inputs(self, loop_iteration: JTensor,
-                            num_microbatches: int,
-                            per_stage_inputs: Optional[NestedJTensor],
-                            loop_state: NestedJTensor) -> NestedJTensor:
+  def _get_iteration_inputs(
+      self,
+      loop_iteration: JTensor,
+      num_microbatches: int,
+      per_stage_inputs: NestedJTensor | None,
+      loop_state: NestedJTensor,
+  ) -> NestedJTensor:
     inputs = super()._get_iteration_inputs(loop_iteration, num_microbatches,
                                            per_stage_inputs, loop_state)
     if self._async_circular_transfer(num_microbatches):

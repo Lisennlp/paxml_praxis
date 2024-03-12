@@ -16,28 +16,74 @@
 """Operations for quantization."""
 
 import functools
-import string
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Sequence
 
 from absl import logging
 import jax
 from jax import lax
 from jax import numpy as jnp
+import numpy as np
+from opt_einsum import parser as einsum_parser
 from praxis import pytypes
 from praxis.layers.quantization import optimization
 from praxis.layers.quantization import quantization_hparams
 from praxis.layers.quantization import utils
 
+
 JTensor = pytypes.JTensor
 PRNGKey = pytypes.PRNGKey
 WeightQuantizationParams = quantization_hparams.WeightQuantizationParams
+INT4_TYPES = utils.INT4_TYPES
+INT_TYPES = utils.INT_TYPES
 
-QUANTIZED_TYPES = [jnp.int8, jnp.uint8]
-INT_TYPES = [jnp.int8, jnp.uint8, jnp.int16, jnp.uint16, jnp.int32, jnp.uint32]
+
+class FP4:
+  """FP4 quantization."""
+
+  int4_val = [
+      -6.0,
+      -4.0,
+      -3.0,
+      -2.0,
+      -1.5,
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      3.0,
+      4.0,
+      6.0,
+  ]
+
+  def __init__(self, val=None):
+    self.v = jnp.array(val if val else self.int4_val, dtype=jnp.float32)
+
+  def round(self, x):
+    # TODO(jianlijianli): make a faster version.
+    diff = jnp.abs(jnp.subtract(jnp.expand_dims(x, axis=-1), self.v))
+    argmin = jnp.argmin(diff, axis=-1)
+    return jnp.take(self.v, argmin.flatten()).reshape(x.shape)
+
+  def nudge(self, x, contract_dim):
+    # TODO(jianlijianli): allow symmetric, sub-channel etc.
+    target_min, target_max = self.v[0], self.v[-1]
+    value_min = jnp.min(x, axis=contract_dim, keepdims=True)
+    value_max = jnp.max(x, axis=contract_dim, keepdims=True)
+    scale = (value_max - value_min) / (target_max - target_min)
+    scale = scale + jnp.finfo(x.dtype).eps
+    zp = target_min - value_min / scale
+
+    q = jnp.divide(x, scale) + zp
+    rounded = self.round(q)
+    recover = jnp.multiply(jnp.subtract(rounded, zp), scale)
+    return recover.astype(x.dtype)
 
 
-def _get_expand_dims(eqn: str) -> List[int]:
-  """Potentially expand dimensions for scale.
+def _get_expand_dims_rhs(eqn: str) -> list[int]:
+  """Potentially expand dimensions for scale of right-hand-side tensor.
 
   It handles cases such as ABD,KDNH->KABNH and AD,KDNH->KANH, where weight is
   quantized to KNH and need to expand to K11NH and K1NH.
@@ -62,11 +108,35 @@ def _get_expand_dims(eqn: str) -> List[int]:
   return filling_dims
 
 
+def _get_expand_dims_lhs(eqn: str) -> list[int]:
+  """Potentially expand dimensions for scale of left-hand-side tensor.
+
+  It handles cases such as ABD,KDNH->KABNH and ABD,DKNH->ABKNH, where activation
+  is quantized to AB and need to expand to 1AB11 and AB111.
+
+  Args:
+    eqn: The equation for einsum.
+
+  Returns:
+    The expansion dimensions. Can be empty if no expansion is needed.
+  """
+  # TODO(wppark): this is sufficient now but might improve to cover more
+  # corner cases.
+  segs = eqn.split('->')
+  ins = segs[0].split(',')
+  act, out = ins[0].replace('.', ''), segs[1].replace('.', '')
+
+  filling_dims = [
+      -(i + 1) for i, val in enumerate(reversed(out)) if val not in act
+  ]
+  return filling_dims
+
+
 def get_min_max(
     bits: int = 8,
     unsigned: bool = False,
     use_fp: bool = False,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
   """Gets the min/max range for a given number of bits.
 
   Args:
@@ -89,52 +159,28 @@ def get_min_max(
     return -1 * 2 ** (bits - 1), 2 ** (bits - 1) - 1
 
 
-def compute_offset(x: JTensor, zp: JTensor, eqn: str):
+def compute_offset(eqn_normalized: str, x: JTensor, zp: JTensor) -> JTensor:
   """Computes offset: product of activation x with zero point of weight.
 
   Args:
+    eqn_normalized: The equation for the einsum between x and w. eqn_normalized
+      should not contain any '...'.
     x: Not quantized activation.
     zp: Not quantized zero point of weight.
-    eqn: The equation for the einsum between x and w.
 
   Returns:
     Offset tensor.
   """
-
-  def _get_x_reduce_axis(eqn: str, x_dims: int) -> List[int]:
-    """Get reduction axis on activation."""
-    if eqn == 'ANH,DNH->AD' or eqn == 'ABNH,DNH->ABD':
-      return [x_dims - 2, x_dims - 1]
-    else:
-      return [x_dims-1]
-
-  def _get_offset_eqn(eqn: str) -> str:
-    """Gets the offset equation dimensions."""
-    if eqn == 'AD,KDNH->KANH':
-      return 'A,KNH->KANH'
-    if eqn == 'ANH,DNH->AD':
-      return 'A,D->AD'
-    if eqn == '...y,yz->...z':
-      return '...y,z->...yz'
-    if eqn == 'ABD,KDNH->KABNH':
-      return 'AB,KNH->KABNH'
-    if eqn == 'ABNH,DNH->ABD':
-      return 'AB,D->ABD'
-    if eqn == 'ABD,DNH->ABNH':
-      return 'AB,NH->ABNH'
-    if eqn == 'AD,DNH->ANH':
-      return 'A,NH->ANH'
-    if eqn == '...D,DH->...H':
-      return '...D,H->...DH'
-    if eqn == '...y,zy->...z':
-      return '...y,z->...yz'
-    # Add new equations as needed.
-    raise NotImplementedError(f'eqn {eqn} not supported for asymmetric weight.')
-
-  reduce_axis = _get_x_reduce_axis(eqn, len(x.shape))
-  x_reduce = jnp.sum(x, axis=reduce_axis, keepdims=False)
-  offset_eqn = _get_offset_eqn(eqn)
-  offset = jnp.einsum(offset_eqn, x_reduce, zp)
+  if '.' in eqn_normalized:
+    raise ValueError(
+        'eqn_normalized should not contain broadcast ellipsis "...". Use'
+        ' opt_einsum.parser to normalize the eqn before using this function.'
+    )
+  ins, out = eqn_normalized.split('->')
+  lhs, rhs = ins.split(',')
+  rhs_out_dims = ''.join([c for c in out if c in rhs])
+  offset_eqn = lhs + ',' + rhs_out_dims + '->' + out
+  offset = jnp.einsum(offset_eqn, x, zp)
   return offset
 
 
@@ -144,6 +190,13 @@ def dot_general_int(lhs, rhs, dimension_numbers):
 
   def _dot_general_int(ops):
     lhs_, rhs_ = ops
+    if lhs_.dtype != rhs_.dtype:
+      # XLA will automatically cast operands with non-matching dtypes up to
+      # int32, which is often suboptimal.
+      dtype = utils.get_smallest_matching_dtype(lhs_, rhs_)
+      lhs_ = lhs_.astype(dtype)
+      rhs_ = rhs_.astype(dtype)
+
     return lax.dot_general(
         lhs_,
         rhs_,
@@ -151,9 +204,9 @@ def dot_general_int(lhs, rhs, dimension_numbers):
         preferred_element_type=jnp.int32)
 
   if lhs.dtype not in INT_TYPES:
-    raise ValueError(f'lhs.dtype: {lhs.dtype} is not int type: {INT_TYPES} ')
+    raise ValueError(f'{lhs.dtype=} is not an int type: {INT_TYPES} ')
   if rhs.dtype not in INT_TYPES:
-    raise ValueError(f'rhs.dtype: {rhs.dtype} is not int type: {INT_TYPES} ')
+    raise ValueError(f'{rhs.dtype=} is not an int type: {INT_TYPES} ')
   return _dot_general_int((lhs, rhs))
 
 
@@ -180,12 +233,61 @@ def dot_general_int_jvp(
   return y, y_tangent
 
 
+@jax.custom_vjp
+def custom_einsum(x: JTensor, w: JTensor, key: jax.Array) -> jnp.ndarray:
+  return jnp.einsum('abc,cd->abd', x, w)
+
+
+def custom_einsum_fwd(x: JTensor, w: JTensor, key: jax.Array):
+  """Custom forward pass for custom_einsum."""
+  # Currently support only abc,cd->abd
+  # TODO(jianlijianli): make this more general.
+  assert x.ndim == 3
+  assert w.ndim == 2
+  assert x.shape[2] == w.shape[0]
+  qx, sx, _ = reduce_precision(x, bits=8, contract_dims=[2])
+  qw, sw, _ = reduce_precision(w, bits=8, contract_dims=[0])
+  acc = jnp.einsum('abc,cd->abd', qx, qw, preferred_element_type=jnp.bfloat16)
+  res = jnp.multiply(sx, jnp.multiply(acc, sw))
+  return res, (qx, qw, sx, sw, key)
+
+
+def custom_einsum_bwd(res: Any, g: Any):
+  """Custom gradient for custom_einsum."""
+  qx, qw, sx, sw, key = res
+  g_with_sw = jnp.multiply(g, sw)
+  g_with_sx = jnp.multiply(g, sx)
+  qg_for_w, sg_for_w, _ = reduce_precision(
+      t=g_with_sw, bits=8, contract_dims=[2], random_rounding=True, key=key
+  )
+  qg_for_x, sg_for_x, _ = reduce_precision(
+      t=g_with_sx, bits=8, contract_dims=[0, 1], random_rounding=True, key=key
+  )
+  gx = jnp.einsum(
+      'abd,cd->abc', qg_for_w, qw, preferred_element_type=jnp.bfloat16
+  )
+  gw = jnp.einsum(
+      'abc,abd->cd', qx, qg_for_x, preferred_element_type=jnp.bfloat16
+  )
+  gx = jnp.multiply(gx, sg_for_w)
+  gw = jnp.multiply(gw, jnp.squeeze(sg_for_x))
+  return gx, gw, None
+
+
+custom_einsum.defvjp(custom_einsum_fwd, custom_einsum_bwd)
+
+
 def einsum(
     eqn: str,
     x: JTensor,
     w: JTensor,
     scale: JTensor,
-    zp: Optional[JTensor] = None,
+    zp: JTensor | None = None,
+    scale_act: JTensor | None = None,
+    zp_act: JTensor | None = None,
+    scale_eqn: str | None = None,
+    zp_eqn: str | None = None,
+    swap_xw: bool = False,
 ) -> JTensor:
   """Performs quantized einsum.
 
@@ -198,15 +300,39 @@ def einsum(
     w: The weight to the einsum; usually in quantized format.
     scale: The rescaling factor for the einsum. After applying this, the result
       is brought back to true value (no longer associated with scaling factors).
+      It is the scale factor of the weights in most of cases.
     zp: Optional zero point tensor.
+    scale_act: Optional rescaling factor for the einsum on the left-hand-side
+      tensor which is activation in most of cases. After applying this, the
+      result is brought back to true value.
+    zp_act: Optional zero point for the einsum on the right-hand-side  tensor
+      which is activation in most cases.
+    scale_eqn: Optional. Let tmp = einsum(eqn, x, w), scale_out =
+      einsum(scale_eqn, tmp, out). Default scale_eqn act as '...z,z->...z'
+    zp_eqn: Optional. ret = scale_out - einsum(zp_eqn, x, zp) Default zp_eqn act
+      as '...y,z->...z'
+    swap_xw: Swap the input and weight tensor in einsum for performance,
 
   Returns:
     A JTensor.
   """
+  if swap_xw:
+    input_str, output_str, _ = einsum_parser.parse_einsum_input((eqn, w, x))
+  else:
+    input_str, output_str, _ = einsum_parser.parse_einsum_input((eqn, x, w))
+  eqn_normalized = input_str + '->' + output_str
 
-  use_int_dot_general = (
-      x.dtype in QUANTIZED_TYPES and w.dtype in QUANTIZED_TYPES
-  )
+  # Non performent equation for inference testing purposes
+  # TODO: b/305735188 - Improve the performance by using the integer einsum op.
+  if zp_act is not None:
+    dequantized_x = jnp.multiply(x, scale_act) - zp_act
+    # explicit broadcast if necessary.
+    if w.ndim == 3 and scale.ndim == 1:
+      scale = jnp.expand_dims(scale, (1, 2))
+    dequantized_w = jnp.multiply(w, scale)
+    if zp is not None:
+      dequantized_w = dequantized_w - zp
+    return jnp.einsum(eqn, dequantized_x, dequantized_w)
 
   if (
       jax.dtypes.scalar_type_of(w.dtype) == float
@@ -214,17 +340,11 @@ def einsum(
   ):
     w = w.astype(jnp.bfloat16)
 
-  if use_int_dot_general:
-    if '.' in eqn:
-      # Replace the ellipsis with arbitrary symbols. Because
-      # einsum_eqn_to_dimension_numbers does not support ...
-      eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-      rank = len(x.shape)
-      batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-      eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-    else:
-      eqn_edited = eqn
-    dimension_numbers, perm = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+  if x.dtype in INT_TYPES and w.dtype in INT_TYPES:
+    assert not swap_xw, 'No need to swap x and w when both are int types.'
+    dimension_numbers, perm = utils.einsum_eqn_to_dimension_numbers(
+        eqn_normalized
+    )
     ret = dot_general_int(
         x,
         w,
@@ -233,18 +353,40 @@ def einsum(
     if perm is not None:
       ret = lax.transpose(ret, perm)
   else:
-    ret = jnp.einsum(eqn, x, w)
+    # jnp.einsum does not support implicit promotion of (u)int4 types.
+    w = w.astype(jnp.int8) if w.dtype in INT4_TYPES else w
+    x = x.astype(jnp.int8) if x.dtype in INT4_TYPES else x
+    if swap_xw:
+      ret = jnp.einsum(eqn_normalized, w, x)
+    else:
+      ret = jnp.einsum(eqn_normalized, x, w)
+
+  if scale_act is not None:
+    if scale_act.ndim == 0:
+      scale *= scale_act
+    else:
+      filling_dims_lhs = _get_expand_dims_lhs(eqn)
+      if filling_dims_lhs:
+        scale_act = jnp.expand_dims(scale_act, filling_dims_lhs)
+      ret = jnp.multiply(ret, scale_act)
 
   # Potentially expand dimensions of scale to match einsum output.
-  filling_dims = _get_expand_dims(eqn)
-  if filling_dims:
-    scale = jnp.expand_dims(scale, filling_dims)
+  filling_dims_rhs = _get_expand_dims_rhs(eqn)
+  if not swap_xw and filling_dims_rhs:
+    scale = jnp.expand_dims(scale, filling_dims_rhs)
 
-  ret = jnp.multiply(ret, scale)
+  if scale_eqn is not None:
+    ret = jnp.einsum(scale_eqn, ret, scale)
+  else:
+    ret = jnp.multiply(ret, scale)
 
   if zp is not None:
-    offset = compute_offset(x, zp, eqn)
+    if zp_eqn is not None:
+      offset = jnp.einsum(zp_eqn, x, zp)
+    else:
+      offset = compute_offset(eqn_normalized, x, zp)
     ret = ret - offset
+
   return ret
 
 
@@ -256,14 +398,21 @@ def pass_through(x: JTensor, fn: Any) -> JTensor:
 
 def reduce_precision(
     t: JTensor,
-    contract_dims: Optional[Sequence[int]],
+    contract_dims: Sequence[int] | None,
     need_gradient: bool = False,
     bits: int = 8,
     optimization_on_bound: bool = False,
+    p_value: float = 1.0,
     percentile: float = 1.0,
     use_symmetric: bool = True,
     use_fp: bool = False,
-) -> Tuple[JTensor, JTensor, Optional[JTensor]]:
+    add_scale_eps: bool = False,
+    per_channel: bool = False,
+    random_rounding: bool = False,
+    key: jax.Array | None = None,
+    save_fp8_to_int8: bool = True,
+    quant_method: str = 'default',
+) -> tuple[JTensor, JTensor, JTensor | None]:
   """Reduce the precision of a tensor.
 
   Generic for all tensors.
@@ -272,79 +421,132 @@ def reduce_precision(
     t: Input tensor.
     contract_dims: Speficies contracting dimesnions of the input tensor.
     need_gradient: If gradient is needed out of this function.
-    bits: target number of bits.
+    bits: Target number of bits.
     optimization_on_bound: If MAE bound optimizer is used.
-    percentile: percentile Factor to apply on the min/max range. Setting this to
+    p_value: Exponent of the p-mean error metric. Default to 1.0 which is MAE.
+    percentile: Percentile Factor to apply on the min/max range. Setting this to
       other than 1.0 disables optimization_on_bound.
     use_symmetric: If the input tensor is quantized symmetrically.
-    use_fp: use floating point.
+    use_fp: Use floating point.
+    add_scale_eps: Add eps value or replace zero value by 1 to avoid division by
+      zero.
+    per_channel: use per-channel clipping optimization.
+    random_rounding: round with uniform random.
+    key: rng key for rounding.
+    save_fp8_to_int8: If fp8 will be saved as int8. Only works when use_fp is
+      true and should be removed eventually.
+    quant_method: Quantization method: * 'default' - extracts min and max for
+      quantization scale estimation. It is well applied for int8, in4, int2
+      quantization. * 'bin' - binarization, where scale is defined by mean|w|. *
+      'bin_norm' - binarization with weight normalization.
 
   Returns:
     A tuple of quantized tensor, quantization scale
       and quantization zero point (optional).
   """
-  min_value, max_value = get_min_max(bits, use_fp=use_fp)
 
-  if use_symmetric:
-    bound = jnp.max(jnp.abs(t), axis=contract_dims, keepdims=True)
-    scale_bound = max_value
+  if bits == 1 and quant_method in ['bin', 'bin_norm']:
+    if quant_method == 'bin_norm':
+      mean = jnp.mean(t, axis=contract_dims, keepdims=True)
+      t = t - mean
+
+    # Remove zeros, so that below jnp.sign return only 1, -1.
+    t = jnp.where(t == 0.0, 1e-6, t)
+    scale = jnp.mean(jnp.abs(t), axis=contract_dims, keepdims=True)
+
+    # Binarize, (conditioned that all zeros are removed above).
+    t = pass_through(t, jnp.sign)
+    return t, scale, None
   else:
-    t_max = jnp.max(t, axis=contract_dims, keepdims=True)
-    t_min = jnp.min(t, axis=contract_dims, keepdims=True)
-    bound = t_max - t_min
-    scale_bound = max_value - min_value
+    min_value, max_value = get_min_max(bits, use_fp=use_fp)
 
-  if percentile < 1.0:
-    bound = jnp.multiply(bound, percentile)
-  elif optimization_on_bound:
-    bound = optimization.get_best_bound(t, bound, min_value, max_value)
-
-  scale = bound / scale_bound
-  scale = jnp.where(scale == 0.0, 1.0, scale)
-
-  if use_symmetric:
-    zp = None
-    t = jnp.divide(t, scale)
-  else:
-    zp = min_value - t_min / scale
-    t = jnp.divide(t, scale) + zp
-    zp = jnp.multiply(scale, zp)
-
-  if use_fp:
-    # No need to round.
-    t = jnp.clip(t, min_value, max_value).astype(jnp.float8_e4m3fn)
-    # TODO(jianlijianli): refactor to remove this logic.
-    t = jax.lax.bitcast_convert_type(t, new_dtype=jnp.int8)
-  else:
-    if need_gradient:
-      t = pass_through(t, jnp.round)
-      t = jnp.clip(t, min_value, max_value)
+    if use_symmetric:
+      bound = jnp.max(jnp.abs(t), axis=contract_dims, keepdims=True)
+      scale_bound = max_value
     else:
-      t = jnp.round(t)
-      # Use int8 as container.
-      t = jnp.clip(t, min_value, max_value).astype(jnp.int8)
+      t_max = jnp.max(t, axis=contract_dims, keepdims=True)
+      t_min = jnp.min(t, axis=contract_dims, keepdims=True)
+      bound = t_max - t_min
+      scale_bound = max_value - min_value
 
-  return t, scale, zp
+    if isinstance(percentile, JTensor) or percentile < 1.0:
+      bound = jnp.multiply(bound, percentile)
+    elif optimization_on_bound:
+      bound = optimization.get_best_bound(
+          t, bound, min_value, max_value, p_value, per_channel=per_channel
+      )
+
+    scale = bound / scale_bound
+
+    if add_scale_eps:
+      # Add epsilon to avoid divide-by-zero.
+      scale = scale + jnp.finfo(t.dtype).eps
+    else:
+      scale = jnp.where(scale == 0.0, 1.0, scale)
+
+    if use_symmetric:
+      zp = None
+      t = jnp.divide(t, scale)
+    else:
+      zp = min_value - t_min / scale
+      t = jnp.divide(t, scale) + zp
+      zp = jnp.multiply(scale, zp)
+
+    if use_fp:
+      # No need to round.
+      t = jnp.clip(t, min_value, max_value).astype(jnp.float8_e4m3fn)
+      # TODO(jianlijianli): refactor to remove this logic.
+      if save_fp8_to_int8:
+        # This is needed since fp8 cannot be saved.
+        t = jax.lax.bitcast_convert_type(t, new_dtype=jnp.int8)
+      else:
+        # This is needed since bf16 x fp8 is not allowed.
+        t = t.astype(jnp.bfloat16)
+    else:
+      if need_gradient:
+        t = pass_through(t, jnp.round)
+        t = jnp.clip(t, min_value, max_value)
+      else:
+        if random_rounding:
+          t = t + jax.random.uniform(
+              key=key, shape=t.shape, minval=-0.5, maxval=0.5
+          )
+        t = jnp.round(t)
+        container_dtype = (
+            jnp.int8 if bits <= 8 else jnp.int16 if bits <= 16 else jnp.int32
+        )
+        t = jnp.clip(t, min_value, max_value).astype(container_dtype)
+
+    return t, scale, zp
 
 
-def eqn_to_weight_contract_dims(eqn: str):
+def eqn_to_weight_contract_dims(eqn: str) -> list[int]:
   segs = eqn.split('->')
   ins = segs[0].split(',')
   w, out = ins[1].replace('.', ''), segs[1].replace('.', '')
   return [i for i, val in enumerate(w) if val not in out]
 
 
+def eqn_to_activation_contract_dims(eqn: str) -> list[int]:
+  segs = eqn.split('->')
+  ins = segs[0].split(',')
+  act, out = ins[0].replace('.', ''), segs[1].replace('.', '')
+  return [-(i + 1) for i, val in enumerate(reversed(act)) if val not in out]
+
+
 def reduce_einsum_weight_precision(
-    eqn: str,
+    eqn: str | None,
     t: JTensor,
-    calculation_type: jnp.dtype = jnp.bfloat16,
+    calculation_dtype: jnp.dtype = jnp.bfloat16,
     squeeze: bool = True,
     need_gradient: bool = False,
     bits: int = 8,
     optimization_on_bound: bool = False,
     percentile: float = 1.0,
     use_symmetric: bool = True,
-) -> Tuple[JTensor, JTensor, Optional[JTensor]]:
+    quant_method: str = 'default',
+    contract_dims: Sequence[int] | None = None,
+) -> tuple[JTensor, JTensor, JTensor | None]:
   """Reduce the precision of the weight of einsum.
 
   It uses per-channel quantization so einsum equation is passed in as well.
@@ -352,22 +554,31 @@ def reduce_einsum_weight_precision(
   Args:
     eqn: The equation for the einsum.
     t: The weight tensor for the einsum.
-    calculation_type: The type for calculation.
+    calculation_dtype: The type for calculation.
     squeeze: If the output scale is squeezed.
     need_gradient: If gradient is needed out of this function.
     bits: Target number of bits.
     optimization_on_bound: If MAE bound optimizer is used.
     percentile: Percentile factor to apply on the min/max range.
     use_symmetric: If weights are quantized symmetrically.
+    quant_method: Quantization method.
+    contract_dims: Contraction dims. It can be used if eqn is not defined.
 
   Returns:
     A tuple of JTensors. The first one is the quantized weight and the second
     one is the scaling factor.
   """
-  contract_dims = eqn_to_weight_contract_dims(eqn)
+  assert not (
+      contract_dims is not None and eqn is not None
+  ), 'both contract_dims and eqn can not be defined'
 
-  if t.dtype != calculation_type:
-    t = t.astype(calculation_type)
+  if eqn is not None:
+    contract_dims = eqn_to_weight_contract_dims(eqn)
+  else:
+    assert contract_dims, 'contract_dims must be defined if eqn is None'
+
+  if t.dtype != calculation_dtype:
+    t = t.astype(calculation_dtype)
 
   t, scale, zp = reduce_precision(
       t,
@@ -377,6 +588,7 @@ def reduce_einsum_weight_precision(
       optimization_on_bound,
       percentile=percentile,
       use_symmetric=use_symmetric,
+      quant_method=quant_method,
   )
   if squeeze:
     scale = jnp.squeeze(scale)
@@ -401,83 +613,295 @@ def clip_to_fp16(t: JTensor) -> JTensor:
   return t
 
 
+def get_scale_shape(
+    weight_shape: Sequence[int], contract_dims: Sequence[int]
+) -> Sequence[int]:
+  """Gets scaler shape from weight_shape and contract_dims.
+
+  Args:
+    weight_shape: Weights shape.
+    contract_dims: List of contraction dims.
+
+  Returns:
+    A scale shape.
+  """
+  return [
+      dim_size
+      for i, dim_size in enumerate(weight_shape)
+      if i not in contract_dims
+  ]
+
+
+def get_sub_channel_shape(
+    shape: Sequence[int],
+    block_size: int,
+    contract_dims: Sequence[int],
+    insert_sub_channel: bool = True,
+    error_on_misaligned_shape: bool = False,
+) -> tuple[Sequence[int], Sequence[int]]:
+  """Converts a shape's contract dim into sub-channel and block_size.
+
+  It can be useful for reducing quantization error in post training quantization
+  or quantization aware training, shown in https://arxiv.org/pdf/2305.16619.pdf.
+
+  Args:
+    shape: Tensor shape.
+    block_size: Block size, it defines number of sub-channels.
+    contract_dims: List of contraction dims.
+    insert_sub_channel: If True it will insert new dim for sub channel, else it
+      will use existing feature dim.
+    error_on_misaligned_shape: If True it will raise an error for size not
+      aligned with block_size. By default it is False. It allows to apply sub
+      channel on layers with aligned shape and ignore layers with non aligned
+      shape, so it will not block an experiment.
+
+  Returns:
+    A tuple of new shape with new contract_dims.
+  """
+
+  new_contract_dims = list(contract_dims)
+  sub_channel_shape = list(shape)
+
+  if block_size <= 0:
+    return sub_channel_shape, new_contract_dims
+
+  contract_shape = [shape[i] for i in new_contract_dims]
+  # Index of dim in new_contract_dims, which corresponds to max dim among
+  # contraction dims of input shape.
+  max_contract_dim_ind = np.argmax(contract_shape)
+
+  contract_dim = new_contract_dims[max_contract_dim_ind]
+  if block_size >= shape[contract_dim]:
+    logging.warning(
+        'block_size %d is smaller than max input dim: %s; of contract dims: %s',
+        block_size,
+        str(shape),
+        str(contract_dims),
+    )
+    return sub_channel_shape, new_contract_dims
+
+  sub_channels, rem = divmod(shape[contract_dim], block_size)
+  if rem > 0:
+    if error_on_misaligned_shape:
+      raise ValueError(
+          f'block_size {block_size} must fully divide shape: {shape}'
+          f'with contract dims: {contract_dims}'
+      )
+    else:
+      logging.warning(
+          'block_size %d must fully divide shape: %s; of contract dims: %s',
+          block_size,
+          str(shape),
+          str(contract_dims),
+      )
+      return sub_channel_shape, new_contract_dims
+
+  if insert_sub_channel:
+    sub_channel_shape[contract_dim] = block_size
+    sub_channel_shape.insert(contract_dim, sub_channels)
+
+    # Shift all contract dims starting from max_contract_dim_ind:
+    for i in range(max_contract_dim_ind, len(new_contract_dims)):
+      new_contract_dims[i] += 1
+  else:
+    feature_dims = tuple(i for i in range(len(shape)) if i not in contract_dims)
+    sub_channel_shape[contract_dim] = block_size
+    sub_channel_shape[feature_dims[0]] *= sub_channels
+
+  return sub_channel_shape, new_contract_dims
+
+
 def fakequant_einsum(
     eqn: str,
     t: JTensor,
     bits: int = 8,
-    calculation_type: jnp.dtype = jnp.float32,
+    calculation_dtype: jnp.dtype = jnp.float32,
     use_symmetric: bool = True,
     block_size: int = 0,
+    use_fp: bool = False,
+    quant_method: str = 'default',
 ) -> JTensor:
   """Nudges weight of einsum with FakeQuant.
 
+    It quantizes weights (using einsum equation for getting contract_dims) then
+    de-quantizes it and returns it as an output.
   Args:
     eqn: The equation for the einsum. Determines the channel dimension.
     t: The weight tensor for the einsum.
     bits: Target number of bits.
-    calculation_type: The type for calculation.
+    calculation_dtype: The type for calculation.
     use_symmetric: Use symmetric quantization for weights.
-    block_size: block wise quantization size. 0 to turn if off.
+    block_size: Block wise quantization size. 0 to turn if off.
+    use_fp: Use floating point.
+
+  quant_method: Quantization method:
+    * 'default' - extracts min and max for quantization scale estimation.
+      It is well applied for int8, in4, int2 quantization.
+    * 'bin' - binarization, where scale is defined by mean|w|.
+    * 'bin_norm' - binarization with weight normalization.
 
   Returns:
     The nudged weight tensor.
   """
-  orignal_shape = t.shape
+  ret_type = t.dtype
+  contract_dims = eqn_to_weight_contract_dims(eqn)
+  original_shape = list(t.shape)
   if block_size > 0:
-    # TODO(jianlijianli): Make this more general.
-    assert orignal_shape[0] % block_size == 0
-    assert orignal_shape[0] >= block_size
-    t.reshape(block_size, orignal_shape[0] * orignal_shape[1] // block_size)
-  q, scale, zp = reduce_einsum_weight_precision(
-      eqn,
+    sub_channel_shape, contract_dims = get_sub_channel_shape(
+        original_shape, block_size, contract_dims
+    )
+    t = jnp.reshape(t, sub_channel_shape)
+
+  if t.dtype != calculation_dtype:
+    t = t.astype(calculation_dtype)
+
+  if use_fp and bits == 4:
+    # Short cut for fp4.
+    fp4 = FP4()
+    return fp4.nudge(t, contract_dims)
+
+  # Quantize input tensor.
+  q, scale, zp = reduce_precision(
       t,
-      calculation_type=calculation_type,
-      squeeze=False,
+      contract_dims,
       need_gradient=True,
       bits=bits,
       optimization_on_bound=False,
       use_symmetric=use_symmetric,
+      quant_method=quant_method,
   )
+  # De-quantized q using scale and zp.
   res = jnp.multiply(q, scale)
   if zp is not None:
     res = jnp.subtract(res, zp)
   if block_size > 0:
-    t.reshape(orignal_shape)
-  return res.astype(t.dtype)
+    res = jnp.reshape(res, original_shape)
+  return res.astype(ret_type)
 
 
 def reduce_precision_activation(
     t: JTensor,
     need_gradient: bool = False,
     bits: int = 8,
-) -> Tuple[JTensor, JTensor]:
+    contract_dims: Sequence[int] | None = None,
+    symmetric: bool = True,
+    percentile: float = 1.0,
+) -> tuple[JTensor, JTensor, JTensor | None]:
   """Reduce the precision of activation.
 
   Args:
     t: Input tensor.
     need_gradient: If gradient is needed out of this function.
     bits: Target number of bits.
+    contract_dims: Contract dimension.
+    symmetric: If the activation is quantized symmetrically.
+    percentile: Percentile Factor to apply on the min/max range. Setting this to
+      other than 1.0 disables optimization_on_bound.
+
+  Returns:
+    A tuple of JTensors. The first one is the quantized activation, the
+    second one is the scaling factor, and the last is the zero point.
+  """
+  qt, scale, zp = reduce_precision(
+      t,
+      contract_dims,
+      need_gradient,
+      bits,
+      False,
+      use_symmetric=symmetric,
+      percentile=percentile,
+  )
+  return qt, scale, zp
+
+
+# TODO(wppark): support clipping for activation, e.g. using standard deviation.
+def reduce_einsum_activation_precision(
+    eqn: str,
+    t: JTensor,
+    bits: int = 8,
+    squeeze: bool = True,
+    per_channel: bool = False,
+    symmetric: bool = True,
+    percentile: float = 1.0,
+) -> tuple[JTensor, JTensor, JTensor | None]:
+  """Reduce the precision of the activation of einsum.
+
+  It uses per-tensor or per-toeken quantization so einsum equation is passed in
+  as well.
+
+  Args:
+    eqn: The equation for the einsum.
+    t: The activation tensor for the einsum.
+    bits: Target number of bits.
+    squeeze: If the output scale is squeezed.
+    per_channel: Whether or not to quantize activation channel-wisely.
+    symmetric: If the activation is quantized symmetrically.
+    percentile: Percentile Factor to apply on the min/max range. Setting this to
+      other than 1.0 disables optimization_on_bound.
 
   Returns:
     A tuple of JTensors. The first one is the quantized activation and the
     second one is the scaling factor.
   """
-  qt, scale, _ = reduce_precision(t, None, need_gradient, bits, False)
-  return qt, scale
+  if per_channel:
+    contract_dims = eqn_to_activation_contract_dims(eqn)
+  else:
+    contract_dims = None
+
+  t, scale, zp = reduce_precision(
+      t,
+      contract_dims,
+      bits=bits,
+      use_symmetric=symmetric,
+      percentile=percentile,
+  )
+
+  if squeeze:
+    scale = jnp.squeeze(scale, axis=contract_dims)
+    if zp is not None:
+      zp = jnp.squeeze(zp, axis=contract_dims)
+  return t, scale, zp
 
 
-def fakequant_activation(t: JTensor, bits: int = 8) -> JTensor:
+def fakequant_activation(
+    t: JTensor,
+    bits: int = 8,
+    eqn: str | None = None,
+    per_channel: bool = False,
+    symmetric: bool = True,
+    percentile: float = 1.0,
+) -> JTensor:
   """FakeQuant activation.
 
   Args:
-    t: Activation tensor
+    t: Activation tensor.
     bits: Target number of bits.
+    eqn: Einsum equation. If None, do per-tensor quantization.
+    per_channel: Whether or not to quantize activation channel-wisely.
+    symmetric: If the activation is quantized symmetrically.
+    percentile: Percentile Factor to apply on the min/max range. Setting this to
+      other than 1.0 disables optimization_on_bound.
 
   Returns:
     Nudged activation.
   """
-  qt, scale = reduce_precision_activation(t, need_gradient=True, bits=bits)
-  return jnp.multiply(qt, scale).astype(t.dtype)
+  contract_dims = None
+  if per_channel:
+    if eqn is None:
+      raise ValueError('eqn should be defined with per_channel = True.')
+    contract_dims = eqn_to_activation_contract_dims(eqn)
+  qt, scale, zp = reduce_precision_activation(
+      t,
+      need_gradient=True,
+      bits=bits,
+      contract_dims=contract_dims,
+      symmetric=symmetric,
+      percentile=percentile,
+  )
+  res = jnp.multiply(qt, scale)
+  if zp is not None:
+    res = jnp.subtract(res, zp)
+  return res.astype(t.dtype)
 
 
 def compute_shape_with_subchannels(
@@ -485,7 +909,7 @@ def compute_shape_with_subchannels(
     inputs_shape: Sequence[int],
     contract_dims: Sequence[int],
     min_sub_channel_size: int = -1,
-) -> List[int]:
+) -> list[int]:
   """Computes new shape of input tensor for subchannel quantization.
 
   Args:
@@ -498,8 +922,6 @@ def compute_shape_with_subchannels(
   Returns:
     New shape for subchannel quantization.
   """
-  # pylint: disable=logging-fstring-interpolation
-  logging.info(f'inputs_shape before sub-channel split {inputs_shape}')
   ndims = len(inputs_shape)
 
   feature_axis = tuple(i for i in range(ndims) if i not in contract_dims)
@@ -529,11 +951,6 @@ def compute_shape_with_subchannels(
     # To avoid it, we do feature size redistribution,
     # so feature size has to be divisible by 2:
     if new_size*2 != new_inputs_shape[axis_ind_max_size]:
-      logging.info(
-          f'inputs_shape[axis_ind_max_size]: {inputs_shape[axis_ind_max_size]} '
-          f'is not divisible by sub_channels: {sub_channels} '
-          'so early stoping of dividing into sub-channels'
-      )
       break
 
     if new_size < min_sub_channel_size:
@@ -543,42 +960,7 @@ def compute_shape_with_subchannels(
     new_inputs_shape[feature_axis[0]] *= 2
 
     remainder /= 2
-  logging.info(f'new_inputs_shape after sub-channel split: {new_inputs_shape}')
-  # pylint: enable=logging-fstring-interpolation
   return new_inputs_shape
-
-
-def dequant(ret, scales) -> jnp.ndarray:
-    for scale in scales:
-      # dequant_dtype: bf16
-      ret = ret.astype(jnp.bfloat16) * scale.astype(jnp.bfloat16)
-    return ret
-
-
-# def matmul_true_int8(eqn, lhs, rhs):
-#   assert lhs.dtype == jnp.int8
-#   assert rhs.dtype == jnp.int8
-#   result = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32)
-#   assert result.dtype == jnp.int32
-#   return result
-
-
-# def aqt_einsum(a, w):
-#   max_int8 = 127
-#   def quant_int8(x):
-#     return jnp.clip(jnp.round(x), -max_int8, max_int8).astype(jnp.int8)
-
-#   # Calibration. Calibration function is also customizable and injectable.
-#   a_s = max_int8 / jnp.max(jnp.abs(a), axis=1, keepdims=True)
-#   w_s = max_int8 / jnp.max(jnp.abs(w), axis=0, keepdims=True)
-#   assert a_s.shape == (batch_size, 1) # shapes checked for illustration
-#   assert w_s.shape == (1, channels_out)
-
-#   # int8 matmul with int32 accumulator
-#   result = matmul_true_int8(quant_int8(a * a_s), quant_int8(w * w_s)) / (a_s * w_s)
-#   assert result.shape == (batch_size, channels_out)
-
-#   return result
 
 
 def aqt_einsum(
@@ -588,6 +970,8 @@ def aqt_einsum(
     *,
     lhs_quantizer: Any,
     rhs_quantizer: Any,
+    scale_eqn: str | None = None,
+    zp_eqn: str | None = None,
 ) -> JTensor:
   """Quantized einsum with AQT style.
 
@@ -597,33 +981,31 @@ def aqt_einsum(
     rhs: Right-hand side of the einsum (mostly weight, can be activation).
     lhs_quantizer: The tensor quantizer for lhs.
     rhs_quantizer: The tensor quantizer for rhs.
+    scale_eqn: Optional. Let tmp = einsum(eqn, x, w), scale_out =
+      einsum(scale_eqn, tmp, out). Default scale_eqn act as '...z,z->...z'
+    zp_eqn: Optional. ret = scale_out - einsum(zp_eqn, x, zp) Default zp_eqn act
+      as '...y,z->...z'
 
   Returns:
     An array containing the result with the same dtype as 'lhs' and 'rhs'.
   """
-  # return jnp.einsum(eqn, lhs, rhs)
-
-  if '.' in eqn:
-    # Replace the ellipsis with arbitrary symbols.
-    eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
-    rank = len(lhs.shape)
-    batch_eqn = eqn_sym[:(rank - 1)] if rank else '...'
-    eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-    dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
-  else:
-    dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
-
+  input_str, output_str, _ = einsum_parser.parse_einsum_input((eqn, lhs, rhs))
+  eqn_normalized = input_str + '->' + output_str
+  dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_normalized)
   lhs_contract_dims, rhs_contract_dims = dimension_numbers[0]
 
   if (
       hasattr(rhs_quantizer, 'sub_channels')
       and rhs_quantizer.sub_channels is not None
   ):
+    logging.warning(
+        'sub_channels option will deprecate. Use the block_size API for sub'
+        ' channel support instead.'
+    )
     if lhs_quantizer.precision is not None:
       raise ValueError(
           'sub_channels is not implemented for activation quantization yet.'
       )
-    logging.info('===lhs_scale0===')
 
     input_shape = rhs.shape
     new_shape = compute_shape_with_subchannels(
@@ -641,62 +1023,32 @@ def aqt_einsum(
     deq_rhs = jnp.reshape(deq_rhs, input_shape)
     ret = jnp.einsum(eqn, lhs, deq_rhs)
   else:
+    if scale_eqn is not None or zp_eqn is not None:
+      if lhs_quantizer.precision is not None:
+        raise NotImplementedError(
+            'Activation quantization with custom scale_eqn/zp_eqn is not'
+            ' implemented.'
+        )
+      rhs, rhs_scale, rhs_zp = rhs_quantizer.quantize(
+          rhs, rhs_contract_dims, squeeze_scale=True, quantized_dtype=rhs.dtype
+      )
+      out_scale = rhs_scale
+    else:
+      lhs, lhs_scale, _ = lhs_quantizer.quantize(
+          lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=lhs.dtype
+      )
+      rhs, rhs_scale, rhs_zp = rhs_quantizer.quantize(
+          rhs, rhs_contract_dims, squeeze_scale=False, quantized_dtype=rhs.dtype
+      )
+      out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
 
-    logging.info(f'===lhs_scale1 lhs.dtype: {lhs.dtype}=== lhs_contract_dims: {lhs_contract_dims}')
-    # quantizer.py, p655
-    # lhs_contract_dims: 3, lhs.dtype: bf16， 如果quantized_dtype改为int8训练不了
-    lhs, lhs_scale, _ = lhs_quantizer.quantize(
-        lhs, lhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
-    # r/lhs: (8, 2048, 32, 128), r/lhs_scale: (1, 1, 1, 1)
-    rhs, rhs_scale, rhs_zp = rhs_quantizer.quantize(
-        rhs, rhs_contract_dims, squeeze_scale=False, quantized_dtype=jnp.int8)
-    logging.info(f'lhs: {lhs.dtype} shape: {lhs.shape}')
-    logging.info(f'rhs: {rhs.dtype} shape: {rhs.shape}')
-    logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
-    logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')
-    logging.info(f'rhs_zp: {rhs_zp}')
-    logging.info(f'dimension_numbers: {dimension_numbers}')
+    ret = jnp.einsum(eqn, lhs, rhs)
 
-    # lsp
-    # preferred_element_type指定输出数据类型
-    out = jnp.einsum(eqn, lhs, rhs, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale, preferred_element_type=jnp.int32, precision=jax.lax.Precision.DEFAULT)
-    # dimension_numbers = ()
-    # out = jax.lax.dot_general(
-    #     lhs,
-    #     rhs,
-    #     dimension_numbers=dimension_numbers,
-    #     preferred_element_type=jnp.int8,
-    #     precision=jax.lax.Precision.DEFAULT,
-    # )
-    # out_scale = jax.lax.dot_general(
-    #     lhs_scale,
-    #     rhs_scale,
-    #     dimension_numbers=dimension_numbers,
-    #     preferred_element_type=jnp.bfloat16,
-    #     precision=jax.lax.Precision.DEFAULT,
-    # )
-    logging.info(f'out: {out.dtype} shape: {out.shape}')
-    logging.info(f'lhs_scale: {lhs_scale.dtype} shape: {lhs_scale.shape}')
-    logging.info(f'rhs_scale: {rhs_scale.dtype} shape: {rhs_scale.shape}')
-    logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
+    if scale_eqn is not None:
+      ret = jnp.einsum(scale_eqn, ret, out_scale)
+    else:
+      ret = jnp.multiply(ret, out_scale)
 
-    # logging.info(f'out_scale: {out_scale.dtype} shape: {out_scale.shape}')
-
-    # out_scale = jnp.einsum(eqn, lhs_scale, rhs_scale)
-    # lhs_scale: bsz * length
-    # for s in [lhs_scale, rhs_scale]:
-    #   ret = ret.astype(jnp.bfloat16) * s.astype(jnp.bfloat16)
-    # 反量化回去, maxtext的out_scale shape: bsz * length
-    # ret = dequant(out, [lhs_scale, rhs_scale])
-    # lsp
-    # ret = out.astype(jnp.bfloat16) / out_scale.astype(jnp.bfloat16)
-    ret = out.astype(jnp.float32) / out_scale.astype(jnp.float32)
-
-    # self.add_summary("out_scale_rms", _rms(out_scale), verbosity=4)
-    # self.add_summary("ret_rms", _rms(ret), verbosity=4)
-
-    # None
     if rhs_zp is not None:
       if (
           hasattr(lhs_quantizer, 'precision')
@@ -706,7 +1058,10 @@ def aqt_einsum(
             'Activation quantization with weight zero point '
             'is not supported yet.'
         )
-      offset = compute_offset(lhs, jnp.squeeze(rhs_zp), eqn)
+      if zp_eqn is not None:
+        offset = jnp.einsum(zp_eqn, lhs, rhs_zp)
+      else:
+        offset = compute_offset(eqn_normalized, lhs, jnp.squeeze(rhs_zp))
       ret = ret - offset
 
   return ret
@@ -717,10 +1072,10 @@ def fakequant_vn(
     w: JTensor,
     next_prng_key: PRNGKey,
     wp: WeightQuantizationParams,
-    step: Optional[JTensor] = None,
+    step: JTensor | None = None,
     do_eval: bool = False,
     bits: int = 8,
-    calculation_type: jnp.dtype = jnp.bfloat16,
+    calculation_dtype: jnp.dtype = jnp.bfloat16,
     use_symmetric: bool = True,
 ):
   """Add variational noise to weight w.
@@ -733,7 +1088,7 @@ def fakequant_vn(
     step: Current training step.
     do_eval: Evaluation mode, if True.
     bits: Target number of bits.
-    calculation_type: The type for calculation.
+    calculation_dtype: The type for calculation.
     use_symmetric: Use symmetric quantization for weights.
 
   Returns:
@@ -761,7 +1116,7 @@ def fakequant_vn(
         eqn,
         w,
         bits=bits,
-        calculation_type=calculation_type,
+        calculation_dtype=calculation_dtype,
         use_symmetric=use_symmetric,
     )
   else:
@@ -798,3 +1153,25 @@ def fakequant_vn(
       scale = jax.lax.stop_gradient(scale)
 
     return w + scale.astype(w.dtype) * noises  # pytype: disable=attribute-error
+
+
+def factorize_weight(var: JTensor, rank: int) -> tuple[JTensor, JTensor]:
+  """Apply SVD to variable and return two matrices.
+
+  Args:
+    var: JTensor to be factorized.
+    rank: Inner rank of the factorized output. In terms of SVD, keeps top "rank"
+
+  singular values and zeros out the rest.
+
+  Returns:
+    Two JTensors representing the truncated SVD version of var with rank "rank".
+  The singular values are folded into the second matrix.
+  """
+  u, s, vh = jnp.linalg.svd(var, full_matrices=False)
+  u_truncated, s_truncated, vh_truncated = (
+      u[..., :, :rank],
+      s[..., :rank],
+      vh[..., :rank, :],
+  )
+  return u_truncated, jnp.einsum('...i,...ij->...ij', s_truncated, vh_truncated)

@@ -1,0 +1,4 @@
+TPU_NAME=llm-jax-v3-8-10
+EXP=Llama7BTest
+ZONE=us-central2-b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models_us-east5/lsp_test/v5p_32_paxml_aqt_int8/ 2>&1 --enable_checkpoint_saving=False --eval_on_test=False | tee pax_v5p_32.int8" --project=colorful-aia

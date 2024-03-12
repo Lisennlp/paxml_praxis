@@ -14,8 +14,11 @@
 # limitations under the License.
 
 """Activation layers."""
+
 from __future__ import annotations
+
 from typing import Type
+
 import jax
 import jax.numpy as jnp
 from praxis import base_layer
@@ -67,6 +70,14 @@ class ReLU(BaseActivation):
   def __call__(self, inputs: JTensor) -> JTensor:
     """Applies the activation function."""
     return jax.nn.relu(inputs)
+
+
+class SineReLU(BaseActivation):
+  """sineReLU activation layer."""
+
+  def __call__(self, inputs: JTensor) -> JTensor:
+    """Applies the activation function."""
+    return jnp.sin(jax.nn.relu(inputs))
 
 
 class ReLU6(BaseActivation):

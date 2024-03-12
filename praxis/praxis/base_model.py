@@ -19,12 +19,10 @@ The model solely consists of the network, while the task combines one or several
 models with one or several learners/optimizers.
 """
 
-import dataclasses
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Sequence
 
 from praxis import base_input
 from praxis import base_layer
-from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
 
@@ -32,11 +30,10 @@ NestedMap = py_utils.NestedMap
 JTensor = pytypes.JTensor
 Metrics = pytypes.Metrics
 WeightedScalars = pytypes.WeightedScalars
-Predictions = Union[JTensor, NestedMap, Dict[str, Any], Dict[int, Any]]
-LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
+Predictions = JTensor | NestedMap | dict[str, Any] | dict[int, Any]
 
-DecodeOut = Tuple[WeightedScalars, NestedMap, Metrics]
-ProcessDecodeOut = Tuple[WeightedScalars, Sequence[Tuple[str, Any]], Metrics]
+DecodeOut = tuple[WeightedScalars | Metrics, NestedMap, Metrics]
+ProcessDecodeOut = tuple[WeightedScalars, Sequence[tuple[str, Any]], Metrics]
 
 
 class BaseModel(base_layer.BaseLayer):
@@ -65,8 +62,8 @@ class BaseModel(base_layer.BaseLayer):
     raise NotImplementedError('Abstract method')
 
   def compute_loss(
-      self, predictions: Predictions,
-      input_batch: NestedMap) -> Tuple[WeightedScalars, Dict[str, Any]]:
+      self, predictions: Predictions, input_batch: NestedMap
+  ) -> tuple[WeightedScalars | Metrics, dict[str, Any]]:
     """Computes the loss and other metrics for the given predictions.
 
     This method must be defined in a concrete derived class.
@@ -76,10 +73,13 @@ class BaseModel(base_layer.BaseLayer):
       input_batch: A `.NestedMap` object containing input tensors to this tower.
 
     Returns:
-      - WeightedScalars - A dict or NestedMap containing str keys and
-        (value, weight) pairs as values, where one or more entries are
-        expected to correspond to the loss (or losses).  These values will be
-        aggregated upstream as: sum(weight * value) / sum(weight).
+      - Metrics data: This can be either:
+        1. WeightedScalars - A dict or NestedMap containing str keys and
+          (value, weight) pairs as values, where one or more entries are
+          expected to correspond to the loss (or losses).  These values will be
+          aggregated upstream as: sum(weight * value) / sum(weight).
+        2. clu_metrics - a NestedMap containing str keys and clu_metrics.Metric
+          objects.
       - A dict containing arbitrary tensors describing something about each
         training example, where the first dimension of each tensor is the batch
         index.
@@ -87,7 +87,8 @@ class BaseModel(base_layer.BaseLayer):
     raise NotImplementedError('Abstract method')
 
   def __call__(
-      self, input_batch: NestedMap) -> Tuple[WeightedScalars, Dict[str, Any]]:
+      self, input_batch: NestedMap
+  ) -> tuple[WeightedScalars | Metrics, dict[str, Any]]:
     """Forward propagation through one tower of the model.
 
     Args:
@@ -96,9 +97,13 @@ class BaseModel(base_layer.BaseLayer):
     Returns:
       (dict, dict):
 
-      - WeightedScalars - A dict or NestedMap containing str keys and
-        (value, weight) pairs as values, where one or more entries are
-        expected to correspond to the loss (or losses).
+      - Metrics data: This can be either:
+        1. WeightedScalars - A dict or NestedMap containing str keys and
+          (value, weight) pairs as values, where one or more entries are
+          expected to correspond to the loss (or losses).  These values will be
+          aggregated upstream as: sum(weight * value) / sum(weight).
+        2. clu_metrics - a NestedMap containing str keys and clu_metrics.Metric
+          objects.
       - A dict containing arbitrary tensors describing something about each
         training example, where the first dimension of each tensor is the batch
         index.
@@ -140,23 +145,4 @@ class BaseModel(base_layer.BaseLayer):
       - metrics, a NestedMap containing str keys and clu_metrics.Metric
         objects. These will run outside of pmap/pjit.
     """
-    raise NotImplementedError('Abstract method')
-
-
-class LegosModel(BaseModel):
-  """Legos - A set of components that can be co-trained or trained in parts.
-
-  Attributes:
-    components: List of model components aggregated into a single legos model.
-  """
-  components: Optional[LayerTpl] = base_layer.template_field(None)
-
-  def setup(self) -> None:
-    """Build the mixer from the collection of components."""
-    # TODO(b/227407216): Check that this is robust enough and/or fix if needed.
-    for f in dataclasses.fields(self.components):  # pytype: disable=wrong-arg-types
-      if hasattr(self.components, f.name):
-        self.create_child(f.name, getattr(self.components, f.name))
-
-  def get_model_params(self, name: str) -> pax_fiddle.Config[BaseModel]:
     raise NotImplementedError('Abstract method')

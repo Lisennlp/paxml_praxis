@@ -34,6 +34,7 @@ QuantizationType = quantization_hparams.QuantizationType
 QuantizationParams = quantization_hparams.QuantizationParams
 WeightHParams = base_layer.WeightHParams
 JTensor = pytypes.JTensor
+NestedJTensor = pytypes.NestedJTensor
 
 
 class OneHeadedAttentionProjection(  # pytype: disable=signature-mismatch
@@ -85,7 +86,6 @@ class OneHeadedAttentionProjection(  # pytype: disable=signature-mismatch
         weight_name='w',
         weight_params=pc,
         scale_shape=[self.output_dim],
-        pack_dim=self._PACK_4BIT_DIM,
     )
     if self.use_bias:
       if self.mesh_shape is not None:
@@ -122,7 +122,6 @@ class OneHeadedAttentionProjection(  # pytype: disable=signature-mismatch
         eqn=eqn,
         x=inputs,
         w=self.theta.w,
-        pack_dim=self._PACK_4BIT_DIM,
         reshape=[],
     )
     if self.use_bias:
@@ -166,7 +165,7 @@ class OneHeadedAttentionProjection(  # pytype: disable=signature-mismatch
 
     return {base_layer.PARAMS: partitionspec}
 
-  def quantize_weight(self) -> JTensor:
+  def quantize_weight(self) -> NestedJTensor:
     """Get quantized weight.
 
     Returns:
@@ -188,10 +187,11 @@ class OneHeadedAttentionProjection(  # pytype: disable=signature-mismatch
         q_w, q_s, zp = operations.reduce_einsum_weight_precision(
             eqn,
             theta.w,
-            calculation_type=self.dtype,
+            calculation_dtype=self.dtype,
             bits=self.quantization.weight_params.precision,
             percentile=self.quantization.weight_params.clipping_coeff,
             use_symmetric=self.quantization.weight_params.use_symmetric,
+            quant_method=self.quantization.weight_params.quant_method,
         )
     elif self.quantization.quantization_type == QuantizationType.AQT:
       dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)

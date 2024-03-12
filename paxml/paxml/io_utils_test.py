@@ -112,18 +112,43 @@ class IoUtilsTest(parameterized.TestCase):
     self.assertTrue(pathlib.Path(filename).exists())
     self.assertEqual(_read_jsonl_file(filename), [v for (_, v) in kv])
 
+  def test_tensorflow_tensor(self):
+    filename = epath.Path(FLAGS.test_tmpdir) / 'kv2.jsonl'
+    kv = [(
+        'key1',
+        {'a': tf.constant(numpy.array([1.0, 2.0]), dtype=tf.float32)},
+    )]
+    io_utils.write_key_value_pairs(filename, kv)
+    self.assertTrue(pathlib.Path(filename).exists())
+    data = _read_jsonl_file(filename)
+    self.assertEqual(data[0]['a'], [1.0, 2.0])
+
   @parameterized.named_parameters(
       ('_eval', io_utils.EvaluationMode.EVAL),
       ('_decode', io_utils.EvaluationMode.DECODE),
   )
   def test_eval_resume_from_same_step(self, mode):
-    job_log_dir = epath.Path(FLAGS.test_tmpdir)
+    job_log_dir = epath.Path(
+        self.create_tempdir(
+            name=f'test_eval_resume_from_same_step_{mode}'
+        ).full_path
+    )
     checkpoint_dir = job_log_dir / 'checkpoints'
+    checkpoint_dir.mkdir()
     checkpoint_step = 1234
+    latest_step = 5555
+
+    (checkpoint_dir / f'checkpoint_0000{latest_step}').mkdir()
 
     with io_utils.checkpoint_progress(job_log_dir, checkpoint_step, mode):
       written_checkpoint_step = io_utils.get_checkpoint_step(
           job_log_dir, checkpoint_dir, mode)
+      self.assertEqual(written_checkpoint_step, latest_step)
+
+      (checkpoint_dir / f'checkpoint_0000{checkpoint_step}').mkdir()
+      written_checkpoint_step = io_utils.get_checkpoint_step(
+          job_log_dir, checkpoint_dir, mode
+      )
       self.assertEqual(written_checkpoint_step, checkpoint_step)
 
 

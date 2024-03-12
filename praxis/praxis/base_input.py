@@ -23,7 +23,7 @@ import dataclasses
 import inspect
 import math
 import re
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Sequence
 
 from absl import logging
 from etils import epath
@@ -33,11 +33,15 @@ from jax.lib import xla_client as xc
 import jax.tree_util
 import numpy as np
 from praxis import base_hyperparams
+from praxis import lazy_loader
+from praxis import lingvo_lib
 from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
-import tensorflow.compat.v1 as tf_v1
-import tensorflow.compat.v2 as tf
+
+# TF is slow to import, so we do it lazily.
+tf_v1 = lazy_loader.LazyLoader('tf_v1', globals(), 'tensorflow.compat.v1')
+tf = lazy_loader.LazyLoader('tf', globals(), 'tensorflow.compat.v2')
 
 NestedMap = py_utils.NestedMap
 NestedJTensor = pytypes.NestedJTensor
@@ -53,6 +57,29 @@ def _create_input(hparams: Any, state: bytes) -> Any:
   inp = instantiate(hparams)
   inp.set_state(state)
   return inp
+
+
+def _to_numpy(x: tf.Tensor) -> np.ndarray:
+  """Creates a Numpy array from an EagerTensor whithout copying.
+
+  If the batch Tensors are extremely large, `.numpy()` (which creates
+  a copy) will be too slow.
+
+  Args:
+    x: An EagerTensor.
+
+  Returns:
+    An immutable np.ndarray.
+  """
+  if hasattr(x, '_numpy'):
+    numpy = x._numpy()  # pylint: disable=protected-access
+  else:
+    numpy = x.numpy()
+  if isinstance(numpy, np.ndarray):
+    # `numpy` shares the same underlying buffer as the `x` Tensor.
+    # Tensors are expected to be immutable, so we disable writes.
+    numpy.setflags(write=False)
+  return numpy
 
 
 class BaseInput(base_hyperparams.FiddleBaseParameterizable):
@@ -99,12 +126,10 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
       that all variant self.infeed_host_index instances raise after the same
       number of calls to get_next() to ensure synchronization across hosts. If
       not set, get_next() must never raise.
-    eval_loop_num_batches: Num of batches to process per eval loop. Must be >=
-      1. This value is ignored if reset_for_eval is set True, in which case,
-      this value is dynamically determined by the number of available batches.
-      If reset_for_eval is set to False, then each eval loop will process this
-      many batches. Metrics over those batches will be aggregated and then
-      reported.
+    eval_loop_num_batches: An integer representing the number of batches to
+      process per eval loop. If >= 1, each eval loop will process this many
+      batches. Metrics over those batches will be aggregated and then reported.
+      If set to `-1`, each eval loop will use all batches.
     is_training: Whether or not this dataset is used for model traning.
     experimental_remote_input: whether to process inputs on remote hosts, when
       there is a single controller.
@@ -127,23 +152,23 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
   """
 
   _VALIDATE_BATCH_SIZE_NOT_NONE = True
-  batch_size: Optional[int] = None
+  batch_size: int | None = None
   # Sharding behavior. If num_infeed_hosts is 0, it will be given a default
   # value by PAX trainer; if it is still not set during __init__, 1 will be
   # used.
   num_infeed_hosts: int = 0
   infeed_host_index: int = 0
   # Deterministic randomness.
-  input_random_seed: Optional[int] = None
+  input_random_seed: int | None = None
   reset_for_eval: bool = False
   eval_loop_num_batches: int = 1
   is_training: bool = False
   experimental_remote_input: bool = False
   batch_padding_size: int = 0
-  custom_device_order: Optional[Sequence[int]] = None
+  custom_device_order: Sequence[int] | None = None
   input_checkpointing_enabled: bool = False
-  tf_data_service_address: Optional[str] = None
-  dataset: Optional[tf.data.Dataset] = dataclasses.field(
+  tf_data_service_address: str | None = None
+  dataset: tf.data.Dataset | None = dataclasses.field(
       default=None, init=False, repr=False
   )
   _peek: Any = dataclasses.field(init=False, repr=False)
@@ -162,6 +187,15 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
           f'Input params self.name string invalid: "{name}" '
           f'does not fully match "{_NAME_REGEX}".'
       )
+    if (
+        self.eval_loop_num_batches
+        and self.eval_loop_num_batches <= 0
+        and self.eval_loop_num_batches != -1
+    ):
+      raise ValueError(
+          'eval_loop_num_batches must be positive, -1, found'
+          f' {self.eval_loop_num_batches}.'
+      )
     if self.experimental_remote_input and jax.process_count() > 1:
       raise NotImplementedError(
           'Remote input is not supported when there are multiple controllers.')
@@ -172,7 +206,7 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
 
   @classmethod
   def get_batch_size(
-      cls, params: Union[pax_fiddle.Config[BaseInput], BaseInput]
+      cls, params: pax_fiddle.Config[BaseInput] | BaseInput
   ) -> int:
     assert params.batch_size is not None
     return params.batch_size
@@ -193,6 +227,11 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
   def get_state(self) -> bytes:
     """Returns the serialized state as bytes object."""
     if self._peek is not None:
+      if not self._state_before_peek:
+        raise ValueError(
+            'get_state() should only be used when input_checkpointing_enabled ='
+            ' True. Otherwise, the peeked iterator state will not be captured.'
+        )
       return self._state_before_peek
     return self._get_state_internal()
 
@@ -210,7 +249,7 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     """Set the internal state from serialized bytes."""
     raise NotImplementedError
 
-  def __reduce__(self) -> Tuple[Callable[[Any, bytes], Any], Tuple[Any, bytes]]:
+  def __reduce__(self) -> tuple[Callable[[Any, bytes], Any], tuple[Any, bytes]]:
     """Returns a callable to recreate the input object in its current state.
 
     Adheres to the contract of object.__reduce__().
@@ -248,15 +287,13 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     unpadded = self.get_next()
     pad_size = self.batch_padding_size
     if pad_size == 0:
-      d = unpadded
-    else:
-      d =  jax.tree_util.tree_map(
+      return unpadded
+    return jax.tree_util.tree_map(
         lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
         unpadded,
-      )
-    return d
+    )
 
-  def peek_padded(self) -> Optional[NestedJTensor]:
+  def peek_padded(self) -> NestedJTensor | None:
     """Peeks into the current input data pipeline."""
     if self._peek is not None:
       return self._peek
@@ -280,10 +317,12 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     self._peek = None
     self._state_before_peek = None
 
-  def ids_to_strings(self,
-                     ids: pytypes.NpTensor,
-                     lengths: pytypes.NpTensor,
-                     key: Optional[str] = None) -> Sequence[str]:
+  def ids_to_strings(
+      self,
+      ids: pytypes.NpTensor,
+      lengths: pytypes.NpTensor,
+      key: str | None = None,
+  ) -> Sequence[str]:
     """Converts int ids into strings.
 
     Args:
@@ -338,13 +377,10 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
     Returns:
       Resharded inputs.
     """
-    # __import__('ipdb').set_trace()
-    # lsp: global_shapes： jax.ShapeDtypeStruct(x_shape, x.dtype)对象，x_shape变为了global pod的
     global_shapes = jax.tree_util.tree_map(
         py_utils.get_global_input_shape_dtype, arrays
     )
     device_order = self.custom_device_order
-    # lsp: None
     if device_order is None:
       return py_utils.make_array(arrays, global_shapes, global_mesh, pspecs)
     assert len(device_order) == jax.device_count()
@@ -358,7 +394,6 @@ class BaseInput(base_hyperparams.FiddleBaseParameterizable):
           len(global_shape.shape) - 1)
       # Custom device order.
       op_sharding.tile_assignment_devices = device_order
-      logging.info(f'xxxx: {x.shape} local_devices: {global_mesh.local_devices}')
       dbs = py_utils.put_to_devices(x, global_mesh.local_devices)
       sharding = jax.sharding.GSPMDSharding(
           list(global_mesh.devices.flat), op_sharding)
@@ -407,8 +442,8 @@ class LingvoInputAdaptor(BaseInput):
   """
   _VALIDATE_BATCH_SIZE_NOT_NONE = False
   _VALIDATE_BATCH_SIZE_NONE = True
-  input: Optional[py_utils.InstantiableParams] = None
-  num_batches: Optional[int] = None
+  input: py_utils.InstantiableParams | None = None
+  num_batches: int | None = None
   allow_fixed_file_random_seed: bool = False
   cluster_do_eval: bool = False
   _cluster: Any = dataclasses.field(init=False, repr=False)
@@ -460,7 +495,7 @@ class LingvoInputAdaptor(BaseInput):
   @classmethod
   def get_batch_size(
       cls,
-      params: Union[pax_fiddle.Config[LingvoInputAdaptor], LingvoInputAdaptor],
+      params: pax_fiddle.Config[LingvoInputAdaptor] | LingvoInputAdaptor,
   ) -> int:
     assert params.input is not None
     if hasattr(params.input, 'bucket_batch_limit'):
@@ -491,7 +526,7 @@ class LingvoInputAdaptor(BaseInput):
       self.input_inst = self.input.Instantiate()
 
     if hasattr(self.input_inst, 'datasource') and isinstance(
-        self.input_inst.datasource, py_utils.TFDatasetSource
+        self.input_inst.datasource, lingvo_lib.datasource.TFDatasetSource
     ):
       # For the special case when the input is implemented by a tf.data.Dataset,
       # call eagerly. Using tf.function may result in returning duplicate
@@ -526,7 +561,7 @@ class LingvoInputAdaptor(BaseInput):
       self._num_batches_produced += 1
     ret = self._get_next_fn()
     if tf.executing_eagerly():
-      ret = jax.tree_util.tree_map(lambda x: x.numpy(), ret)
+      ret = jax.tree_util.tree_map(_to_numpy, ret)
     else:
       with tf_v1.Session() as sess:
         ret = sess.run(ret)
@@ -536,7 +571,7 @@ class LingvoInputAdaptor(BaseInput):
 
   def reset(self) -> None:
     if hasattr(self.input_inst, 'datasource') and isinstance(
-        self.input_inst.datasource, py_utils.TFDatasetSource
+        self.input_inst.datasource, lingvo_lib.datasource.TFDatasetSource
     ):
       self.input_inst.datasource.Reset()
       # reset counter to 0.
@@ -545,10 +580,12 @@ class LingvoInputAdaptor(BaseInput):
     # reinstantiate the input and retrace self._get_batch.
     self._initialize()
 
-  def ids_to_strings(self,
-                     ids: pytypes.NpTensor,
-                     lengths: pytypes.NpTensor,
-                     key: Optional[str] = None) -> Sequence[str]:
+  def ids_to_strings(
+      self,
+      ids: pytypes.NpTensor,
+      lengths: pytypes.NpTensor,
+      key: str | None = None,
+  ) -> Sequence[str]:
     """Converts int ids into strings."""
     bytes_list = self.input_inst.IdsToStrings(ids, lengths, key=key)
     if isinstance(bytes_list, tf.Tensor):
@@ -610,7 +647,7 @@ class LingvoInputAdaptorNewBatchSize(LingvoInputAdaptor):
 
   @classmethod
   def get_batch_size(
-      cls, params: Union[pax_fiddle.Config[BaseInput], BaseInput]
+      cls, params: pax_fiddle.Config[BaseInput] | BaseInput
   ) -> int:
     assert params.batch_size is not None
     return params.batch_size
@@ -675,7 +712,7 @@ class LingvoEvalAdaptor(LingvoInputAdaptor):
   @classmethod
   def get_batch_size(
       cls,
-      params: Union[pax_fiddle.Config[LingvoInputAdaptor], LingvoInputAdaptor],
+      params: pax_fiddle.Config[LingvoInputAdaptor] | LingvoInputAdaptor,
   ) -> int:
     assert params.batch_size is not None
     return params.batch_size
@@ -926,8 +963,8 @@ class MultiInput(BaseInput):
   _VALIDATE_BATCH_SIZE_NOT_NONE = False  # Validated separately for children.
   _VALIDATE_BATCH_SIZE_NONE = True  # Can't set batch size for wrapper.
 
-  input_to_params: Optional[Dict[str, pax_fiddle.Config[BaseInput]]] = None
-  default_input: Optional[str] = None
+  input_to_params: dict[str, pax_fiddle.Config[BaseInput]] | None = None
+  default_input: str | None = None
   _inputs: Any = dataclasses.field(init=False, repr=False)
 
   def __post_init__(self):
@@ -968,7 +1005,7 @@ class MultiInput(BaseInput):
 
   @classmethod
   def get_batch_size(
-      cls, params: Union[pax_fiddle.Config[MultiInput], MultiInput]
+      cls, params: pax_fiddle.Config[MultiInput] | MultiInput
   ) -> int:
     assert params.input_to_params
     logging.warning(
@@ -1001,11 +1038,13 @@ class MultiInput(BaseInput):
     for _, input_gen in self._inputs.items():
       input_gen.reset()
 
-  def ids_to_strings(self,
-                     ids: pytypes.NpTensor,
-                     lengths: pytypes.NpTensor,
-                     key: Optional[str] = None,
-                     input_name: Optional[str] = None) -> Sequence[str]:
+  def ids_to_strings(
+      self,
+      ids: pytypes.NpTensor,
+      lengths: pytypes.NpTensor,
+      key: str | None = None,
+      input_name: str | None = None,
+  ) -> Sequence[str]:
     """Converts int ids into strings using a particular input.
 
     Args:
@@ -1051,13 +1090,12 @@ class BaseInputSpecsProvider(
 
 class DatasetInputSpecsProvider(BaseInputSpecsProvider):
   """Class to provide input specs from a dataset for model initialization."""
-  input_p: Optional[pax_fiddle.Config[BaseInput]] = None
+  input_p: pax_fiddle.Config[BaseInput] | None = None
 
-  def get_input_specs(self) -> NestedShapeDtypeStruct:
-    """Returns example input specs from the input pipeline for model init."""
-    # Note that this re-instantiate the input pipeline every time
-    # `.get_input_specs()` is called. In practice, we typically call this
-    # method only once at model initialization time.
+  def __post_init__(self):
+    # Instantiate the input pipeline and get the specs.
+    # In practice, we typically use it only once at model
+    # initialization time.
     input_pipeline: BaseInput = instantiate(self.input_p)
     dataset = input_pipeline.dataset
     if (
@@ -1065,13 +1103,9 @@ class DatasetInputSpecsProvider(BaseInputSpecsProvider):
         and isinstance(dataset, tf.data.Dataset)
         and
         # Only use dataset.element_spec to compute the input spec when all
-        # non-batch dimensions are defined.
-        # NOTE this is based on the assumption that the batch dimensions don't
-        # affect the variable shapes, so they can be ignored during model
-        # initialization. Currently paxml workflow uses this assumption during
-        # model initialization and input spec validation.
+        # dimensions are defined.
         jax.tree_util.tree_reduce(
-            lambda c, x: c and x.shape[1:].is_fully_defined(),
+            lambda c, x: c and x.shape.is_fully_defined(),
             dataset.element_spec,
             True,  # Initial value.
         )
@@ -1079,35 +1113,21 @@ class DatasetInputSpecsProvider(BaseInputSpecsProvider):
       def tf_spec_to_jax(spec: tf.TensorSpec) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct(shape=spec.shape,
                                     dtype=spec.dtype.as_numpy_dtype())
-      return jax.tree_map(tf_spec_to_jax, dataset.element_spec)
 
-    return jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
-                        input_pipeline.get_next_padded())
+      self._input_specs = jax.tree_map(tf_spec_to_jax, dataset.element_spec)
+      return
 
-
-def distributed_builder(fn: Any) -> Any:  # Any to avoid user PyType errors.
-  """Annotates a function that promises to return a BaseInput instance.
-
-  This is used in conjunection with `DistributedInputHParams` type below.
-
-  Args:
-    fn: The function to annotate.
-
-  Returns:
-    The function `fn` (that has now been annotated).hg st
-  """
-  assert inspect.isfunction(fn)
-  setattr(fn, '_am_input_hparam_type_promise', True)
-  return fn
-
-
-class DistributedInputHParamsMeta(type):
-
-  def __instancecheck__(cls, instance):
-    return isinstance(instance, pax_fiddle.Config) and hasattr(
-        fdl.get_callable(instance), '_am_input_hparam_type_promise'
+    logging.warning(
+        'b/292156360: The input specs is generated based on the first data '
+        'batch. It is recommended to define an explicit input spec provider '
+        'param in BaseExperiment.get_input_specs_provider_params(), which is '
+        'more deterministic and efficient.'
+    )
+    self._input_specs = jax.tree_map(
+        lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype),
+        input_pipeline.get_next_padded(),
     )
 
-
-class DistributedInputHParams(metaclass=DistributedInputHParamsMeta):
-  pass
+  def get_input_specs(self) -> NestedShapeDtypeStruct:
+    """Returns example input specs from the input pipeline for model init."""
+    return self._input_specs

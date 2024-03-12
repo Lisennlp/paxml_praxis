@@ -18,10 +18,9 @@
 import abc
 import collections
 import dataclasses
-import inspect
 import math
 import typing
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Sequence, Type
 
 from paxml import automl_interfaces
 # Placeholder for importing Google-internal tuning modules.
@@ -67,35 +66,41 @@ def hyperparameter_tuning(
     max_num_trials: int = 100,
     goal: str = 'maximize',
     *,
-    errors_to_skip: Optional[List[
-        Union[Type[Exception], Tuple[Type[Exception], str]]]] = None,
-    cross_step_metric_aggregator: Optional[
-        pax_fiddle.Config[CrossStepMetricAggregator]] = None,
-    early_stopping: Optional[
-        pax_fiddle.Config[BaseEarlyStoppingPolicy]] = None,
-    reward_for_nan: Optional[float] = None) -> SearchHParams:
+    enable_dataset_tuning: bool = False,
+    errors_to_skip: (
+        list[Type[Exception] | tuple[Type[Exception], str]] | None
+    ) = None,
+    cross_step_metric_aggregator: (
+        pax_fiddle.Config[CrossStepMetricAggregator] | None
+    ) = None,
+    early_stopping: pax_fiddle.Config[BaseEarlyStoppingPolicy] | None = None,
+    reward_for_nan: float | None = None,
+    enable_train_programs_tuning: bool = False,
+) -> SearchHParams:
   """Returns a common search config for hyper-parameter tuning.
 
   Args:
     metric: The metric to optimize.
     max_num_trials: Max number of trials for tuning.
     goal: 'maximize' or 'minimize'.
-    errors_to_skip: An optional field to specify on what errors the trial
-      should be skipped. It's in the form of a list of (ExceptionType) or
+    enable_dataset_tuning: Whether to enable dataset tuning.
+    errors_to_skip: An optional field to specify on what errors the trial should
+      be skipped. It's in the form of a list of (ExceptionType) or
       (ExceptionType, regexForError). For example, if users specify:
       `[RuntimeError, (Exception, 'XLACompilation.*')]`, the trails that
-      RuntimeError or errors that match 'XLACompilation.*' will be treated as
-      to skip.
+      RuntimeError or errors that match 'XLACompilation.*' will be treated as to
+      skip.
     cross_step_metric_aggregator: An optional cross-step metric aggregator
       config indicating how metrics will be aggregated at the end of the search
       for computing the reward. If None, the last reported metrics will be used.
-    early_stopping: An optional population-wise early stopping policy.
-      If None, no population-wise early stopping policy will be used, though
-      users still can raise `automl.EarlyStoppingError` to early terminate a
-      a single trial during training/evaluation.
+    early_stopping: An optional population-wise early stopping policy. If None,
+      no population-wise early stopping policy will be used, though users still
+      can raise `automl.EarlyStoppingError` to early terminate a a single trial
+      during training/evaluation.
     reward_for_nan: An optional float used as the reward when metric value is
       NaN. If not specified, the reward will remain NaN so the trial will be
       skipped by the search algorithm.
+    enable_train_programs_tuning: Whether to enable train programs tuning.
 
   Returns:
     A search config object.
@@ -114,23 +119,24 @@ def hyperparameter_tuning(
       errors_to_skip=errors_to_skip,
       cross_step_metric_aggregator=cross_step_metric_aggregator,
       treats_early_stopped_trials_as_done=True,
+      enable_dataset_tuning=enable_dataset_tuning,
+      enable_train_programs_tuning=enable_train_programs_tuning,
   )
 
 
 def neural_architecture_search(
-    metrics: Union[Metric, Sequence[Metric]],
-    cost_objective: Optional[float] = None,
+    metrics: Metric | Sequence[Metric],
+    cost_objective: float | None = None,
     reward_type: str = 'tunas',
     exponent: float = -0.07,
     max_num_trials: int = 10000,
-    errors_to_skip: Optional[List[
-        Union[Type[Exception], Tuple[Type[Exception], str]]]] = None,
-    cross_step_metric_aggregator: Optional[
-        pax_fiddle.Config[CrossStepMetricAggregator]] = None,
-    early_stopping: Optional[
-        pax_fiddle.Config[BaseEarlyStoppingPolicy]] = None,
-    reward_for_nan: Optional[float] = None
-    ) -> SearchHParams:
+    errors_to_skip: list[Type[Exception] | tuple[Type[Exception], str]]
+    | None = None,
+    cross_step_metric_aggregator: pax_fiddle.Config[CrossStepMetricAggregator]
+    | None = None,
+    early_stopping: pax_fiddle.Config[BaseEarlyStoppingPolicy] | None = None,
+    reward_for_nan: float | None = None,
+) -> SearchHParams:
   """Search params for Neural Architecture Search."""
 
   if isinstance(metrics, Metric):
@@ -187,7 +193,7 @@ class RandomSearch(BaseAlgorithm):
   Attributes:
     seed: Seed of the Random search.
   """
-  seed: Optional[int] = None
+  seed: int | None = None
 
   def __call__(self):
     return pg.geno.Random(seed=self.seed)
@@ -220,7 +226,7 @@ class RegularizedEvolution(BaseAlgorithm):
   mutator: pg.evolution.Mutator = pg.evolution.mutators.Uniform()  # pytype: disable=annotation-type-mismatch
   population_size: int = 100
   tournament_size: int = 10
-  seed: Optional[int] = None
+  seed: int | None = None
 
   def __call__(self):
     return pg.evolution.regularized_evolution(
@@ -247,9 +253,9 @@ class SingleObjective(BaseReward):
       NaN. If not specified, the reward will remain NaN so the trial will be
       skipped by the search algorithm.
   """
-  metric: Optional[Metric] = None
+  metric: Metric | None = None
   goal: str = 'maximize'
-  reward_for_nan: Optional[float] = None
+  reward_for_nan: float | None = None
 
   def __post_init__(self):
     super().__post_init__()
@@ -260,7 +266,7 @@ class SingleObjective(BaseReward):
           "Param `goal` should be either 'maximize' or 'minimize'."
       )
 
-  def __call__(self, metrics_dict: Dict[str, float], global_step: int) -> float:
+  def __call__(self, metrics_dict: dict[str, float], global_step: int) -> float:
     del global_step
     assert self.metric is not None
     reward = self.metric.get_value(metrics_dict)
@@ -283,7 +289,7 @@ class MultiObjectiveAggregator(
   """Base class for multi objective aggregators."""
 
   @abc.abstractmethod
-  def __call__(self, values: Sequence[float]) -> Union[float, complex]:
+  def __call__(self, values: Sequence[float]) -> float | complex:
     """Aggregate multiple values into a single value."""
 
 
@@ -300,10 +306,10 @@ class MultiObjective(BaseReward):
       NaN. If not specified, the reward will remain NaN so the trial will be
       skipped by the search algorithm.
   """
-  metrics: Optional[Sequence[Metric]] = None
-  aggregator_tpl: Optional[pax_fiddle.Config[MultiObjectiveAggregator]] = None
+  metrics: Sequence[Metric] | None = None
+  aggregator_tpl: pax_fiddle.Config[MultiObjectiveAggregator] | None = None
   goal: str = 'maximize'
-  reward_for_nan: Optional[float] = None
+  reward_for_nan: float | None = None
   _aggregator: Any = dataclasses.field(init=False, repr=False)
 
   def __post_init__(self):
@@ -316,7 +322,7 @@ class MultiObjective(BaseReward):
     if self.aggregator_tpl is not None:
       self._aggregator = self.aggregator_tpl.Instantiate()
 
-  def __call__(self, metrics_dict: Dict[str, float], global_step: int) -> float:
+  def __call__(self, metrics_dict: dict[str, float], global_step: int) -> float:
     del global_step
     metric_values = [m.get_value(metrics_dict) for m in self.metrics]
     if self.reward_for_nan is not None and any(
@@ -346,7 +352,7 @@ class WeightedSumAggregator(MultiObjectiveAggregator):
       Its value does not need to sum to 1.
   """
 
-  weights: Optional[Sequence[float]] = None
+  weights: Sequence[float] | None = None
   _sum_of_weights: Any = dataclasses.field(init=False, repr=False)
 
   def __post_init__(self):
@@ -357,7 +363,7 @@ class WeightedSumAggregator(MultiObjectiveAggregator):
       raise ValueError(f'Invalid value for `weights`: {weights}')
     self._sum_of_weights = sum([abs(w) for w in weights]) * 1.0
 
-  def __call__(self, values: Sequence[float]) -> Union[float, complex]:
+  def __call__(self, values: Sequence[float]) -> float | complex:
     """Aggregate multiple values into a single value."""
     if len(values) != len(self.weights):
       raise ValueError(
@@ -371,9 +377,9 @@ class WeightedSumAggregator(MultiObjectiveAggregator):
 
 
 def weighted_sum_reward(
-    metrics_and_weights: Sequence[Tuple[Metric, float]],
+    metrics_and_weights: Sequence[tuple[Metric, float]],
     goal: str = 'maximize',
-    reward_for_nan: Optional[float] = None,
+    reward_for_nan: float | None = None,
 ) -> pax_fiddle.Config[MultiObjective]:
   """Returns a reward by weighted summing multiple metrics."""
   metrics = [m for m, _ in metrics_and_weights]
@@ -396,7 +402,7 @@ class TwoObjectiveAggregator(MultiObjectiveAggregator):
       cost. The more negative this exponent is, the more heavily the reward will
       penalize this model with cost larger than cost objective.
   """
-  cost_objective: Optional[float] = None
+  cost_objective: float | None = None
   exponent: float = -0.07
 
   def __post_init__(self):
@@ -404,7 +410,7 @@ class TwoObjectiveAggregator(MultiObjectiveAggregator):
     if self.cost_objective is None:
       raise ValueError('Param `cost_objective` must be provided.')
 
-  def __call__(self, values: Sequence[float]) -> Union[float, complex]:
+  def __call__(self, values: Sequence[float]) -> float | complex:
     """Aggregate multiple values into a single value."""
     if len(values) != 2:
       raise ValueError('Only two objectives are supported. Encountered: %r' %
@@ -412,7 +418,7 @@ class TwoObjectiveAggregator(MultiObjectiveAggregator):
     return self.aggregate(*values)
 
   @abc.abstractmethod
-  def aggregate(self, quality: float, cost: float) -> Union[float, complex]:
+  def aggregate(self, quality: float, cost: float) -> float | complex:
     """Aggregate quality and cost into a single value."""
 
 
@@ -427,7 +433,7 @@ class TunasAbsolute(TwoObjectiveAggregator):
   https://arxiv.org/abs/2008.06120
   """
 
-  def aggregate(self, quality: float, cost: float) -> Union[float, complex]:
+  def aggregate(self, quality: float, cost: float) -> float | complex:
     """Aggregate quality and cost into a single value."""
     cost_ratio = cost / self.cost_objective
     cost_adjustment = self.exponent * abs(cost_ratio - 1)
@@ -444,7 +450,7 @@ class MnasHard(TwoObjectiveAggregator):
   https://arxiv.org/pdf/1807.11626.pdf
   """
 
-  def aggregate(self, quality: float, cost: float) -> Union[float, complex]:
+  def aggregate(self, quality: float, cost: float) -> float | complex:
     """Aggregate quality and cost into a single value."""
     cost_ratio = cost / self.cost_objective
     cost_adjustment = min(pow(cost_ratio, self.exponent), 1.0)
@@ -462,7 +468,7 @@ class MnasSoft(TwoObjectiveAggregator):
   https://arxiv.org/pdf/1807.11626.pdf
   """
 
-  def aggregate(self, quality: float, cost: float) -> Union[float, complex]:
+  def aggregate(self, quality: float, cost: float) -> float | complex:
     """Aggregate quality and cost into a single value."""
     cost_ratio = cost / self.cost_objective
     cost_adjustment = pow(cost_ratio, self.exponent)
@@ -478,14 +484,14 @@ class MultiSubExperimentCrossStepMetricAggregator(CrossStepMetricAggregator):
   """Metric aggregator with sub-experiment support."""
 
   def __call__(
-      self, metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     merged_metrics_across_steps = self._merge_metrics(metrics_across_steps)
     return self.call(merged_metrics_across_steps)
 
   def _merge_metrics(
-      self, metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Sequence[Tuple[int, Dict[str, float]]]:
+      self, metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> Sequence[tuple[int, dict[str, float]]]:
     """Merges metrics from sub-experiments."""
     merged_metrics_across_steps = collections.defaultdict(dict)
     for step, metrics in metrics_across_steps:
@@ -495,8 +501,8 @@ class MultiSubExperimentCrossStepMetricAggregator(CrossStepMetricAggregator):
 
   @abc.abstractmethod
   def call(
-      self, merged_metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, merged_metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Aggregates metrics from merged metrics from multiple sub-experiments."""
 
 
@@ -504,8 +510,8 @@ class LastReportedMetricValues(MultiSubExperimentCrossStepMetricAggregator):
   """Returns the last reported metrics."""
 
   def call(
-      self, merged_metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, merged_metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Returns an aggregated metric dict from metrics from multiple steps."""
     return merged_metrics_across_steps[-1][1]
 
@@ -517,11 +523,11 @@ class AverageMetricValues(MultiSubExperimentCrossStepMetricAggregator):
     last_n: If not None, then only the `last_n` values will be used in the
       metric average. If None, all values are used.
   """
-  last_n: Optional[int] = None
+  last_n: int | None = None
 
   def call(
-      self, merged_metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, merged_metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Returns an aggregated metric dict from metrics from multiple steps."""
     accumulated_metrics = collections.defaultdict(list)
     for _, step_metrics in merged_metrics_across_steps:
@@ -544,11 +550,11 @@ class MetricsWithMaxValue(MultiSubExperimentCrossStepMetricAggregator):
     metric: An optional metric against whom to choose the max value. If None,
       the comparison is against the reward.
   """
-  metric: Optional[Metric] = None
+  metric: Metric | None = None
 
   def call(
-      self, merged_metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, merged_metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Returns an aggregated metric dict from metrics from multiple steps."""
     metric = self.metric or Metric('reward')
     max_i, max_value = None, None
@@ -570,11 +576,11 @@ class MetricsWithMinValue(MultiSubExperimentCrossStepMetricAggregator):
     metric: An optional metric against whom to choose the max value. If None,
       the comparison is against the reward.
   """
-  metric: Optional[Metric] = None
+  metric: Metric | None = None
 
   def call(
-      self, merged_metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, merged_metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Returns an aggregated metric dict from metrics from multiple steps."""
     metric = self.metric or Metric('reward')
     min_i, min_value = None, None
@@ -583,6 +589,7 @@ class MetricsWithMinValue(MultiSubExperimentCrossStepMetricAggregator):
       if min_value is None or v <= min_value:
         min_i, min_value = i, v
     return merged_metrics_across_steps[min_i][1]
+
 
 #
 # Population-wiise early stopping policies.
@@ -599,8 +606,8 @@ class EarlyStoppingByValue(BaseEarlyStoppingPolicy):
     maximize: If True, value below the threshold will be stopped. Otherwise
       values above the threshold.
   """
-  step_values: Optional[List[Tuple[int, float]]] = None
-  metric: Optional[Metric] = None
+  step_values: list[tuple[int, float]] | None = None
+  metric: Metric | None = None
   maximize: bool = True
 
   def __call__(self) -> pg.early_stopping.StepWise:
@@ -626,8 +633,8 @@ class EarlyStoppingByRank(BaseEarlyStoppingPolicy):
     maximize: If True, the sorting for computing the rank is from the largest to
       the smallest, otherwise will be the smallest to the largest.
   """
-  step_ranks: Optional[List[Tuple[int, Union[int, float], int]]] = None
-  metric: Optional[Metric] = None
+  step_ranks: list[tuple[int, int | float, int]] | None = None
+  metric: Metric | None = None
   maximize: bool = True
 
   def __call__(self) -> pg.early_stopping.StepWise:
@@ -651,13 +658,15 @@ class EarlyStoppingByRank(BaseEarlyStoppingPolicy):
 class EarlyStoppingError(BaseException):
   """Early stopping signal which can be thrown from the program."""
 
-  def __init__(self,
-               skip: bool = True,
-               skip_reason: Optional[str] = None,
-               step: Optional[int] = None,
-               reward: Optional[float] = None,
-               metrics: Optional[Dict[str, float]] = None,
-               checkpoint_path: Optional[str] = None):
+  def __init__(
+      self,
+      skip: bool = True,
+      skip_reason: str | None = None,
+      step: int | None = None,
+      reward: float | None = None,
+      metrics: dict[str, float] | None = None,
+      checkpoint_path: str | None = None,
+  ):
     """Constructor.
 
     Args:
@@ -693,30 +702,6 @@ class EarlyStoppingError(BaseException):
     self.checkpoint = checkpoint_path
 
 
-def enable_class_level_hyper_primitives(cls: Type[Any]) -> None:
-  """Enable class-level hypers for a BaseExperiment subclass."""
-
-  def create_hyper_property(name: str, hyper: pg.hyper.HyperPrimitive):
-    attr_name = f'_PROPERTY_{name}'
-    hyper_kwargs = dict(hyper.sym_init_args)
-    if 'name' not in hyper_kwargs or hyper_kwargs['name'] is None:
-      hyper_kwargs['name'] = name
-
-    def getter(x):
-      if hasattr(x, attr_name):
-        return getattr(x, attr_name)
-      return hyper.__class__(**hyper_kwargs)  # pytype: disable=not-instantiable
-
-    def setter(x, v):
-      setattr(x, attr_name, v)
-
-    return property(getter, setter)
-
-  for name, hyper in inspect.getmembers(
-      cls, lambda x: isinstance(x, pg.hyper.HyperPrimitive)):
-    setattr(cls, name, create_hyper_property(name, hyper))
-
-
 #
 # Decorators for parameter sweeping.
 #
@@ -726,37 +711,44 @@ COMBINED_DECISION_POINT_NAMES = 'COMBINED_DECISION_POINT_NAMES'
 
 
 def parameter_sweep(
-    combinations: Optional[List[Tuple[Any, ...]]] = None,
+    combinations: list[tuple[Any, ...]] | None = None,
     *,
-    metric: Optional[Metric] = None,
-    goal: str = 'maximize') -> Callable[[Type[Any]], Type[Any]]:
+    metric: Metric | None = None,
+    goal: str = 'maximize',
+    enable_dataset_tuning: bool = True,
+    enable_partitioner_tuning: bool = False,
+    enable_train_programs_tuning: bool = False,
+    errors_to_skip: (
+        list[Type[Exception] | tuple[Type[Exception], str]] | None
+    ) = None,
+) -> Callable[[Type[Any]], Type[Any]]:
   """Returns a decorator for enabling parameter sweeping on a PAX experiment.
 
   Args:
-    combinations: A list of tuples representing parameter combinations to
-      sweep. If None, the cartesian product from all `pg.oneof` will be swept.
-      When specified, the first row (`combinations[0]`) shall be a tuple of
-      strings, which are the names of the class attributes that will be swept.
-      Then it follows with one or multiple rows - each provides a combination
-      of parameter values for the header row, representing a single trial.
-
-      For example:
-
-        ```
-        @automl.parameter_sweep([
-            ('LEARNING_RATE', 'HIDDEN_DIMS'),
-            (0.1, 32),
-            (0.01, 64),
-            (0.001, 128),
-        ])
-        class MySweepingExperiment(MyExperiment):
-          pass
-        ```
-
-    metric: Metric to use as trial objective. If None, trial objective will be
-      a constant 0, and users will be able to see all metrics in Vizier
-      dashboard.
+    combinations: A list of tuples representing parameter combinations to sweep.
+      If None, the cartesian product from all `pg.oneof` will be swept. When
+      specified, the first row (`combinations[0]`) shall be a tuple of strings,
+      which are the names of the class attributes that will be swept. Then it
+      follows with one or multiple rows - each provides a combination of
+      parameter values for the header row, representing a single trial. For
+      example: ``` @automl.parameter_sweep([ ('LEARNING_RATE', 'HIDDEN_DIMS'),
+        (0.1, 32), (0.01, 64), (0.001, 128), ]) class
+        MySweepingExperiment(MyExperiment): pass ```
+    metric: Metric to use as trial objective. If None, trial objective will be a
+      constant 0, and users will be able to see all metrics in Vizier dashboard.
     goal: Goal for optimization. By default, it's to maximize the metric.
+    enable_dataset_tuning: If True, include the training data pipeline in search
+      space inspection.
+    enable_partitioner_tuning: If True, include the partitioner in search space
+      inspection.
+    enable_train_programs_tuning: If True, include the train programs in search
+      space inspection.
+    errors_to_skip: An optional field to specify on what errors the trial should
+      be skipped. It's in the form of a list of (ExceptionType) or
+      (ExceptionType, regexForError). For example, if users specify:
+      `[RuntimeError, (Exception, 'XLACompilation.*')]`, the trails that
+      RuntimeError or errors that match 'XLACompilation.*' will be treated as to
+      skip.
 
   Returns:
     A new experiment class that is derived from the user class.
@@ -799,8 +791,10 @@ def parameter_sweep(
             search_reward=search_reward,
             treats_early_stopped_trials_as_done=True,
             train_to_end=True,
-            # Consider making toggleable b/285879603
-            enable_dataset_tuning=True,
+            enable_dataset_tuning=enable_dataset_tuning,
+            enable_partitioner_tuning=enable_partitioner_tuning,
+            enable_train_programs_tuning=enable_train_programs_tuning,
+            errors_to_skip=errors_to_skip,
         )
 
     new_cls = _ParameterSweeping
@@ -819,7 +813,7 @@ def parameter_sweep(
 
       setattr(new_cls, COMBINED_DECISION_ATTR, pg.oneof(combinations[1:]))
       setattr(new_cls, COMBINED_DECISION_POINT_NAMES, attr_names)
-      enable_class_level_hyper_primitives(new_cls)
+      automl_interfaces.enable_class_level_hyper_primitives(new_cls)
 
     setattr(new_cls, '__name__', cls.__name__)
     setattr(new_cls, '__module__', cls.__module__)

@@ -15,17 +15,23 @@
 
 """Tuning loop for PAX."""
 
+import base64
+import copy
 import inspect
+import lzma
 import math
+import os
 import re
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Text, Tuple, Type, Union
+from typing import Any, Callable, NamedTuple, Sequence, Text, Type
 from absl import logging
 from clu import platform
 from etils import epath
 import jax
 from paxml import automl
 from paxml import base_experiment
+from paxml import base_task
 from paxml import metric_utils
+from paxml import tasks_lib
 from paxml import trainer_lib
 from praxis import base_hyperparams
 from praxis import pax_fiddle
@@ -53,14 +59,17 @@ TrialFn = Callable[[
 SUB_EXPERIMENT_STEP_INTERVAL = 1000_000_000
 
 
-def _enable_dataset_tuning(
+def _search_param(
     experiment_config: base_experiment.BaseExperiment,
-) -> bool:
+    param_name: str,
+    default: Any = None,
+) -> Any:
+  """Returns the value for a search parameter."""
   try:
     search_hparams = experiment_config.search()
-    return search_hparams.enable_dataset_tuning
+    return getattr(search_hparams, param_name)
   except NotImplementedError:
-    return False
+    return default
 
 
 @py_utils.benchmark('[PAX STATUS]: ')
@@ -75,18 +84,30 @@ def get_search_space(
   # be included. We can improve this in the future if this turns out to be an
   # issue.
   def inspect_search_space() -> None:
+
+    # In theory, instantiating a partitioner/train programs during search space
+    # inspection should have no side effect. However, since there are many
+    # existing AutoML experiments today, we use `enable_partitioner_tuning` and
+    # `enable_train_programs_tuning` flag to guard them, which is set to False
+    # by default.
+    if _search_param(experiment_config, 'enable_partitioner_tuning', False):
+      _ = experiment_config.partitioner()
+
+    if _search_param(experiment_config, 'enable_train_programs_tuning', False):
+      _ = experiment_config.train_programs()
+
     _ = experiment_config.task()
 
     # For SeqIO data mixtures, we use a lambda function to create a search space
     # for mixture weights, however, the function will not be called until
     # the input is instantiated. Therefore we instantiate them when inspecting
     # the search space. Currently we only inspect datasets for training.
-    if _enable_dataset_tuning(experiment_config):
+    if _search_param(experiment_config, 'enable_dataset_tuning', False):
       for d in experiment_config.datasets():
         if d.is_training:
           _ = instantiate(d)
 
-      _ = experiment_config.decoder_datasets()
+      _ = experiment_config.decode_datasets()
 
   search_space = pg.hyper.trace(inspect_search_space, require_hyper_name=True)
   if (automl.COMBINED_DECISION_ATTR in search_space.hyper_dict
@@ -103,17 +124,70 @@ def get_search_space(
   return search_space
 
 
-def tune(trial_fn: TrialFn,
-         experiment_config: base_experiment.BaseExperiment,
-         work_unit: platform.WorkUnit,
-         job_log_dir: epath.Path,
-         study: Optional[str] = None,
-         pythia_port: Optional[int] = None,
-         is_metric_reporting_role: bool = True,
-         tuner_group: Optional[str] = None,
-         max_num_trials: Optional[int] = None,
-         controller_mode: str = 'auto',
-         running_mode: str = 'train') -> None:
+def _maybe_override_for_warm_start(
+    sub_experiment_cls: Type[base_experiment.BaseExperiment],
+    feedback: pg.tuning.Feedback,
+) -> Type[base_experiment.BaseExperiment]:
+  """Overrides the task() method to start from a specified checkpoint."""
+  checkpoint_path = feedback.checkpoint_to_warm_start_from
+
+  class OverriddenExperiment(sub_experiment_cls):
+    """This is a modified version of $sub_experiment_cls."""
+
+    def task(self) -> pax_fiddle.Config[base_task.BaseTask]:
+      task_p = super().task()
+      if checkpoint_path and not hasattr(
+          self, 'get_input_specs_provider_params'
+      ):
+        logging.error(
+            'The experiment configuration has not defined'
+            ' "get_input_specs_provider_params": %s',
+            task_p,
+        )
+      task_copy = copy.deepcopy(task_p)
+      if checkpoint_path:
+        logging.info(
+            'Overriding checkpoint_path (Trial.id=%s) to %s',
+            feedback.id,
+            checkpoint_path,
+        )
+        # The following code makes sense any time $checkpoint_path is True,
+        # i.e. for Freeze/Thaw when generation > 0.
+        task_copy.train.init_from_checkpoint_rules = {
+            checkpoint_path: tasks_lib.CheckpointLoadingRules(
+                task_p=task_p,
+                load_rules=[(r'(.*)', '{}')],
+                # Load_step=False implies that each chunk of training starts
+                # with step=0; this makes the learning_rate schedule and
+                # num_train_steps simpler, but requires extra work when
+                # displaying on TensorBoard.  Load_step=true would have the step
+                # count continuing to increase across a warm-start, and have the
+                # opposite effects.
+                load_step=False,
+                load_opt_states=True,
+                input_specs_provider_p=self.get_input_specs_provider_params(),
+            )
+        }
+      else:
+        logging.info('No warm-start checkpoint_path on Trial %s', feedback.id)
+      return task_copy
+
+  return OverriddenExperiment
+
+
+def tune(
+    trial_fn: TrialFn,
+    experiment_config: base_experiment.BaseExperiment,
+    work_unit: platform.WorkUnit,
+    job_log_dir: epath.Path,
+    study: str | None = None,
+    pythia_port: int | None = None,
+    is_metric_reporting_role: bool = True,
+    tuner_group: str | None = None,
+    max_num_trials: int | None = None,
+    controller_mode: str = 'auto',
+    running_mode: str = 'train',
+) -> None:
   """Tune an experiment.
 
   An experiment can be tuned by running a tuning loop, with each iteration
@@ -143,22 +217,22 @@ def tune(trial_fn: TrialFn,
     study: Vizier study name.
     pythia_port: Pythia port for hosting Vizier algorithms.
     is_metric_reporting_role: Whether current process is in the role for
-      reporting metrics. Among train/eval/decoder, only one role can report
+      reporting metrics. Among train/eval/decode, only one role can report
       metrics to the controller at the moment.
     tuner_group: The identifier for the tuner group that current process belongs
       to. If None, all processes will be working on different trials. When
-      specified, paired training, eval and decoder processes should use the
-      same tuner group, which will get the same trial during tuning. Only one
-      process (with is_metric_reporting_role=True) should report the measurement
-      and signal the completion or stopping of the training.
-    max_num_trials: An optional max number of trials for current tuning.
-      If not None, it will override the default max number of trials specified
-      by the `search` method of the experiment.
-    controller_mode: One of 'primary', 'secondary', 'auto'.
-      If primary, current processs will only work as the controller, without
-      running tuning workload. If secondary, current process will only run
-      tuning workload. Otherwise, current process may elect controller role
-      in a background thread, and run the tuning workload in the main thread.
+      specified, paired training, eval and decode processes should use the same
+      tuner group, which will get the same trial during tuning. Only one process
+      (with is_metric_reporting_role=True) should report the measurement and
+      signal the completion or stopping of the training.
+    max_num_trials: An optional max number of trials for current tuning. If not
+      None, it will override the default max number of trials specified by the
+      `search` method of the experiment.
+    controller_mode: One of 'primary', 'secondary', 'auto'. If primary, current
+      processs will only work as the controller, without running tuning
+      workload. If secondary, current process will only run tuning workload.
+      Otherwise, current process may elect controller role in a background
+      thread, and run the tuning workload in the main thread.
     running_mode: One of 'train', 'eval', 'decode', 'decode_once' and 'infer',
       Indicating the running mode that the worker is in.
   """
@@ -254,6 +328,9 @@ def tune(trial_fn: TrialFn,
 
       for i, (sub_experiment_id, sub_experiment_cls) in enumerate(
           sub_experiments.items()):
+        sub_experiment_cls = _maybe_override_for_warm_start(
+            sub_experiment_cls, feedback
+        )
         early_stopping_fn = EarlyStoppingFn(
             feedback=feedback,
             sub_experiment_id=sub_experiment_id,
@@ -283,36 +360,57 @@ def tune(trial_fn: TrialFn,
 
 
 def _record_experiment_config(
-    sub_experiments: Dict[str, Type[base_experiment.BaseExperiment]],
-    feedback: pg.tuning.Feedback) -> None:
+    sub_experiments: dict[str, Type[base_experiment.BaseExperiment]],
+    feedback: pg.tuning.Feedback,
+) -> None:
   """Record experiment config as trial metadata."""
-  exp_configs = {}
+  exp_configs = {
+      'datasets': {},
+      'decode_datasets': {},
+      'task': {},
+  }
   for subexp_id, subexp_cls in sub_experiments.items():
     subexp = subexp_cls()  # pytype: disable=not-instantiable
-    exp_configs[subexp_id] = {
-        # TODO(daiyip): We shall have more machine parse-able format such as
-        # JSON or Fiddle config. But we start with raw texts to collect data
-        # as early as possible.
-        'datasets': [
-            base_hyperparams.nested_struct_to_text(ds)
-            for ds in subexp.datasets()
-        ],
-        'decoder_datasets': [
-            base_hyperparams.nested_struct_to_text(ds)
-            for ds in subexp.decoder_datasets()
-        ],
-        'task': base_hyperparams.nested_struct_to_text(subexp.task()),
-    }
+    # TODO(daiyip): We shall have more machine parse-able format such as
+    # JSON or Fiddle config. But we start with raw texts to collect data
+    # as early as possible.
 
-  feedback.set_metadata(
-      'experiment_config', {
-          # We might change the format of serialized configurations in future.
-          # It will be easy for us to filter out metadata of old format based
-          # on this format version.
-          'format_version': 1.0,
-          'source': 'pax',
-          'config': exp_configs
-      }, per_trial=True)
+    exp_configs['datasets'][subexp_id] = [
+        base_hyperparams.nested_struct_to_text(ds) for ds in subexp.datasets()
+    ]
+    exp_configs['decode_datasets'][subexp_id] = [
+        base_hyperparams.nested_struct_to_text(ds)
+        for ds in subexp.decode_datasets()
+    ]
+    exp_configs['task'][subexp_id] = base_hyperparams.nested_struct_to_text(
+        subexp.task()
+    )
+
+  for key, value in exp_configs.items():
+    feedback.set_metadata(
+        f'experiment_config:{key}',
+        {
+            # We might change the format of serialized configurations in future.
+            # It will be easy for us to filter out metadata of old format based
+            # on this format version.
+            'format_version': 2.0,
+            'source': 'pax',
+            'config': compressed(value),
+        },
+        per_trial=True,
+    )
+
+
+def compressed(value: Any) -> str:
+  """Returns compressed string for a JSON convertible value."""
+  return base64.b64encode(
+      lzma.compress(pg.to_json_str(value).encode('utf-8'))
+  ).decode('ascii')
+
+
+def uncompressed(str_compressed: str) -> str:
+  """Returns the uncompressed string from a compressed string."""
+  return lzma.decompress(base64.b64decode(str_compressed)).decode('utf-8')
 
 
 def _run_dedicated_controller(
@@ -320,18 +418,19 @@ def _run_dedicated_controller(
     search_space: pg.DNASpec,
     search_algorithm: pg.DNAGenerator,
     early_stopping_policy: pg.tuning.EarlyStoppingPolicy,
-    max_num_trials: Optional[int] = None,
-    prior_study_ids: Optional[List[int]] = None,
-    add_prior_trials: bool = False
-    ) -> None:
+    max_num_trials: int | None = None,
+    prior_study_ids: list[int] | None = None,
+    add_prior_trials: bool = False,
+) -> None:
   """Runs dedicated controller and waits for its completion."""
   raise NotImplementedError('Dedicated controller is not supported in OSS paxml.')
 
 
 def _verify_running_mode(
-    reward_fn: Optional[automl.BaseReward],
+    reward_fn: automl.BaseReward | None,
     running_mode: str,
-    is_metric_reporting_role: bool) -> None:
+    is_metric_reporting_role: bool,
+) -> None:
   """Makes sure tuning is running in the right mode and config."""
   if reward_fn is None:
     return
@@ -366,13 +465,14 @@ class EarlyStoppingFn:
       self,
       feedback: pg.tuning.Feedback,
       sub_experiment_id: str,
-      reward_fn: Optional[automl.BaseReward],
+      reward_fn: automl.BaseReward | None,
       cross_step_metric_aggregator: automl.CrossStepMetricAggregator,
       is_metric_reporting_role: bool,
       is_last_experiment: bool,
       tuning_step_start: int,
       treats_early_stopped_trials_as_done: bool,
-      train_to_end: bool):
+      train_to_end: bool,
+  ):
     self._feedback = feedback
     self._sub_experiment_id = sub_experiment_id
     self._reward_fn = reward_fn
@@ -396,11 +496,14 @@ class EarlyStoppingFn:
   def train_to_end(self) -> bool:
     return self._train_to_end
 
-  def __call__(self,
-               metrics: Dict[str, float],
-               running_mode: trainer_lib.RunningMode,
-               global_step: int,
-               is_last_ckpt: bool) -> bool:
+  def __call__(
+      self,
+      metrics: dict[str, float],
+      running_mode: trainer_lib.RunningMode,
+      global_step: int,
+      is_last_ckpt: bool,
+      checkpoint_path: epath.Path | None,
+  ) -> bool:
     """Returns True if trial should be stopped early."""
     tuning_step = self._tuning_step_start + global_step
     if self._is_metric_reporting_role:
@@ -416,7 +519,12 @@ class EarlyStoppingFn:
           # We only handle metric updates on main host.
           if jax.process_index() == 0:
             self._update_metrics(
-                metrics, running_mode, tuning_step, is_last_ckpt)
+                metrics,
+                running_mode,
+                tuning_step,
+                is_last_ckpt,
+                checkpoint_path=str(checkpoint_path),
+            )
         finally:
           # NOTE(daiyip): we synchronize all hosts after each eval/decode step
           # so all of them can move to the next train step or stop uniformly.
@@ -440,12 +548,20 @@ class EarlyStoppingFn:
                   f'(trial={self._feedback.id}, step={global_step})')
             elif self._is_last_experiment:
               self._complete_trial(
-                  aggregate_metrics=True, global_step=tuning_step + 1)
+                  aggregate_metrics=True,
+                  global_step=tuning_step + 1,
+                  checkpoint_path=str(checkpoint_path),
+              )
         else:
           try:
             if jax.process_index() == 0:
               self._update_metrics(
-                  metrics, running_mode, tuning_step, is_last_ckpt)
+                  metrics,
+                  running_mode,
+                  tuning_step,
+                  is_last_ckpt,
+                  checkpoint_path=str(checkpoint_path),
+              )
           finally:
             py_utils.sync_global_devices(
                 f'Sync on trial {self._feedback.id} with training metrics at '
@@ -475,17 +591,20 @@ class EarlyStoppingFn:
     return should_stop
 
   def _compute_reward(
-      self, metrics: Dict[str, float], tuning_step: int) -> float:
+      self, metrics: dict[str, float], tuning_step: int
+  ) -> float:
     if self._reward_fn is None:
       return 0.
     return self._reward_fn(metrics, tuning_step)
 
   def _update_metrics(
       self,
-      metrics: Dict[str, float],
+      metrics: dict[str, float],
       running_mode: trainer_lib.RunningMode,
       tuning_step: int,
-      is_last_ckpt: bool):
+      is_last_ckpt: bool,
+      checkpoint_path: str | None,
+  ):
     """Handle metric update."""
     assert jax.process_index() == 0
 
@@ -501,7 +620,11 @@ class EarlyStoppingFn:
       if math.isnan(reward):
         raise FloatingPointError('Reward is NaN.')
       self._feedback.add_measurement(
-          reward, metrics=used_metrics, step=tuning_step)
+          reward,
+          metrics=used_metrics,
+          step=tuning_step,
+          checkpoint_path=checkpoint_path,
+      )
 
       logging.info(
           'Measurement is reported to trial %d (sub-experiment=%s) at step '
@@ -514,7 +637,10 @@ class EarlyStoppingFn:
         # `feedback.done` should be called just once per trial.
         if self._is_last_experiment:
           self._complete_trial(
-              aggregate_metrics=True, global_step=tuning_step + 1)
+              aggregate_metrics=True,
+              global_step=tuning_step + 1,
+              checkpoint_path=checkpoint_path,
+          )
     except automl.EarlyStoppingError as e:
       # Calling the reward_fn triggers `EarlyStoppingError`, which indicates
       # user signaled early stopping.
@@ -541,16 +667,15 @@ class EarlyStoppingFn:
             step=e.step,
             metrics=e.metrics,
             checkpoint_path=e.checkpoint)
-        self._complete_trial()
+        self._complete_trial(checkpoint_path=checkpoint_path)
         logging.info(
             'Trial %d is early stopped at step %s with reward %f which '
             'will be fed back to the controller. Metrics: %s.',
             self._feedback.id, e.step, reward, e.metrics)
 
   def _reward_and_used_metrics(
-      self,
-      all_metrics: Dict[str, float],
-      tuning_step: int) -> Tuple[float, Dict[str, float]]:
+      self, all_metrics: dict[str, float], tuning_step: int
+  ) -> tuple[float, dict[str, float]]:
     """Returns computed reward and used metrics."""
     reward = self._compute_reward(all_metrics, tuning_step)
     if self._reward_fn is None:
@@ -564,7 +689,9 @@ class EarlyStoppingFn:
   def _complete_trial(
       self,
       aggregate_metrics: bool = False,
-      global_step: Optional[int] = None):
+      global_step: int | None = None,
+      checkpoint_path: str | None = None,
+  ):
     """Adds final measurement to trial based on metric aggregator."""
     # Poll the metrics across steps for aggregation.
     if aggregate_metrics:
@@ -580,7 +707,11 @@ class EarlyStoppingFn:
       final_reward, used_metrics = self._reward_and_used_metrics(
           final_metrics, global_step)
       self._feedback.add_measurement(
-          final_reward, used_metrics, step=global_step)
+          final_reward,
+          used_metrics,
+          step=global_step,
+          checkpoint_path=checkpoint_path,
+      )
       logging.info(
           'Final measurement is reported to trial %d at step %d '
           'with reward value %f and metrics %s.',
@@ -602,31 +733,34 @@ def _write_file_once(file_path: epath.Path, content: Text):
 
 
 class EvalMetrics(NamedTuple):
-  metrics_list: Optional[Sequence[Optional[Dict[str, float]]]] = None
-  scoring_metrics_list: Optional[Sequence[Optional[Dict[str, float]]]] = None
-  steps_per_sec: Optional[float] = None
-  input_names: Optional[Sequence[str]] = None
+  metrics_list: Sequence[dict[str, float] | None] | None = None
+  scoring_metrics_list: Sequence[dict[str, float] | None] | None = None
+  steps_per_sec: float | None = None
+  input_names: Sequence[str] | None = None
 
 
 class DecodeMetrics(NamedTuple):
-  metrics_list: Optional[Sequence[Optional[Dict[str, float]]]] = None
-  processed_metrics_list: Optional[Sequence[Optional[Dict[str, float]]]] = None
-  seqio_metrics_list: Optional[Sequence[Optional[Dict[str, float]]]] = None
-  steps_per_sec: Optional[float] = None
-  input_names: Optional[Sequence[str]] = None
+  metrics_list: Sequence[dict[str, float] | None] | None = None
+  processed_metrics_list: Sequence[dict[str, float] | None] | None = None
+  seqio_metrics_list: Sequence[dict[str, float] | None] | None = None
+  steps_per_sec: float | None = None
+  input_names: Sequence[str] | None = None
 
 
-def should_early_stop(early_stop_fn: trainer_lib.EarlyStoppingFn,
-                      global_step: int,
-                      is_last_ckpt: bool,
-                      train_weighted_scalars: Optional[
-                          Union[pytypes.WeightedScalars,
-                                pytypes.WeightedScalarsList]] = None,
-                      eval_train_metrics: Optional[Dict[str, float]] = None,
-                      eval_metrics: Optional[EvalMetrics] = None,
-                      decode_metrics: Optional[DecodeMetrics] = None,
-                      num_params: Optional[float] = None,
-                      train_steps_per_sec: Optional[float] = None) -> bool:
+def should_early_stop(
+    early_stop_fn: trainer_lib.EarlyStoppingFn,
+    global_step: int,
+    is_last_ckpt: bool,
+    train_weighted_scalars: pytypes.WeightedScalars
+    | pytypes.WeightedScalarsList
+    | None = None,
+    eval_train_metrics: dict[str, float] | None = None,
+    eval_metrics: EvalMetrics | None = None,
+    decode_metrics: DecodeMetrics | None = None,
+    num_params: float | None = None,
+    train_steps_per_sec: float | None = None,
+    checkpoint_path: epath.Path | None = None,
+) -> bool:
   """Returns True if the training process should stop early."""
   if early_stop_fn is None:
     return False
@@ -642,30 +776,48 @@ def should_early_stop(early_stop_fn: trainer_lib.EarlyStoppingFn,
   # evaluation or decoding takes place.
   train_metrics = None
   if train_weighted_scalars is not None:
-    if is_last_ckpt or running_mode.has_eval or running_mode.has_decode:
+    if (
+        is_last_ckpt
+        or running_mode.has_eval
+        or running_mode.has_decode
+        or os.getenv('PAXML_EARLY_STOP_ALWAYS_AGGREGATE_TRAIN_METRICS', '')
+        == 'true'
+    ):
       train_weighted_scalars = py_utils.maybe_unreplicate_for_fully_replicated(
-          train_weighted_scalars)
+          train_weighted_scalars
+      )
       train_metrics = metric_utils.as_float_dict(train_weighted_scalars)
       logging.info(
-          ('Aggregate train weighted scalars as tuning metrics. '
-           'Metrics=%s, WeightedScalars=%s'),
-          train_metrics, train_weighted_scalars)
+          (
+              'Aggregate train weighted scalars as tuning metrics. '
+              'Metrics=%s, WeightedScalars=%s'
+          ),
+          train_metrics,
+          train_weighted_scalars,
+      )
 
   # Aggregate metrics for tuning.
-  tuning_metrics = _aggregate_metrics(train_metrics, eval_train_metrics,
-                                      eval_metrics, decode_metrics, num_params,
-                                      train_steps_per_sec)
-  return early_stop_fn(tuning_metrics, running_mode, global_step, is_last_ckpt)
+  tuning_metrics = _aggregate_metrics(
+      train_metrics,
+      eval_train_metrics,
+      eval_metrics,
+      decode_metrics,
+      num_params,
+      train_steps_per_sec,
+  )
+  return early_stop_fn(
+      tuning_metrics, running_mode, global_step, is_last_ckpt, checkpoint_path
+  )
 
 
 def _aggregate_metrics(
-    train_metrics: Optional[Dict[str, float]] = None,
-    eval_train_metrics: Optional[Dict[str, float]] = None,
-    eval_metrics: Optional[EvalMetrics] = None,
-    decode_metrics: Optional[DecodeMetrics] = None,
-    num_params: Optional[float] = None,
-    train_steps_per_sec: Optional[float] = None,
-) -> Dict[str, Union[float, None]]:
+    train_metrics: dict[str, float] | None = None,
+    eval_train_metrics: dict[str, float] | None = None,
+    eval_metrics: EvalMetrics | None = None,
+    decode_metrics: DecodeMetrics | None = None,
+    num_params: float | None = None,
+    train_steps_per_sec: float | None = None,
+) -> dict[str, float | None]:
   """Aggregate metrics from training, evaluation and decoding for tuning."""
   metrics = {}
   if train_metrics is not None:
@@ -676,10 +828,11 @@ def _aggregate_metrics(
         metrics, eval_train_metrics, 'eval_train/metrics')
 
   def _add_input_based_metrics(
-      input_names: Optional[List[str]],
-      metrics_list: Optional[List[Optional[Dict[str, float]]]],
-      dataset_type: Optional[str] = None,
-      category: Optional[str] = None):
+      input_names: list[str] | None,
+      metrics_list: list[dict[str, float] | None] | None,
+      dataset_type: str | None = None,
+      category: str | None = None,
+  ):
     if input_names is None or metrics_list is None:
       return
     assert len(input_names) == len(metrics_list), (input_names, metrics_list)
@@ -713,7 +866,7 @@ def _aggregate_metrics(
                              'decode_test')
 
   # Add training metrics.
-  def _add_metric_if_not_none(name: str, value: Optional[float]):
+  def _add_metric_if_not_none(name: str, value: float | None):
     if value is not None:
       metrics[name] = value
 
@@ -777,11 +930,13 @@ class TrialDirectoryNameGenerator:
 
   _NON_PATH_FRIENDLY_CHAR_SET = re.compile(r'[^\w\d=_-{}\(\).,\[\]]+')
 
-  def __init__(self,
-               root_dir: epath.Path,
-               search_space: pg.hyper.DynamicEvaluationContext,
-               combined_decision_point_names: Optional[List[str]] = None,
-               total_name_length_threshold: int = 64):
+  def __init__(
+      self,
+      root_dir: epath.Path,
+      search_space: pg.hyper.DynamicEvaluationContext,
+      combined_decision_point_names: list[str] | None = None,
+      total_name_length_threshold: int = 64,
+  ):
     decision_point_names = list(search_space.hyper_dict.keys())  # pytype: disable=attribute-error
     if combined_decision_point_names:
       assert len(decision_point_names) == 1, decision_point_names
@@ -796,7 +951,7 @@ class TrialDirectoryNameGenerator:
     self._include_decision_names = sum(
         len(n) for n in decision_point_names) < total_name_length_threshold
 
-  def parameter_values(self) -> List[Tuple[str, Any]]:
+  def parameter_values(self) -> list[tuple[str, Any]]:
     """Return the current parameter values and its choice indices.
 
     NOTE(daiyip): this function is intended to be called under the tuning loop.

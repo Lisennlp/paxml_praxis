@@ -17,11 +17,15 @@
 
 import dataclasses
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+import os
+from typing import Any, Callable, Type
+from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from clu import platform
 from etils import epath
+import jax
 from paxml import automl
 from paxml import base_experiment
 from paxml import trainer_lib
@@ -32,11 +36,11 @@ import pyglove as pg
 
 
 class StopWithLowerMetric(automl.BaseReward):
-  metric: Optional[automl.Metric] = None
-  threshold: Union[float, List[Tuple[int, float]]] = 0.0
+  metric: automl.Metric | None = None
+  threshold: float | list[tuple[int, float]] = 0.0
   skip: bool = False
-  reward_replacement: Optional[float] = None
-  metrics_replacement: Optional[Dict[str, float]] = None
+  reward_replacement: float | None = None
+  metrics_replacement: dict[str, float] | None = None
 
   def get_threshold(self, global_step: int) -> float:
     if isinstance(self.threshold, float):
@@ -48,7 +52,7 @@ class StopWithLowerMetric(automl.BaseReward):
         return value
     return 0.0
 
-  def __call__(self, metrics_dict: Dict[str, float], global_step: int) -> float:
+  def __call__(self, metrics_dict: dict[str, float], global_step: int) -> float:
     reward = self.metric.get_value(metrics_dict)
     if reward < self.get_threshold(global_step):
       if self.skip:
@@ -78,8 +82,8 @@ class MockTask(pg.Dict):
 
 
 class MockDataset(base_hyperparams.FiddleBaseParameterizable):
-  dataset_param1: Optional[str] = None
-  dataset_param2: Optional[Callable[[], int]] = None
+  dataset_param1: str | None = None
+  dataset_param2: Callable[[], int] | None = None
   is_training: bool = False
   param1: Any = dataclasses.field(init=False, repr=False)
   param2: Any = dataclasses.field(init=False, repr=False)
@@ -96,7 +100,7 @@ class TuningExperiment(base_experiment.BaseExperiment):
   LEARNING_RATE = pg.oneof([0.1, 0.01, 0.001])
   UNUSED_PARAM = pg.oneof(range(5))
   DATASET_PARAM1 = pg.oneof(['foo', 'bar'])
-  DECODER_DATASET_PARAM1 = pg.oneof(['x', 'y', 'z'])
+  DECODE_DATASET_PARAM1 = pg.oneof(['x', 'y', 'z'])
 
   def task(self):
     return MockTask(
@@ -119,16 +123,16 @@ class TuningExperiment(base_experiment.BaseExperiment):
         )
     ]
 
-  def decoder_datasets(self):
-    # NOTE(daiyip): `decoder_dataset_param2` shall NOT appear in the search
-    # space: its evaluation is delayed until instantiation, and decoder
+  def decode_datasets(self):
+    # NOTE(daiyip): `decode_dataset_param2` shall NOT appear in the search
+    # space: its evaluation is delayed until instantiation, and decode
     # datasets are not instantiated during search space inspection.
     return [
         pax_fiddle.Config(
             MockDataset,
-            dataset_param1=self.DECODER_DATASET_PARAM1,
+            dataset_param1=self.DECODE_DATASET_PARAM1,
             dataset_param2=(
-                lambda: pg.oneof(range(3), name='decoder_dataset_param2')
+                lambda: pg.oneof(range(3), name='decode_dataset_param2')
             ),
         )
     ]
@@ -144,6 +148,7 @@ class TuningExperiment(base_experiment.BaseExperiment):
         ),
         max_num_trials=10,
         enable_dataset_tuning=True,
+        enable_partitioner_tuning=False,
     )
 
 
@@ -309,7 +314,7 @@ class TuningWithPopulationWiseEarlyStopping(TuningExperiment):
 class TuningWithSubExperiments(TuningExperiment):
   """A faked tuning experiment with multiple sub-experiments."""
 
-  def sub_experiments(self) -> Dict[str, Type[base_experiment.BaseExperiment]]:
+  def sub_experiments(self) -> dict[str, Type[base_experiment.BaseExperiment]]:
     def _scale_experiment(multiplier):
       class ScaledExperiment(self.__class__):
 
@@ -333,7 +338,7 @@ def run_experiment(experiment_config: base_experiment.BaseExperiment,
   del work_unit, job_log_dir
   task_p = experiment_config.task()
   _ = experiment_config.datasets()
-  _ = experiment_config.decoder_datasets()
+  _ = experiment_config.decode_datasets()
   reward = task_p['learning_rate'] * task_p['batch_size'] * 1
   if reward > 5:
     reward = math.nan
@@ -376,7 +381,7 @@ def run_experiment_with_train_metrics_only(
   del work_unit, job_log_dir
   _ = experiment_config.task()
   _ = experiment_config.datasets()
-  _ = experiment_config.decoder_datasets()
+  _ = experiment_config.decode_datasets()
 
   _ = tuning_lib.should_early_stop(
       early_stopping_fn,
@@ -398,7 +403,7 @@ def run_experiment_without_reporting_metrics(
   del work_unit, job_log_dir
   _ = experiment_config.task()
   _ = experiment_config.datasets()
-  _ = experiment_config.decoder_datasets()
+  _ = experiment_config.decode_datasets()
 
   # Reach to the final step without reporting any metrics.
   _ = tuning_lib.should_early_stop(
@@ -412,14 +417,18 @@ class GetSearchSpaceTest(absltest.TestCase):
 
   def test_joint_space_from_class_attributes_and_runtime_call(self):
     search_space = tuning_lib.get_search_space(TuningExperiment())
-    self.assertEqual(search_space.hyper_dict, pg.Dict({
-        'LEARNING_RATE': pg.oneof([0.1, 0.01, 0.001], name='LEARNING_RATE'),
-        'batch_size': pg.oneof([16, 32, 64], name='batch_size'),
-        'DATASET_PARAM1': pg.oneof(['foo', 'bar'], name='DATASET_PARAM1'),
-        'dataset_param2': pg.oneof(range(3), name='dataset_param2'),
-        'DECODER_DATASET_PARAM1': pg.oneof(['x', 'y', 'z'],
-                                           name='DECODER_DATASET_PARAM1'),
-    }))
+    self.assertEqual(
+        search_space.hyper_dict,
+        pg.Dict({
+            'LEARNING_RATE': pg.oneof([0.1, 0.01, 0.001], name='LEARNING_RATE'),
+            'batch_size': pg.oneof([16, 32, 64], name='batch_size'),
+            'DATASET_PARAM1': pg.oneof(['foo', 'bar'], name='DATASET_PARAM1'),
+            'dataset_param2': pg.oneof(range(3), name='dataset_param2'),
+            'DECODE_DATASET_PARAM1': pg.oneof(
+                ['x', 'y', 'z'], name='DECODE_DATASET_PARAM1'
+            ),
+        }),
+    )
     self.assertEqual(search_space.dna_spec.space_size, 3 * 3 * 2 * 3 * 3)
 
   def test_parameter_sweep_space_with_cartesian_product(self):
@@ -486,23 +495,25 @@ class TuneTest(absltest.TestCase):
     self.assertEqual([t.final_measurement.step for t in result.trials],
                      [0, 21, 21, 21, 21])
     # Make sure experiment config is saved as trial metadata.
-    actual = result.trials[0].metadata.get('experiment_config')
-    actual['config']['']['datasets'][0] = 'MOCK_DATASET_CONFIG'
-    actual['config']['']['decoder_datasets'][0] = 'MOCK_DATASET_CONFIG'
-    actual['config']['']['task'] = 'MOCK_TASK_CONFIG'
-    self.assertEqual(
-        actual,
-        {
-            'format_version': 1.0,
-            'source': 'pax',
-            'config': {
-                '': pg.Dict(
-                    datasets=['MOCK_DATASET_CONFIG'],
-                    decoder_datasets=['MOCK_DATASET_CONFIG'],
-                    task='MOCK_TASK_CONFIG',
-                )
-            },
-        },
+    self.assertIn(
+        'MockDataset',
+        tuning_lib.uncompressed(
+            result.trials[0].metadata['experiment_config:datasets']['config']
+        ),
+    )
+    self.assertIn(
+        'MockDataset',
+        tuning_lib.uncompressed(
+            result.trials[0].metadata['experiment_config:decode_datasets'][
+                'config'
+            ]
+        ),
+    )
+    self.assertIn(
+        'learning_rate',
+        tuning_lib.uncompressed(
+            result.trials[0].metadata['experiment_config:task']['config']
+        ),
     )
 
   def test_parameter_sweep_with_catesian_product(self):
@@ -785,14 +796,17 @@ class TuneTest(absltest.TestCase):
             eval_interval_steps=10,
             decode_interval_steps=10,
             save_interval_steps=400,
-            train_to_end=True))
+            train_to_end=True,
+        )
+    )
 
-
-def get_trial_dirname(search_space_fun,
-                      trial_id: int,
-                      dna: pg.DNA,
-                      combined_parameter_names: Optional[List[str]] = None,
-                      root_dir: str = 'root') -> epath.Path:
+def get_trial_dirname(
+    search_space_fun,
+    trial_id: int,
+    dna: pg.DNA,
+    combined_parameter_names: list[str] | None = None,
+    root_dir: str = 'root',
+) -> epath.Path:
   search_space = pg.hyper.trace(search_space_fun, require_hyper_name=True)
   dirname_generator = tuning_lib.TrialDirectoryNameGenerator(
       epath.Path(root_dir), search_space, combined_parameter_names)
@@ -875,6 +889,54 @@ class TrialDirnameTest(absltest.TestCase):
     self.assertEqual(
         str(get_trial_dirname(_fn, 1, pg.DNA([0, 'xyz']))),
         'root/1/x=1|y=(CUSTOM)')
+
+
+class ShouldEarlyStopTest(parameterized.TestCase):
+  """Tests for should_early_stop."""
+
+  @parameterized.parameters([
+      ('true', ['train_steps_per_sec', 'train/metric_0']),
+      ('', ['train_steps_per_sec']),
+  ])
+  def test_tune_always_aggregate_train_metrics(
+      self,
+      test_paxml_early_stop_always_aggregate_train_metrics,
+      expected_tuning_metrics_keys,
+  ):
+    mock_early_stop_fn = mock.Mock()
+
+    with mock.patch.dict(
+        os.environ,
+        {
+            'PAXML_EARLY_STOP_ALWAYS_AGGREGATE_TRAIN_METRICS': (
+                test_paxml_early_stop_always_aggregate_train_metrics
+            )
+        },
+    ):
+      tuning_lib.should_early_stop(
+          mock_early_stop_fn,
+          global_step=10,
+          train_steps_per_sec=2.5,
+          train_weighted_scalars={
+              'metric_0': (jax.numpy.array([0, 1]), jax.numpy.array([1, 0]))
+          },
+          is_last_ckpt=False,
+          eval_metrics=None,
+          decode_metrics=None,
+          checkpoint_path='/foo',
+      )
+
+    mock_early_stop_fn.assert_called_once_with(
+        mock.ANY,
+        trainer_lib.RunningMode.TRAIN,
+        10,
+        False,
+        '/foo',
+    )
+    self.assertEqual(
+        set(mock_early_stop_fn.call_args.args[0].keys()),
+        set(expected_tuning_metrics_keys),
+    )
 
 
 if __name__ == '__main__':

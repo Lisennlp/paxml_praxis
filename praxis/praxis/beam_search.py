@@ -15,7 +15,7 @@
 
 """Vanilla Beam search algorithm."""
 
-from typing import Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Callable, Sequence
 
 from flax import linen as nn
 import jax
@@ -28,7 +28,7 @@ from praxis import py_utils
 NestedMap = py_utils.NestedMap
 JTensor = base_layer.JTensor
 BeamSearchHParams = decoder_hparams.BeamSearchHParams
-GlobalBeam = Tuple[
+GlobalBeam = tuple[
     JTensor,  # int[batch_size, beam_size, seq_len] Decoded IDs including </s>
     JTensor,  # int[batch_size, beam_size] Complete sequence lengths
     JTensor,  # float[batch_size, beam_size] Complete sequence scores
@@ -130,18 +130,18 @@ def default_compute_logprobs_fn(
 # TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
 def beam_search(
     model: base_layer.BaseLayerApi,
-    extend_step_fn: Union[
-        decoder_utils.ExtendStepFn, decoder_utils.ExpandedExtendStepFn
-    ],
+    extend_step_fn: decoder_utils.ExtendStepFn
+    | decoder_utils.ExpandedExtendStepFn,
     fprop_fn: decoder_utils.FPropFn,
     transform_state_fn: decoder_utils.TransformStateFn,
     prefix_ids: JTensor,
     prefix_paddings: JTensor,
     beam_search_hparams: BeamSearchHParams,
     compute_logprobs_fn: ComputeLogprobsFn = default_compute_logprobs_fn,
-    decode_loop_mesh_axes_transpose: Optional[Dict[str, str]] = None,
-    model_var_pspecs: Optional[base_layer.NestedPartitionSpec] = None,
-    process_result_fn: Optional[decoder_utils.ProcessResultFn] = None,
+    decode_loop_mesh_axes_transpose: dict[str, str] | None = None,
+    model_var_pspecs: base_layer.NestedPartitionSpec | None = None,
+    process_result_fn: decoder_utils.ProcessResultFn | None = None,
+    lazy_broadcast_prefix_fn: decoder_utils.LazyBroadcastPrefixFn | None = None,
 ) -> NestedMap:
   """Vanilla beam search decode the input batch.
 
@@ -196,6 +196,7 @@ def beam_search(
         prefix_paddings,
         beam_search_hparams,
         compute_logprobs_fn,
+        lazy_broadcast_prefix_fn,
     )
     if process_result_fn is not None:
       result = process_result_fn(model, result)
@@ -205,14 +206,14 @@ def beam_search(
 # TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
 def beam_search_after_prefix_fprop(
     model: base_layer.BaseLayerApi,
-    extend_step_fn: Union[
-        decoder_utils.ExtendStepFn, decoder_utils.ExpandedExtendStepFn
-    ],
+    extend_step_fn: decoder_utils.ExtendStepFn
+    | decoder_utils.ExpandedExtendStepFn,
     transform_state_fn: decoder_utils.TransformStateFn,
     prefix_ids: JTensor,
     prefix_paddings: JTensor,
     beam_search_hparams: BeamSearchHParams,
     compute_logprobs_fn: ComputeLogprobsFn = default_compute_logprobs_fn,
+    lazy_broadcast_prefix_fn: decoder_utils.LazyBroadcastPrefixFn | None = None,
 ) -> NestedMap:
   """Same as beam_search but this is after prefix fprop."""
   # TODO(b/229679837): Move right align prefix ids and paddings logic inside
@@ -237,14 +238,25 @@ def beam_search_after_prefix_fprop(
       else [beam_search_hparams.eos_id]
   )
   seq_len = max(max_decode_steps) + max_prefix_len
-  # Pad max_decode_steps to the state.
-  transform_state_fn(model, decoder_utils.pad_state_fn(min(max_decode_steps)))
+  if lazy_broadcast_prefix_fn is not None:
+    # We need to exclude the last token from prefix, and instead move it to
+    # the multi-sample suffix. This is because the last token only as an Input
+    # ID, but not an output ID (label), and we need to start decoding from it.
+    transform_state_fn(model, decoder_utils.slice_state_fn(0, -1))
+    first_decode_steps = min(max_decode_steps)
+    # max_decode_steps + 1 to include last token from prefix.
+    lazy_broadcast_prefix_fn(model, beam_size, first_decode_steps + 1)
 
-  # Broadcast cache states before the while loop.
-  def _broadcast_state_fn(x, batch_dim, time_dim):
-    del time_dim
-    return jnp.repeat(x, repeats=beam_size, axis=batch_dim)
-  transform_state_fn(model, _broadcast_state_fn)
+  else:
+    # Pad max_decode_steps to the state.
+    transform_state_fn(model, decoder_utils.pad_state_fn(min(max_decode_steps)))
+
+    # Broadcast cache states before the while loop.
+    def _broadcast_state_fn(x, batch_dim, time_dim):
+      del time_dim
+      return jnp.repeat(x, repeats=beam_size, axis=batch_dim)
+
+    transform_state_fn(model, _broadcast_state_fn)
 
   # Set up init loop variables.
   val = NestedMap()
@@ -315,6 +327,23 @@ def beam_search_after_prefix_fprop(
         logits.astype(jnp.float32), model, extend_ids, val.segment_pos, val
     )
     logprobs = jnp.reshape(logprobs, (batch_size, beam_size, -1))
+
+    # Before reaching the minimum number of decode steps required (default: 0),
+    # prevent EOS from getting selected by setting its logprobs to a very
+    # negative value.
+    def prevent_terminal_ids(x):
+      for terminal_id in terminal_ids:
+        x = x.at[:, :, terminal_id].set(-1e20)
+      return x
+
+    if beam_search_hparams.min_decode_steps > 0:
+      logprobs = jax.lax.cond(
+          step >= max_prefix_len - 1 + beam_search_hparams.min_decode_steps,
+          lambda x: x,
+          prevent_terminal_ids,
+          logprobs,
+      )
+
     # Select the best ids with terminal tokens.
     eos_scores = jnp.ones_like(val.hyp_scores) * -1e9
     new_end_ids = val.output_ids
@@ -350,25 +379,37 @@ def beam_search_after_prefix_fprop(
     # early_exit doesn't explore non-EOS hyps.
     topk_terminal_ids = [] if beam_search_hparams.early_exit else terminal_ids
     # Choose the topk indices.
+    tokens_per_beam = (
+        beam_size
+        if beam_search_hparams.tokens_per_beam is None
+        else beam_search_hparams.tokens_per_beam
+    )
     _, topk_indices, final_topk_value, final_topk_indices = (
         decoder_utils.two_stage_topk(
-            logprobs, val.hyp_scores, topk_terminal_ids
+            logprobs, val.hyp_scores, topk_terminal_ids, tokens_per_beam
         )
     )
     # update scores with or without EOS depending on early_exit.
     val.hyp_scores = final_topk_value
-    hyp_id = final_topk_indices // beam_size
+    hyp_id = final_topk_indices // tokens_per_beam
     val.hyp_ids = hyp_id
 
+    use_one_hot_matmul = beam_search_hparams.use_matmul_beam_shuffle
     # Shuffle at beam dimension for the cache states using hyp_id.
     def _shuffle_state_fn(x, batch_dim, time_dim):
       del time_dim
-      x_shape = x.shape
-      new_shape = list(x_shape)
-      new_shape.insert(batch_dim + 1, beam_size)
-      new_shape[batch_dim] = x_shape[batch_dim] // beam_size
-      new_state = shuffle_state(jnp.reshape(x, new_shape), hyp_id)
-      return jnp.reshape(new_state, x_shape)
+      if lazy_broadcast_prefix_fn is not None:
+        new_state = shuffle_state(x, hyp_id, use_one_hot_matmul)
+        return new_state
+      else:
+        x_shape = x.shape
+        new_shape = list(x_shape)
+        new_shape.insert(batch_dim + 1, beam_size)
+        new_shape[batch_dim] = x.shape[batch_dim] // beam_size
+        new_state = shuffle_state(
+            jnp.reshape(x, new_shape), hyp_id, use_one_hot_matmul
+        )
+        return jnp.reshape(new_state, x_shape)
 
     transform_state_fn(model, _shuffle_state_fn)
 
@@ -378,9 +419,9 @@ def beam_search_after_prefix_fprop(
     new_logprobs = decoder_utils.gather_logprobs(logprobs, hyp_id, new_ids)
 
     # Shuffle output ids at beam dimension using hyp_id.
-    val.output_ids = shuffle_state(val.output_ids, hyp_id)
-    val.logprobs = shuffle_state(val.logprobs, hyp_id)
-    val.done = shuffle_state(val.done, hyp_id)
+    val.output_ids = shuffle_state(val.output_ids, hyp_id, use_one_hot_matmul)
+    val.logprobs = shuffle_state(val.logprobs, hyp_id, use_one_hot_matmul)
+    val.done = shuffle_state(val.done, hyp_id, use_one_hot_matmul)
     # Update output_ids.
     val.output_ids = val.output_ids.at[:, :, step + 1].set(new_ids)
     val.logprobs = val.logprobs.at[:, :, step + 1].set(new_logprobs)
@@ -398,7 +439,10 @@ def beam_search_after_prefix_fprop(
       pad_size = max_decode_steps[i] - max_decode_steps[i - 1]
       transform_state_fn(model, decoder_utils.pad_state_fn(pad_size))
     result = nn.while_loop(
-        get_cond_func(max_decode_steps[i], beam_search_hparams.early_exit),
+        get_cond_func(
+            max_decode_steps[i],
+            beam_search_hparams.early_exit,
+        ),
         loop_body,
         model,
         result,
@@ -427,6 +471,12 @@ def beam_search_after_prefix_fprop(
   result.original_lengths = prefix_lengths
   result.prefix_lengths = prefix_lengths
   result.prefix_ids = prefix_ids
-  del (result.end_ids, result.end_decode_lengths, result.end_scores_norm,
-       result.hyp_scores)
+  del (
+      result.end_ids,
+      result.end_decode_lengths,
+      result.end_scores_norm,
+      result.hyp_scores,
+      result.step,
+      result.start_step,
+  )
   return result

@@ -13,245 +13,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quantized Attention Layers."""
+"""Quantized and optionally sparsified Attention Layers."""
 
 import copy
+import math
 import string
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Sequence
 
+from absl import logging
+import fiddle as fdl
 import jax
 from jax import numpy as jnp
 from jax.ad_checkpoint import checkpoint_name
 from praxis import base_layer
+from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import attentions
+from praxis.layers import normalizations
 from praxis.layers.quantization import operations
 from praxis.layers.quantization import quantization_hparams
 from praxis.layers.quantization import quantizer
 from praxis.layers.quantization import utils
+from praxis.layers.quantization.sparsity import sparsifier
+
 
 QuantizationParams = quantization_hparams.QuantizationParams
 QuantizationMode = quantization_hparams.QuantizationMode
 QuantizationType = quantization_hparams.QuantizationType
 WeightInit = base_layer.WeightInit
 WeightHParams = base_layer.WeightHParams
-instance_field = base_layer.instance_field
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor
-
-
-
-import numpy as np
-from praxis import asserts
-from praxis import pax_fiddle
-
-NestedMap = py_utils.NestedMap
-WeightInit = base_layer.WeightInit
-WeightHParams = base_layer.WeightHParams
-template_field = base_layer.template_field
 LayerTpl = pax_fiddle.Config[base_layer.BaseLayer]
-JTensor = pytypes.JTensor
-NestedJTensor = pytypes.NestedJTensor
-NestedInt = pytypes.NestedInt
 
-SplitDimsMapping = pytypes.SplitDimsMapping
-
-PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
-
-
-
-def limited_context_mask(
-    left_context: Union[int, None],
-    right_context: Union[int, None],
-    time_size: int,
-    dtype: jnp.dtype = jnp.float32,
-) -> JTensor:
-    """Generates a logit mask from window configuration.
-
-    left_context includes the current timestep and left ones while right_context
-    includes only future timesteps. None represents infinity.
-
-    Args:
-      left_context: integer or None.
-      right_context: integer or None
-      time_size: size of time dimension.
-      dtype: data type of the output.
-
-    Returns:
-      A JTensor of shape [T, T] ready to add to attention logits.
-    """
-    large_negative_number = py_utils.get_large_negative_number(dtype)
-
-    if right_context is None:
-        right_context = time_size
-    if left_context is None:
-        left_context = time_size
-    col_idx = jnp.tile(jnp.arange(time_size)[jnp.newaxis, :], [time_size, 1])
-    row_idx = jnp.tile(jnp.arange(time_size)[:, jnp.newaxis], [1, time_size])
-    mask = ((col_idx + left_context <= row_idx) | (row_idx < col_idx - right_context)).astype(
-        dtype
-    ) * large_negative_number
-    return mask
-
-
-def causal_mask(input_t: JTensor) -> JTensor:
-    """Computes and returns causal mask.
-
-    Args:
-      input_t: A JTensor of shape [B, T, D].
-
-    Returns:
-      An attention_mask JTensor of shape [1, 1, T, T]. Attention mask has
-      already been converted large negative values.
-    """
-    assert input_t.dtype == jnp.float32 or input_t.dtype == jnp.bfloat16, input_t.dtype
-    large_negative_number = py_utils.get_large_negative_number(input_t.dtype)
-    t = input_t.shape[1]
-    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
-    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
-    mask = (row_idx < col_idx).astype(input_t.dtype) * large_negative_number
-    return mask[jnp.newaxis, jnp.newaxis, :, :]
-
-
-def segment_mask(
-    segment_ids: JTensor,
-    source_segment_ids: Optional[JTensor] = None,
-    dtype: jnp.dtype = jnp.float32,
-) -> JTensor:
-    """Computes (non-causal) segment mask.
-
-    Args:
-      segment_ids: a JTensor of shape [B, T], the segment that each token belongs
-        to.
-      source_segment_ids: a JTensor of shape [B, S], the segment that each source
-        token belongs to (optional).
-      dtype: data type of the input.
-
-    Returns:
-      A JTensor of shape [B, 1, T, S].
-    """
-    # [B, T, 1]
-    segment_ids_1 = jnp.expand_dims(segment_ids, axis=-1)
-    # [B, 1, S]
-    if source_segment_ids is not None:
-        segment_ids_2 = jnp.expand_dims(source_segment_ids, axis=1)
-    else:
-        segment_ids_2 = jnp.expand_dims(segment_ids, axis=1)
-    # [B, T, S].
-    mask = jnp.not_equal(segment_ids_1, segment_ids_2).astype(dtype)
-    mask = jnp.expand_dims(mask, 1)
-    mask *= py_utils.get_large_negative_number(dtype)
-    return mask
-
-
-def causal_segment_mask(
-    segment_ids: JTensor,
-    dtype: jnp.dtype = jnp.float32,
-    causal_attention_mask: Optional[JTensor] = None,
-) -> JTensor:
-    """Computes the masks which combines causal masking and segment masks.
-
-    Args:
-      segment_ids: a JTensor of shape [B, T], the segment that each token belongs
-        to.
-      dtype: data type of the input.
-      causal_attention_mask: a JTensor of shape [B, T] where 1 indicates where a
-        casual mask should be applied and 0 where it shouldn't. E.g. for an input
-        -> target type of input. Tensor indices corresponding to the input tokens
-        should be set to 0 and indices corresponding to target tokens should be
-        set to 1.
-
-    Returns:
-      A JTensor of shape [B, 1, T, T].
-    """
-    # [B, 1, T, T]
-    segment_mask_t = segment_mask(segment_ids, dtype=dtype)
-    # [1, 1, T, T]
-    b, t = segment_ids.shape
-    causal_mask_t = causal_mask(jnp.zeros([b, t, 1], dtype=dtype))
-    if causal_attention_mask is not None:
-        causal_mask_t *= causal_attention_mask[:, jnp.newaxis, jnp.newaxis, :]
-    return jnp.minimum(segment_mask_t, causal_mask_t)
-
-
-def convert_paddings_to_mask(paddings: JTensor, dtype: jnp.dtype = jnp.float32) -> JTensor:
-    """Converts binary paddings to a logit mask ready to add to attention matrix.
-
-    Args:
-      paddings: binary JTensor of shape [B, T], with 1 denoting padding token.
-      dtype: data type of the input.
-
-    Returns:
-      A JTensor of shape [B, 1, 1, T] ready to add to attention logits.
-    """
-    attention_mask = paddings[:, jnp.newaxis, jnp.newaxis, :]
-    attention_mask *= py_utils.get_large_negative_number(dtype)
-    return attention_mask
-
-
-def shift_1d(inputs: JTensor, offset: int, axis: int):
-    """Shifts the input tensor by offset in the dimension axis.
-
-    To shift right the offset is positive and the input is padded at the
-    beginning, while to shift left the offset is negative and the input is
-    padded at the end.
-
-    Args:
-      inputs: The input tensor to shift.
-      offset: The number of positions to shift. If the offset is positive, pad at
-        the beginning of the sequence, if the offset is negative, then pad at the
-        end of the sequence.
-      axis: The dimension in which to shift the input.
-
-    Returns:
-      The shifted input.
-    """
-    paddings = [((max(offset, 0), -min(offset, 0)) if i == axis else (0, 0)) for i in range(len(inputs.shape))]
-    input_length = jnp.shape(inputs)[axis]
-    padded_inputs = jnp.pad(inputs, paddings)
-    if offset > 0:
-        output = jax.lax.slice_in_dim(padded_inputs, start_index=0, limit_index=input_length, axis=axis)
-    else:
-        output = jax.lax.slice_in_dim(
-            padded_inputs,
-            start_index=-offset,
-            limit_index=input_length - offset,
-            axis=axis,
-        )
-    return output
-
-
-def convert_to_block(x, block_size: int, padding_val: float = 0.0) -> JTensor:
-    """Turns a sequence to non overlapping blocks.
-
-    Args:
-      x: a tensor of [batch, time, ...].
-      block_size: int. Number of time frames in a block.
-      padding_val: float. value on the padded frames.
-
-    Returns:
-      A tensor of [batch, num_blocks, block_size, ...], with necessary paddings,
-      where output[:, i, ...] are x[:, i*block_size:(i+1)*block_size, ...].
-    """
-    shape = list(x.shape)
-    b, t = shape[0], shape[1]
-    if block_size < 1:
-        raise ValueError("block_size must be at least 1, got {}".format(block_size))
-    w = block_size
-    # Pad it to be a multipe of w.
-    num_blocks = (t + w - 1) // w
-    pad_length = num_blocks * w - t
-
-    if pad_length > 0:
-        pad_shape = [(0, 0) if idx != 1 else (0, pad_length) for idx in range(len(x.shape))]
-        x = jnp.pad(x, pad_shape, constant_values=padding_val)
-    reshaped = jnp.reshape(x, [b, num_blocks, w] + shape[2:])
-    return reshaped
+instance_field = base_layer.instance_field
+template_field = base_layer.template_field
 
 
 class AttentionProjection(  # pytype: disable=signature-mismatch
-    attentions.AttentionProjection, quantizer.QuantizationLayer
+    attentions.AttentionProjection,
+    quantizer.QuantizationLayer,
+    sparsifier.SparsityBaseLayer,
 ):
   """Layer that optionally computes quantized multi heads projection.
 
@@ -260,21 +63,28 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
 
   _PACK_4BIT_DIM = 0
 
-  def create_tensor_quantizers(self):
-    act_params = self.quantization.act_params if self.quantization else None
-    weight_params = (
-        self.quantization.weight_params if self.quantization else None
-    )
-    self.create_child(
-        'act_quantizer',
-        quantizer.create_tensor_quantizer('act_quantizer', act_params),
-    )
-    self.create_child(
-        'weight_quantizer',
-        quantizer.create_tensor_quantizer('weight_quantizer', weight_params),
-    )
+  def _sub_channel_block_size(self) -> int:
+    """Determine sub-channels' block_size if it was given."""
+    if (
+        self.quantization is not None
+        and self.quantization.weight_params is not None
+        and self.quantization.weight_params.block_size > 0
+    ):
+      return self.quantization.weight_params.block_size
+    return 0
 
-  def setup(self) -> None:
+  def _get_eqn(self) -> str:
+    # This matches the equation logic in __call__ for weights.
+    if self.is_output_projection:
+      if self.use_nhd_shape:
+        eqn = 'ANH,NHD->AD'
+      else:
+        eqn = 'ANH,DNH->AD'
+    else:
+      eqn = 'AD,DNH->ANH'
+    return eqn
+
+  def _get_weight_scale_shape(self, block_size, use_block_size):
     wp = self.weight_split_dims_mapping
     has_sharding = self.mesh_shape is not None and wp.wt is not None
     if self.attention_combine_dims:
@@ -282,7 +92,6 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
       hd_shape = [self.num_heads * self.dim_per_head]
     else:
       hd_shape = [self.num_heads, self.dim_per_head]
-
     if self.attention_combine_dims and has_sharding:
       if len(wp.wt) == 3:
         h_sharding = ()
@@ -292,22 +101,50 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
           elif axes is not None:
             h_sharding += axes
         wt = [h_sharding, wp.wt[2]]
-        assert len(wt) == 2
+        assert len(self.wt) == 2
     else:
       wt = wp.wt
-    pc_shape = [self.input_dim] + hd_shape
+
     if self.is_output_projection and self.use_nhd_shape:
-      pc_shape = hd_shape + [self.input_dim]
-    pc = WeightHParams(
-        shape=pc_shape, mesh_shape=self.mesh_shape, tensor_split_dims_mapping=wt
-    )
+      weight_shape = hd_shape + [self.input_dim]
+    else:
+      weight_shape = [self.input_dim] + hd_shape
+
     scale_shape = [self.input_dim] if self.is_output_projection else hd_shape
+
+    if block_size > 0 and use_block_size:
+      eqn = self._get_eqn()
+      new_contract_dims = operations.eqn_to_weight_contract_dims(eqn)
+      weight_shape, new_contract_dims = operations.get_sub_channel_shape(
+          list(weight_shape), block_size, new_contract_dims
+      )
+      scale_shape = operations.get_scale_shape(weight_shape, new_contract_dims)
+    return weight_shape, scale_shape, wt
+
+  def setup(self) -> None:
+    wp = self.weight_split_dims_mapping
+    has_sharding = self.mesh_shape is not None and wp.wt is not None
+    block_size = self._sub_channel_block_size()
+    use_block_size = (
+        self.quantization is not None
+        and self.quantization.mode == QuantizationMode.INFERENCE
+    )
+    weight_shape, scale_shape, self.wt = self._get_weight_scale_shape(
+        block_size, use_block_size
+    )
+
+    pc = WeightHParams(
+        shape=weight_shape,
+        mesh_shape=self.mesh_shape,
+        tensor_split_dims_mapping=self.wt,
+    )
     self.set_up_weights(
         weight_name='w',
         weight_params=pc,
         scale_shape=scale_shape,
-        pack_dim=self._PACK_4BIT_DIM,
     )
+    self.create_sparsity_variables('w', pc, scale_shape=scale_shape)
+
     if self.use_bias:
       if self.is_output_projection:
         if has_sharding:
@@ -377,11 +214,29 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
       batch_eqn = eqn_sym[: (rank - 1)] if rank else '...'
       eqn = f'{batch_eqn}D,DNH->{batch_eqn}NH'
 
+    w = self.sparsifiy(theta.w, inputs=inputs, name='w')  # sparsify weight.
+
+    # Sub-channel
+    block_size = self._sub_channel_block_size()
+    if (
+        self.quantization is not None
+        and (self.quantization.mode == QuantizationMode.INFERENCE)
+        and block_size > 0
+    ):
+      # TODO(rybakov) Add sub channel support.
+      logging.warning(
+          'Weights are reshaped back to original shape. '
+          'Sub channel can be used only for weights '
+          'materialization.'
+      )
+      # Weight shape without sub channels.
+      weight_shape, _, _ = self._get_weight_scale_shape(0, False)
+      w = jnp.reshape(w, weight_shape)
+
     ret = self.quantized_einsum(
         eqn=eqn,
         x=inputs,
-        w=theta.w,
-        pack_dim=self._PACK_4BIT_DIM,
+        w=w,
         reshape=pc_shape,
     )
 
@@ -437,37 +292,40 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
         'quantize_weight is called during serving for quantized model, please'
         ' set quantized config for the model.'
     )
-    eqn = ''
-    # This matches the equation logic in __call__ for weights.
-    if self.is_output_projection:
-      if self.use_nhd_shape:
-        eqn = 'ANH,NHD->AD'
-      else:
-        eqn = 'ANH,DNH->AD'
-    else:
-      eqn = 'AD,DNH->ANH'
 
-    percentile = self.quantization.weight_params.clipping_coeff
+    eqn = self._get_eqn()
+    w = self.theta.w
+
+    block_size = self._sub_channel_block_size()
+    new_contract_dims = operations.eqn_to_weight_contract_dims(eqn)
+
+    if block_size > 0:
+      # Weight shape with sub channels.
+      weight_shape, _, _ = self._get_weight_scale_shape(block_size, True)
+      w = jnp.reshape(w, weight_shape)
+
     # TODO(jihwanlee): Handle the cases for FQ and static quantization.
     if self.quantization.quantization_type in [
         QuantizationType.PTQ,
         QuantizationType.FQ_VN,
     ]:
       q_w, q_s, zp = operations.reduce_einsum_weight_precision(
-          eqn,
-          self.theta.w,
-          calculation_type=self.dtype,
+          None,
+          w,
+          calculation_dtype=self.dtype,
           need_gradient=False,
           bits=self.quantization.weight_params.precision,
           optimization_on_bound=False,
-          percentile=percentile,
+          percentile=self.quantization.weight_params.clipping_coeff,
           use_symmetric=self.quantization.weight_params.use_symmetric,
+          quant_method=self.quantization.weight_params.quant_method,
+          contract_dims=new_contract_dims,
       )
     elif self.quantization.quantization_type == QuantizationType.AQT:
       dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
       weight_contract_dims = dimension_numbers[0][1]
       q_w, q_s, zp = self.weight_quantizer.quantize(
-          self.theta.w,
+          w,
           weight_contract_dims,
           squeeze_scale=True,
           quantized_dtype=self.quantization.weight_params.dtype,
@@ -497,8 +355,145 @@ class AttentionProjection(  # pytype: disable=signature-mismatch
     return {base_layer.PARAMS: ret_params}
 
 
+class AttentionProjectionLoRA(AttentionProjection):
+  """AttentionProjection with residual LoRA.
+
+  Attributes:
+    lora_rank: Rank of LoRA.
+    init_method: LoRA weights initialization method.
+    norm_tpl: Normalization layer type.
+    norm_order: Where to apply normalization layer:
+      * None: no normalization. * 'pre': normalization before LoRA projections.
+        * 'mid': normalization between LoRA projections. * 'post': normalization
+        after LoRA projections.
+    max_reduction: If True, it will select the reduction dim with the max size
+      and use it as LoRA dim, else it will use multiple reduction dims for LoRA
+      dims. It is applied only for a case when there are several reduction dims.
+  """
+
+  lora_rank: int = 0
+  init_method: str = 'one_zero'
+  norm_tpl: LayerTpl = template_field(normalizations.LayerNorm)
+  norm_order: str | None = None
+  max_reduction: bool = True
+
+  def setup(self):
+    super().setup()
+    weight_shape = self.theta.w.shape
+    if self.is_output_projection:
+      if self.use_nhd_shape:
+        eqn = '...NH,NHD->...D'
+        norm_input_dims = weight_shape[1]
+        norm_output_dims = weight_shape[2]
+        total_size_right = weight_shape[2]
+        total_size_left = max(weight_shape[0], weight_shape[1]) * self.lora_rank
+      else:
+        eqn = '...NH,DNH->...D'
+        norm_input_dims = weight_shape[2]
+        norm_output_dims = weight_shape[0]
+        total_size_right = weight_shape[0]
+        total_size_left = max(weight_shape[1], weight_shape[2]) * self.lora_rank
+    else:
+      eqn = '...D,DNH->...NH'
+      norm_input_dims = weight_shape[0]
+      norm_output_dims = weight_shape[1]
+      total_size_right = weight_shape[1] * weight_shape[2]
+      total_size_left = self.lora_rank
+
+    if self.init_method == 'one_zero':
+      w_left_scale = 1.0
+      w_right_scale = 0.0
+    elif self.init_method == 'output_dim':
+      w_left_scale = 1.0 / math.sqrt(total_size_left)
+      w_right_scale = 1.0 / math.sqrt(total_size_right)
+    else:
+      raise ValueError(f'Unrecognized init_method: {self.init_method}')
+
+    (
+        self.eqn_left,
+        self.eqn_right,
+        left_shape,
+        right_shape,
+        eqn_left_ind,
+        eqn_right_ind,
+    ) = utils.get_lora_shape_and_eqn(
+        weight_shape, self.lora_rank, eqn, max_reduction=self.max_reduction
+    )
+
+    self.create_variable(
+        'w_left',
+        WeightHParams(
+            shape=left_shape,
+            mesh_shape=self.mesh_shape,
+            init=WeightInit.Gaussian(w_left_scale),
+            tensor_split_dims_mapping=utils.get_left_weight_split_dims_mapping(
+                self.wt, eqn_left_ind
+            ),
+        ),
+    )
+
+    self.create_variable(
+        'w_right',
+        WeightHParams(
+            shape=right_shape,
+            mesh_shape=self.mesh_shape,
+            init=WeightInit.Constant(w_right_scale)
+            if w_right_scale == 0.0
+            else WeightInit.Gaussian(w_left_scale),
+            tensor_split_dims_mapping=utils.get_right_weight_split_dims_mapping(
+                self.wt, eqn_right_ind
+            ),
+        ),
+    )
+
+    if self.norm_order is not None:
+      norm_tpl = self.norm_tpl.clone()
+      if fdl.get_callable(norm_tpl) not in {
+          normalizations.BatchNorm,
+          normalizations.GroupNorm,
+          normalizations.LayerNorm,
+      }:
+        raise NotImplementedError(
+            '%s is not supported' % fdl.get_callable(norm_tpl)
+        )
+      if self.norm_order == 'pre':
+        norm_tpl.dim = norm_input_dims
+      elif self.norm_order == 'mid':
+        norm_tpl.dim = self.lora_rank
+      elif self.norm_order == 'post':
+        norm_tpl.dim = norm_output_dims
+      else:
+        raise ValueError(f'Unrecognized norm_order: {self.norm_order}')
+
+      self.create_child('norm', norm_tpl)
+
+  def __call__(
+      self,
+      inputs: JTensor,
+  ) -> JTensor:
+    """Computes the multi headed projection for inputs."""
+    inputs = self._cast_to_fprop_dtype(inputs)
+    out = super().__call__(inputs)
+
+    if self.lora_rank:
+      lora_output = inputs
+      if self.norm_order == 'pre':
+        lora_output = self.norm(lora_output)
+      lora_output = jnp.einsum(self.eqn_left, lora_output, self.theta.w_left)
+      if self.norm_order == 'mid':
+        lora_output = self.norm(lora_output)
+      lora_output = jnp.einsum(self.eqn_right, lora_output, self.theta.w_right)
+      if self.norm_order == 'post':
+        lora_output = self.norm(lora_output)
+      out += lora_output
+
+    return out
+
+
 class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
-    attentions.CombinedQKVProjectionLayer, quantizer.QuantizationLayer
+    attentions.CombinedQKVProjectionLayer,
+    quantizer.QuantizationLayer,
+    sparsifier.SparsityBaseLayer,
 ):
   """Layer that computes quantized QKV projection with a combined weight.
 
@@ -506,20 +501,6 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
   """
 
   _PACK_4BIT_DIM = 1
-
-  def create_tensor_quantizers(self):
-    act_params = self.quantization.act_params if self.quantization else None
-    weight_params = (
-        self.quantization.weight_params if self.quantization else None
-    )
-    self.create_child(
-        'act_quantizer',
-        quantizer.create_tensor_quantizer('aqt_quantizer', act_params),
-    )
-    self.create_child(
-        'weight_quantizer',
-        quantizer.create_tensor_quantizer('weight_quantizer', weight_params),
-    )
 
   def setup(self) -> None:
     wp = self.weight_split_dims_mapping
@@ -566,8 +547,8 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
         weight_name='w',
         weight_params=pc,
         scale_shape=[3] + hd_shape,
-        pack_dim=self._PACK_4BIT_DIM,
     )
+    self.create_sparsity_variables('w', pc, scale_shape=[3] + hd_shape)
     if self.use_bias:
       # Combined bias weight for q, k, v projections.
       pc_bias = WeightHParams(
@@ -580,7 +561,7 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
 
   # TODO(zhangqiaorjc): Take query, key, value as inputs to support all
   # attentions.
-  def __call__(self, inputs: JTensor) -> Tuple[JTensor, JTensor, JTensor]:
+  def __call__(self, inputs: JTensor) -> tuple[JTensor, JTensor, JTensor]:
     """Computes the QKV projection for inputs.
 
     Args:
@@ -635,13 +616,6 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
       w, s, zp = self.get_quantized_weight(
           'w', use_symmetric=self.quantization.weight_params.use_symmetric
       )
-      if (
-          self.quantization.weight_params.precision == 4
-          and self.quantization.weight_params.use_int4_packed_weights
-      ):
-        w = utils.unpack_4bit(
-            w, self._PACK_4BIT_DIM, self.quantization.weight_params.dtype
-        )
 
       if (
           self.quantization.act_params is not None
@@ -654,13 +628,24 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
           self.quantization.act_params is not None
           and self.quantization.act_params.stats_config is None
       ):
-        inputs, act_scale = operations.reduce_precision_activation(inputs)
+        if not self.quantization.act_params.symmetric:
+          # TODO(b/304376632)
+          raise ValueError(
+              'Asymmetric activation quantization is enabled '
+              'for training but not for inference b/304376632.'
+          )
+        inputs, act_scale, _ = operations.reduce_precision_activation(
+            inputs,
+            bits=self.quantization.act_params.precision,
+            percentile=self.quantization.act_params.clipping_coeff,
+        )
         ret = operations.einsum(
             eqn, inputs, w, jnp.multiply(jnp.squeeze(act_scale), s)
         )
       elif self.quantization.act_params is None:
         ret = operations.einsum(eqn, inputs, w, s, zp)
     else:
+      w = self.sparsifiy(w, inputs=inputs, name='w')  # sparsify weight.
       if (
           self.quantization is None
           or self.quantization.quantization_type == QuantizationType.PTQ
@@ -676,7 +661,14 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
         )
       elif self.quantization.quantization_type == QuantizationType.FQ:
         if self.quantization.act_params is not None:
-          inputs = operations.fakequant_activation(inputs)
+          inputs = operations.fakequant_activation(
+              inputs,
+              bits=self.quantization.act_params.precision,
+              eqn=eqn,
+              per_channel=self.quantization.act_params.per_channel,
+              symmetric=self.quantization.act_params.symmetric,
+              percentile=self.quantization.act_params.clipping_coeff,
+          )
         w = operations.fakequant_einsum(
             eqn,
             w,
@@ -694,11 +686,11 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
             self.do_eval,
             bits=self.quantization.weight_params.precision,
             use_symmetric=self.quantization.weight_params.use_symmetric,
-            calculation_type=self.quantization.weight_params.calculation_dtype,
+            calculation_dtype=self.quantization.weight_params.calculation_dtype,
         )
         ret = jnp.einsum(eqn, inputs, w)
       else:
-        raise ValueError('invaid quantization type')
+        raise ValueError('invalid quantization type')
 
     ret = checkpoint_name(ret, 'combined_qkv_proj')
     if self.use_bias:
@@ -771,12 +763,13 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
       q_w, q_s, zp = operations.reduce_einsum_weight_precision(
           eqn,
           theta.w,
-          calculation_type=self.dtype,
+          calculation_dtype=self.dtype,
           need_gradient=False,
           bits=self.quantization.weight_params.precision,
           optimization_on_bound=False,
           percentile=self.quantization.weight_params.clipping_coeff,
           use_symmetric=self.quantization.weight_params.use_symmetric,
+          quant_method=self.quantization.weight_params.quant_method,
       )
     elif self.quantization.quantization_type == QuantizationType.AQT:
       dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
@@ -810,10 +803,6 @@ class CombinedQKVProjectionLayer(  # pytype: disable=signature-mismatch
     if self.use_bias:
       ret_params['b'] = self.theta.b
     return {base_layer.PARAMS: ret_params}
-
-
-from absl import logging
-
 
 
 class DotProductAttention(  # pytype: disable=signature-mismatch
@@ -855,25 +844,9 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     quantization: Information related to the quantization applied to this layer,
       such as dtype for the quantized weight.
   """
-  # proj_tpl: LayerTpl = template_field(AttentionProjection)
-
-
-  def create_tensor_quantizers(self):
-    act_params = self.quantization.act_params if self.quantization else None
-    self.create_child(
-        'act_quantizer',
-        quantizer.create_tensor_quantizer('aqt_quantizer', act_params),
-    )
-
-  def _do_static_activation_quantization(self) -> bool:
-    act_params = self.quantization.act_params if self.quantization else None
-    return act_params is not None and act_params.stats_config is not None
 
   def setup(self) -> None:
     super().setup()
-    logging.info(f'self.quantization: {self.quantization}')
-    logging.info(f'self.quantization.quantization_type: {self.quantization.quantization_type}')
-
     if (
         self.quantization
         and self.quantization.quantization_type == QuantizationType.AQT
@@ -908,15 +881,13 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
 
   def _atten_logits(self, query: JTensor, key: JTensor) -> JTensor:
     """Compute logits from query and key."""
-    # lsp: aqt
-    # logits = operations.aqt_einsum(
-    #     eqn='BTNH,BSNH->BNTS',
-    #     lhs=query,
-    #     rhs=key,
-    #     lhs_quantizer=self.act_quantizer,
-    #     rhs_quantizer=self.act_quantizer,
-    # )
-    logits = self.qk_einsum("BTNH,BSNH->BNTS", query, key)
+    logits = operations.aqt_einsum(
+        eqn='BTNH,BSNH->BNTS',
+        lhs=query,
+        rhs=key,
+        lhs_quantizer=self.act_quantizer,
+        rhs_quantizer=self.act_quantizer,
+    )
     return logits
 
   def _dot_atten(
@@ -925,9 +896,8 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
       key: JTensor,
       value: JTensor,
       atten_mask: JTensor,
-      relative_bias: Optional[JTensor] = None,
-      alibi_mask: Optional[JTensor] = None,
-  ) -> Tuple[JTensor, JTensor]:
+      relative_bias: JTensor | None = None,
+  ) -> tuple[JTensor, JTensor]:
     """Main attention function.
 
     Args:
@@ -990,7 +960,6 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
     # Apply attention dropout.
     probs = self.atten_dropout(probs)
     # Compute the attention context.
-    # lsp aqt。这一步不使用aqt会变慢很多。有点奇怪
     encoded = operations.aqt_einsum(
         eqn='BNTS,BSNH->BTNH',
         lhs=probs,
@@ -998,7 +967,6 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
         lhs_quantizer=self.act_quantizer,
         rhs_quantizer=self.act_quantizer,
     )
-    # encoded = self.qk_einsum('BNTS,BSNH->BTNH', probs, value)
 
     if self.zero_fully_masked:
       # Return zeros for tokens which don't attend anything.
@@ -1009,8 +977,6 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
       encoded *= 1 - fully_masked
     encoded = checkpoint_name(encoded, 'context')
     encoded = self._shard_blnh(encoded)
-    # lsp
-    encoded = self.post(encoded)
     return encoded, probs
 
   def _dot_atten_one_step(
@@ -1019,9 +985,9 @@ class DotProductAttention(  # pytype: disable=signature-mismatch
       key_state_name: str,
       value_state_name: str,
       atten_mask: JTensor,
-      relative_bias: Optional[JTensor] = None,
-      time_step: Optional[JTensor] = None,
-  ) -> Tuple[JTensor, JTensor]:
+      relative_bias: JTensor | None = None,
+      time_step: JTensor | None = None,
+  ) -> tuple[JTensor, JTensor]:
     """Dot attention function for queries with 1 time step.
 
     Args:

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any, Optional
+import math
+from typing import Any
 
 from flax import struct
 import jax
@@ -36,12 +37,14 @@ NestedJTensor = pytypes.NestedJTensor
 NestedMap = py_utils.NestedMap
 PRNGKey = pytypes.PRNGKey
 PARAMS = base_layer.PARAMS
+ScalarFloat = pytypes.ScalarFloat
+PMAP_PARALLEL_AXIS_NAME = base_layer.PMAP_PARALLEL_AXIS_NAME
 
 
 @struct.dataclass
 class GradAuxInfo:
   aux_info: Any
-  loss_weight: float = 1.0
+  loss_weight: float | ScalarFloat = 1.0
 
 
 @struct.dataclass
@@ -110,103 +113,130 @@ class StandardGradient(BaseStochasticGradient):
     return (values, aux), grads
 
 
-class PercoreClippedGradient(BaseStochasticGradient):
-  """Per-core clipped gradient function.
+def _clipping_bound_scaling(
+    use_loss_weight_scaling: bool = False,
+    loss_weight: float | None = None,
+) -> float:
+  """Parse use_loss_weight_scaling to get the right scaling of clipping bound.
 
-  Efficient implementation of per-core clipping, whose running time matches
-  non-private baseline.
+  Args:
+    use_loss_weight_scaling: Whether to use loss_weight to scale the clipping
+      bound. If set to False, use 1. / jax.device_count() under pmap, or 1.0
+      otherwise for scaling. If set to True, use loss_weight.
+    loss_weight: The loss_weight used to scale the gradients.
 
-  Experimental results:
+  Returns:
+    The scaling to apply to the clipping bound in float.
+  """
+  if use_loss_weight_scaling:
+    if loss_weight is None:
+      raise ValueError(
+          'loss_weight must be set when use_loss_weight_scaling is set to True.'
+      )
+    else:
+      return loss_weight
+  else:
+    if base_layer.is_running_under_pmap():
+      # TODO(b/315502275): The following line assumes the loss aggregator being
+      # used takes a weighted average of the loss. For example, the default
+      # loss aggregator /third_party/py/paxml/base_metrics.py;l=398-407. Should
+      # add support for customized scaling factor under pmap.
+      return 1.0 / jax.device_count()
+    else:
+      return 1.0
+
+
+class PercoreClippedDpSgdGradient(BaseStochasticGradient):
+  """DP-SGD stochastic gradient function using per-core clipping.
+
+  Differentially private stochastic gradient using per-core clipping, whose
+  running time matches non-private baseline.
+
+  NOTE: this class assumes you are running under Pmap Partitioning
+  (ICI_MESH_SHAPE = None).  The behavior is undefined under Pjit Partitioning
+  (ICI_MESH_SHAPE != None).
+
+  Experimental results with zero noise multiplier:
     Non-private baseline: http://tb/4569190445426541226
     PercoreClippedGradient: http://tb/1885364525575923265
     MicrobatchDpSgdStochasticGradient: http://tb/2683981470965501622
+
+  Attributes:
+    l2_norm_clip: The L2 clipping bound used to clip per-core gradients. If set
+      to None, no clipping is applied.
+    noise_multiplier: The noise multiplier used to decide the noise scale. See
+      Section 5.3.2 of https://arxiv.org/pdf/2303.00654.pdf for more details.
+    use_loss_weight_scaling: Whether to use aux.loss_weight to scale the
+      clipping bound. If set to False, use 1. / jax.device_count() under pmap,
+      or 1.0 otherwise for scaling. If set to True, use aux.loss_weight. Note
+      for models like CtcModel, loss_weight is different across TPU cores, which
+      can cause unexpected behavior for differential privacy so we only allow
+      this option to be turned on for empirical privacy with noise_multiplier =
+      0.0.
+    normalize_gradients: Whether to apply Gradient Normalization as implemented
+      in eqn 3 of https://arxiv.org/abs/2204.13650 to reduce the dependence
+      between clipping value and learning rate. Note that normalization is only
+      applied post-clipping.
+    adaptive_clipping_method: Choose an adaptive method to set the clipping
+      bound. Default to None when clipping bound is given by l2_norm_clip.
+      Currently supported method includes: 'min': use the minimum per-core
+      gradient as the clipping bound.
   """
 
-  l2_norm_clip: float = 0.0
+  l2_norm_clip: float | None = 0.0
+  noise_multiplier: float = 0.0
+  use_loss_weight_scaling: bool = False
+  normalize_gradients: bool = False
+  adaptive_clipping_method: str | None = None
 
   def _clip_gradients(
       self, grads: NestedMap, l2_norm_clip: float = 1.0
   ) -> tuple[NestedMap, jax.Array, Any]:
     assert (
-        self.l2_norm_clip > 0.0
-    ), f'Clipping bound must be positive. {l2_norm_clip} is provided.'
+        self.adaptive_clipping_method is not None or self.l2_norm_clip > 0.0
+    ), (
+        f'Clipping bound must be either adaptive or positive. {l2_norm_clip} is'
+        ' provided.'
+    )
 
     # Clip the per-core mean gradient.
-    grads_flat, grads_treedef = jax.tree_flatten(grads)
+    grads_flat, grads_treedef = jax.tree_util.tree_flatten(grads)
     global_grad_norm = optax.global_norm(grads_flat)
     divisor = jnp.maximum(global_grad_norm / l2_norm_clip, 1.0)
     num_clipped = jnp.greater(divisor, 1.0)
     clipped_flat = [g / divisor for g in grads_flat]
-    clipped = jax.tree_unflatten(grads_treedef, clipped_flat)
+    clipped = jax.tree_util.tree_unflatten(grads_treedef, clipped_flat)
 
     return clipped, num_clipped, global_grad_norm
-
-  def grad_fn(
-      self,
-      loss_fn: Callable[..., tuple[JTensor, GradAuxInfo]],
-      mdl_vars_grad: NestedJTensor,
-      mdl_vars_nograd_and_inputs: tuple[NestedJTensor, NestedMap],
-      prng_key: PRNGKey,
-  ) -> tuple[tuple[JTensor, GradAuxInfo], NestedJTensor]:
-    # Obtain the per-core mean gradient.
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=True, allow_int=True)
-    (values, aux), grads = grad_fn(
-        mdl_vars_grad, mdl_vars_nograd_and_inputs, prng_key
-    )
-    aux = self.process_aux_info(aux)
-
-    clipped, num_clipped, grad_norm = self._clip_gradients(
-        grads, aux.loss_weight * self.l2_norm_clip
-    )
-
-    return (
-        values,
-        DPGradAuxInfo(
-            dp_aux_info={
-                'frac_clipped': num_clipped,
-                'per_core_grad_norm': grad_norm,
-            },
-            aux_info=aux.aux_info,
-            loss_weight=aux.loss_weight,
-        ),
-    ), clipped
-
-
-class PercoreClippedDpSgdGradient(PercoreClippedGradient):
-  """DP-SGD stochastic gradient function using per-core clipping.
-
-  Differentially private stochastic gradient using per-core clipping, whose
-  running time matches non-private baseline.
-  """
-
-  noise_multiplier: float = 0.0
 
   def _add_noise(  # pytype: disable=annotation-type-mismatch  # jax-ndarray
       self,
       grads: NestedMap,
       noise_stddev: float,
-      loss_weight: float,
+      clipping_bound_scaling: float,
       prng_key: PRNGKey = None,
   ) -> NestedMap:
     prng_keys = jax.random.split(
         prng_key, len(jax.tree_util.tree_leaves(grads))
     )
-    prng_tree = jax.tree_unflatten(jax.tree_structure(grads), prng_keys)
+    prng_tree = jax.tree_util.tree_unflatten(
+        jax.tree_util.tree_structure(grads), prng_keys
+    )
 
     if base_layer.is_running_under_pmap():
-      # Note: when running under pmap, loss_weight is set to 1/num_devices.
-      # In this case, the *global* batch size is batch_size / loss_weight.
+      # Note: Because `l2_norm_clip` is scaled with `clipping_bound_scaling`, we
+      # need to scale the noise_std accordingly to compensate for the change.
       # Moreover, each device adds independent Gaussian noises, and then the
       # noisy gradients are added with `psum``. Because the sum of num_devices
       # copies of independent Gaussian noises is equivalent to a single Gaussian
       # with std scaled by `sqrt(num_devices)``, we need to further scale the
       # noise_std on each device to correct this.
-      noise_stddev *= loss_weight * jnp.sqrt(loss_weight)
+      noise_stddev *= clipping_bound_scaling * jnp.sqrt(clipping_bound_scaling)
 
     def _add_noise_to_array(x, prng):
       return x + noise_stddev * jax.random.normal(prng, shape=x.shape)
 
-    final_grads = jax.tree_map(_add_noise_to_array, grads, prng_tree)
+    final_grads = jax.tree.map(_add_noise_to_array, grads, prng_tree)
     return final_grads
 
   def grad_fn(
@@ -216,6 +246,16 @@ class PercoreClippedDpSgdGradient(PercoreClippedGradient):
       mdl_vars_nograd_and_inputs: tuple[NestedJTensor, NestedMap],
       prng_key: PRNGKey,
   ) -> tuple[tuple[JTensor, GradAuxInfo], NestedJTensor]:
+    if not base_layer.is_running_under_pmap():
+      # TODO(b/310986925): Fix and test this implementation under jit.
+      raise ValueError(
+          'PercoreClippedDpSgdGradient is only supported when running under'
+          ' Pmap Partitioning.  Please set ICI_MESH_SHAPE = None.'
+      )
+    assert not (
+        self.use_loss_weight_scaling and self.noise_multiplier != 0.0
+    ), 'Noise multiplier must be 0.0 when use_loss_weight_scaling is True.'
+
     # Obtain the per-core mean gradient.
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True, allow_int=True)
     (values, aux), grads = grad_fn(
@@ -223,12 +263,38 @@ class PercoreClippedDpSgdGradient(PercoreClippedGradient):
     )
     aux = self.process_aux_info(aux)
 
-    clipped, num_clipped, grad_norm = self._clip_gradients(
-        grads, aux.loss_weight * self.l2_norm_clip
+    clipping_bound_scaling = _clipping_bound_scaling(
+        self.use_loss_weight_scaling, aux.loss_weight
     )
 
-    noise_stddev = self.noise_multiplier * self.l2_norm_clip
-    grads = self._add_noise(clipped, noise_stddev, aux.loss_weight, prng_key)
+    if self.adaptive_clipping_method == 'min':
+      grads_norm = optax.global_norm(grads)
+      self.l2_norm_clip = (
+          jax.lax.pmin(grads_norm, axis_name=PMAP_PARALLEL_AXIS_NAME)
+          / clipping_bound_scaling
+      )
+    elif self.adaptive_clipping_method is not None:
+      raise ValueError(
+          'Unsupported adaptive clipping method:'
+          f' {self.adaptive_clipping_method}'
+      )
+
+    if self.l2_norm_clip is not None:
+      grads, num_clipped, grad_norm = self._clip_gradients(
+          grads, clipping_bound_scaling * self.l2_norm_clip
+      )
+
+    if self.normalize_gradients:
+      grads = jax.tree.map(lambda x: x / self.l2_norm_clip, grads)
+
+    # Optimization if using this class only for clipping (e.g., with DP-MF)
+    if self.noise_multiplier > 0.0:
+      noise_stddev = self.noise_multiplier * (
+          1.0 if self.normalize_gradients else self.l2_norm_clip
+      )
+      grads = self._add_noise(
+          grads, noise_stddev, clipping_bound_scaling, prng_key
+      )
 
     return (
         values,
@@ -244,75 +310,115 @@ class PercoreClippedDpSgdGradient(PercoreClippedGradient):
 
 
 class DpSgdStochasticGradient(BaseStochasticGradient):
-  """DP-SGD stochastic gradient function."""
+  """DP-SGD stochastic gradient function.
 
-  # Standard DP-SGD hyperparameters.
+  If using this function with Pjit partitioning, since the implementation here
+  performs special processing across the batch dimension, inefficient code may
+  be generated if the model attempts to shard intermediate tensors across the
+  same resources as the batch. It is recommended to ensure that your model does
+  not explicitly lay out tensors in this manner if using this SGF.
+
+  Attributes:
+    l2_norm_clip: The L2 clipping bound used to clip per-core gradients.
+    noise_multiplier: The noise multiplier used to decide the noise scale. See
+      Section 5.3.2 of https://arxiv.org/pdf/2303.00654.pdf for more details.
+    use_loss_weight_scaling: Whether to use aux.loss_weight to scale the
+      clipping bound. If set to False, use 1. / jax.device_count() under pmap,
+      or 1.0 otherwise for scaling. If set to True, use aux.loss_weight. Note
+      for models like CtcModel, loss_weight is different across TPU cores, which
+      can cause unexpected behavior for differential privacy so we only allow
+      this option to be turned on for empirical privacy with noise_multiplier =
+      0.0.
+    normalize_gradients: Whether to apply Gradient Normalization as implemented
+      in eqn 3 of https://arxiv.org/abs/2204.13650 to reduce the dependence
+      between clipping value and learning rate. Note that normalization is only
+      applied post-clipping.
+    inner_batch_size: Number of examples to process at one time. If set to
+      `None`, this will be set to batch size as determined by the 0th element of
+      the shape of the input. This may be useful if a large batch size is
+      desired (for example, for better privacy-utility tradeoffs), but we cannot
+      fit all of the per-example gradients in memory. When set, the code
+      computes `inner_batch_size` per-example gradients at a time, accumulating
+      the total clipped gradient as it goes. Note that the setting of
+      `inner_batch_size` has no effect on the value of the final gradients--it
+      affects only the feasibility and speed of the computation. NOTE: the
+      meaning of a non-None value for `inner_batch_size` _will change_ when
+      running under jit vs pmap. When running under pmap, inner_batch_size is
+      applied in a per-device manner, so inner_batch_size identical to the
+      per-device batch size is identical to the default behavior of None. When
+      running under jit, however, `inner_batch_size` is applied to the _global_
+      batch, so inner_batch_size identical to the global batch size matches the
+      default behavior, and a lower value introduces virtual batching.
+  """
+
   l2_norm_clip: float = 0.0
   noise_multiplier: float = 0.0
-
-  # Number of examples to process at one time. If set to `None`,
-  # this will be set to batch size as determined by the 0th element of
-  # the shape of the input.
-  #
-  # This may be useful if a large batch size is desired (for example, for
-  # better privacy-utility tradeoffs), but we cannot fit all of the
-  # per-example gradients in memory. When set, the code computes
-  # `inner_batch_size` per-example gradients at a time, accumulating
-  # the total clipped gradient as it goes. Note that the setting of
-  # `inner_batch_size` has no effect on the value of the final gradients--
-  # it affects only the feasibility and speed of the computation.
-  inner_batch_size: Optional[int] = None
+  use_loss_weight_scaling: bool = False
+  normalize_gradients: bool = False
+  inner_batch_size: int | None = None
 
   def _clip_and_mean_gradients(
-      self, grads: NestedMap, l2_norm_clip: float = 1.0
-  ) -> tuple[NestedMap, float, int]:
-    grads_flat, grads_treedef = jax.tree_flatten(grads)
+      self,
+      grads: NestedMap,
+      l2_norm_clip: float = 1.0,
+      microbatch_size: int = 1,
+  ) -> tuple[NestedMap, GradAuxInfo, int]:
+    def _reshape_and_mean(g):
+      return jnp.mean(
+          jnp.reshape(g, [-1, microbatch_size, *g.shape[1:]]), axis=1
+      )
+
+    grads = jax.tree.map(_reshape_and_mean, grads)
+    grads_flat, grads_treedef = jax.tree_util.tree_flatten(grads)
     sum_clipped, num_clipped = optax.per_example_global_norm_clip(
         grads=grads_flat, l2_norm_clip=l2_norm_clip
     )
-    sum_grads = jax.tree_unflatten(grads_treedef, sum_clipped)
+    sum_grads = jax.tree_util.tree_unflatten(grads_treedef, sum_clipped)
 
     # Normalize gradients across all examples.
     batch_size = grads_flat[0].shape[0]
-    clipped_grads_mean = jax.tree_map(lambda x: x / batch_size, sum_grads)
+    clipped_grads_mean = jax.tree.map(lambda x: x / batch_size, sum_grads)
     frac_clipped = num_clipped / batch_size
+    dp_aux_info = {'frac_clipped': frac_clipped}
 
-    return clipped_grads_mean, frac_clipped, batch_size  # pytype: disable=bad-return-type  # jax-types
+    return clipped_grads_mean, dp_aux_info, batch_size  # pytype: disable=bad-return-type  # jax-types
 
   def _add_noise(  # pytype: disable=annotation-type-mismatch  # jax-ndarray
       self,
       grads: NestedMap,
       noise_stddev: float,
-      loss_weight: float,
+      clipping_bound_scaling: float,
       prng_key: PRNGKey = None,
   ) -> NestedMap:
     prng_keys = jax.random.split(
         prng_key, len(jax.tree_util.tree_leaves(grads))
     )
-    prng_tree = jax.tree_unflatten(jax.tree_structure(grads), prng_keys)
+    prng_tree = jax.tree_util.tree_unflatten(
+        jax.tree_util.tree_structure(grads), prng_keys
+    )
 
     if base_layer.is_running_under_pmap():
-      # Note: when running under pmap, loss_weight is set to 1/num_devices.
-      # In this case, the *global* batch size is batch_size / loss_weight.
+      # Note: Because `l2_norm_clip` is scaled with `clipping_bound_scaling`, we
+      # need to scale the noise_std accordingly to compensate for the change.
       # Moreover, each device adds independent Gaussian noises, and then the
       # noisy gradients are added with `psum``. Because the sum of num_devices
       # copies of independent Gaussian noises is equivalent to a single Gaussian
       # with std scaled by `sqrt(num_devices)``, we need to further scale the
       # noise_std on each device to correct this.
-      noise_stddev *= loss_weight * jnp.sqrt(loss_weight)
+      noise_stddev *= clipping_bound_scaling * jnp.sqrt(clipping_bound_scaling)
 
     def _add_noise_to_array(x, prng):
       return x + noise_stddev * jax.random.normal(prng, shape=x.shape)
 
-    final_grads = jax.tree_map(_add_noise_to_array, grads, prng_tree)
+    final_grads = jax.tree.map(_add_noise_to_array, grads, prng_tree)
     return final_grads
 
   def _prepare_inputs(self, inputs):
     """Reshape inputs to prepare for vmap to find per-example gradients."""
-    return jax.tree_map(jax.tree_util.Partial(jnp.expand_dims, axis=1), inputs)
+    return jax.tree.map(jax.tree_util.Partial(jnp.expand_dims, axis=1), inputs)
 
   def process_aux_info(self, aux_info: GradAuxInfo) -> GradAuxInfo:
-    aux_info = jax.tree_map(jax.tree_util.Partial(jnp.mean, axis=0), aux_info)
+    aux_info = jax.tree.map(jax.tree_util.Partial(jnp.mean, axis=0), aux_info)
     return aux_info
 
   def grad_fn(
@@ -325,21 +431,33 @@ class DpSgdStochasticGradient(BaseStochasticGradient):
     assert (
         self.l2_norm_clip > 0.0
     ), f'Clipping bound must be positive. {self.l2_norm_clip} is provided.'
+    assert not (
+        self.use_loss_weight_scaling and self.noise_multiplier != 0.0
+    ), 'Noise multiplier must be 0.0 when use_loss_weight_scaling is True.'
 
     mdl_vars_nograd, inputs = mdl_vars_nograd_and_inputs
     inputs = self._prepare_inputs(inputs)
 
     # Get batch size.
-    inputs_flat, _ = jax.tree_flatten(inputs)
-    batch_size = inputs_flat[0].shape[0]
+    input_leaf = jax.tree_util.tree_leaves(inputs)[0]
+    batch_size = input_leaf.shape[0]
+    microbatch_size = input_leaf.shape[1]
 
     if self.inner_batch_size is None:
-      inner_batch_size = batch_size
+      inner_batch_size = batch_size * microbatch_size
     else:
       inner_batch_size = self.inner_batch_size
-    if batch_size % inner_batch_size != 0:
-      raise ValueError('`batch_size` must be divisible by `inner_batch_size`.')
-    num_iters = batch_size // inner_batch_size
+
+    if batch_size * microbatch_size % inner_batch_size != 0:
+      raise ValueError(
+          '`batch_size * microbatch_size` must be divisible by'
+          ' `inner_batch_size`.'
+      )
+
+    batch_splits = math.gcd(batch_size, inner_batch_size)
+    microbatch_splits = inner_batch_size // batch_splits
+
+    num_iters = batch_size // batch_splits
     inner_prng_keys = jax.random.split(prng_key, num_iters)
 
     grad_fn = jax.vmap(
@@ -349,31 +467,47 @@ class DpSgdStochasticGradient(BaseStochasticGradient):
     )
 
     def reshape_batch(x):
-      return jnp.reshape(x, [-1, inner_batch_size, *x.shape[1:]])
+      return jnp.reshape(
+          x,
+          [
+              # We leave the batch-dimension as the zeroth axis to give the
+              # compiler the best chance at finding an effective sharding for
+              # processing the inner batches in the global jit programming
+              # paradigm.
+              inner_batch_size,
+              -1,
+              microbatch_size // microbatch_splits,
+              *x.shape[2:],
+          ],
+      )
 
-    # Reshape input so that inner batches are stacked on axis 0.
-    inputs = jax.tree_map(reshape_batch, inputs)
+    inputs = jax.tree.map(reshape_batch, inputs)
 
     def _process_inner_batch(index: int) -> Any:
       """Computes mean clipped gradient for inner batch specified by index."""
-      new_inputs = jax.tree_map(lambda x: x[index], inputs)
+      new_inputs = jax.tree.map(lambda x: x[:, index, ...], inputs)
 
       # Compute loss and gradients.
       (values, aux), grads = grad_fn(
           mdl_vars_grad, (mdl_vars_nograd, new_inputs), inner_prng_keys[index]
       )
+      clipping_bound_scaling = _clipping_bound_scaling(
+          self.use_loss_weight_scaling, loss_weight=aux.loss_weight
+      )
 
       # Clip and aggregate gradients.
-      grads, frac_clipped, _ = self._clip_and_mean_gradients(
-          grads, aux.loss_weight * self.l2_norm_clip
+      grads, dp_aux_info, _ = self._clip_and_mean_gradients(
+          grads,
+          clipping_bound_scaling * self.l2_norm_clip,
+          microbatch_splits,
       )
       # Aggregate values and aux.
-      values = jax.tree_map(jax.tree_util.Partial(jnp.mean, axis=0), values)
+      values = jax.tree.map(jax.tree_util.Partial(jnp.mean, axis=0), values)
       aux = self.process_aux_info(aux)
       return (
           values,
           DPGradAuxInfo(
-              dp_aux_info={'frac_clipped': frac_clipped},
+              dp_aux_info=dp_aux_info,
               aux_info=aux.aux_info,
               loss_weight=aux.loss_weight,
           ),
@@ -385,9 +519,9 @@ class DpSgdStochasticGradient(BaseStochasticGradient):
       cur_values, cur_aux, cur_grads = val
       values, aux, grads = _process_inner_batch(index)
 
-      new_values = jax.tree_map(jnp.add, cur_values, values)
-      new_aux = jax.tree_map(jnp.add, cur_aux, aux)
-      new_grads = jax.tree_map(jnp.add, cur_grads, grads)
+      new_values = jax.tree.map(jnp.add, cur_values, values)
+      new_aux = jax.tree.map(jnp.add, cur_aux, aux)
+      new_grads = jax.tree.map(jnp.add, cur_grads, grads)
       return (new_values, new_aux, new_grads)
 
     # Loop over inner batches, summing the results together.
@@ -398,24 +532,43 @@ class DpSgdStochasticGradient(BaseStochasticGradient):
     )
 
     # Normalize results by number of inner batches.
-    values, aux, grads = jax.tree_map(
+    values, aux, grads = jax.tree.map(
         jax.tree_util.Partial(jnp.multiply, 1.0 / num_iters),
         (values, aux, grads),
     )
 
     # Add noise to normalized gradients.
-    noise_stddev = self.noise_multiplier * self.l2_norm_clip / batch_size
-    grads = self._add_noise(grads, noise_stddev, aux.loss_weight, prng_key)
+    if self.normalize_gradients:
+      grads = jax.tree.map(lambda x: x / self.l2_norm_clip, grads)
+
+    # Optimization if using this class only for clipping (e.g., with DP-MF)
+    if self.noise_multiplier > 0.0:
+      noise_stddev = (
+          self.noise_multiplier
+          / batch_size
+          * (1.0 if self.normalize_gradients else self.l2_norm_clip)
+      )
+      grads = self._add_noise(
+          grads,
+          noise_stddev,
+          _clipping_bound_scaling(self.use_loss_weight_scaling),
+          prng_key,
+      )
     return (values, aux), grads
 
 
 class MicrobatchDpSgdStochasticGradient(DpSgdStochasticGradient):
-  """DP-SGD stochastic gradient function with microbatch."""
+  """DP-SGD stochastic gradient function with microbatch.
+
+  Attributes:
+    microbatch_size: The number of samples in one micro-batch. See Section 5.6
+      of https://arxiv.org/pdf/2303.00654.pdf for more details.
+  """
 
   microbatch_size: int = 1
 
   def _prepare_inputs(self, inputs):
-    return jax.tree_map(self._prepare_for_microbatching, inputs)
+    return jax.tree.map(self._prepare_for_microbatching, inputs)
 
   def _prepare_for_microbatching(self, tensor: JTensor) -> JTensor:
     """Reshapes tensor for vmap with microbatch size support.
@@ -457,6 +610,74 @@ class AugMulDpSgdStochasticGradient(MicrobatchDpSgdStochasticGradient):
     )
 
 
+class PerLayerDpSgdStochasticGradient(DpSgdStochasticGradient):
+  """DP-SGD stochastic gradient function with per-layer clipping.
+
+  Attributes:
+    use_uniform: If `True` uses the uniform variant of per-layer clipping.
+      Otherwise, uses the scaled variant.
+  """
+
+  use_uniform: bool = True
+
+  def _clip_and_mean_gradients(
+      self,
+      grads: NestedMap,
+      l2_norm_clip: float = 1.0,
+      microbatch_size: int = 1,
+  ) -> tuple[NestedMap, GradAuxInfo, int]:
+    def _reshape_and_mean(g):
+      return jnp.mean(
+          jnp.reshape(g, [-1, microbatch_size, *g.shape[1:]]), axis=1
+      )
+
+    grads = jax.tree.map(_reshape_and_mean, grads)
+    grads_flat, grads_treedef = jax.tree_flatten(grads)
+    sum_grads_flat, num_clipped_flat = optax.per_example_layer_norm_clip(
+        grads=grads_flat,
+        global_l2_norm_clip=l2_norm_clip,
+        uniform=self.use_uniform,
+    )
+
+    sum_grads = jax.tree_unflatten(grads_treedef, sum_grads_flat)
+    num_clipped = jax.tree_unflatten(grads_treedef, num_clipped_flat)
+
+    # Compute per-layer grad norms.
+    def map_layer_norm(grads_list):
+      return [jnp.linalg.norm(g, ord=None, axis=None) for g in grads_list]
+
+    per_example_layer_grad_norms = jax.vmap(map_layer_norm)(grads_flat)
+    sum_layer_grad_norms = [
+        per_example_layer_grad_norms[i].sum(0)
+        for i in range(len(per_example_layer_grad_norms))
+    ]
+    sum_layer_grad_norms = jax.tree_unflatten(
+        grads_treedef, sum_layer_grad_norms
+    )
+
+    # Normalize gradients across all examples.
+    batch_size = grads_flat[0].shape[0]
+    mean_clipped_grads = jax.tree.map(lambda x: x / batch_size, sum_grads)
+    mean_layer_grad_norms = jax.tree.map(
+        lambda x: x / batch_size, sum_layer_grad_norms
+    )
+
+    # Compute frac clipped statistics across all layers
+    frac_clipped = jax.tree.map(lambda x: x / batch_size, num_clipped)
+    frac_clipped_flat, _ = jax.tree_util.tree_flatten(frac_clipped)
+    frac_clipped_flat = jnp.stack(frac_clipped_flat)
+    mean_frac_clipped = jnp.mean(frac_clipped_flat)
+    stdev_frac_clipped = jnp.std(frac_clipped_flat)
+
+    dp_aux_info = {
+        'frac_clipped': frac_clipped,
+        'mean_frac_clipped': mean_frac_clipped,
+        'stdev_frac_clipped': stdev_frac_clipped,
+        'mean_layer_grad_norms': mean_layer_grad_norms,
+    }
+    return mean_clipped_grads, dp_aux_info, batch_size  # pytype: disable=bad-return-type  # jax-types
+
+
 class GhostClippingDpSgdStochasticGradient(DpSgdStochasticGradient):
   """DP-SGD stochastic gradient function with Ghost Norm Clipping.
 
@@ -495,10 +716,10 @@ class GhostClippingDpSgdStochasticGradient(DpSgdStochasticGradient):
 
     # Pass 1: get per-example gradient norms
     scales = jnp.ones(batch_size)
-    params_with_sq_norms = jax.tree_map(
+    params_with_sq_norms = jax.tree.map(
         lambda x: ghostnorm_base.ParamWithAux(x, scales), mdl_vars_grad[PARAMS]
     )
-    (loss, aux), grad_with_sq_norms = grad_fn(
+    (_, aux), grad_with_sq_norms = grad_fn(
         {**mdl_vars_grad, PARAMS: params_with_sq_norms},
         mdl_vars_nograd_and_inputs,
         prng_key,
@@ -531,9 +752,12 @@ class GhostClippingDpSgdStochasticGradient(DpSgdStochasticGradient):
     if self.l2_norm_clip is not None:
       scales = jnp.minimum(1.0, self.l2_norm_clip / grad_norms)
       frac_clipped = jnp.mean(scales < 1.0)
+      if self.normalize_gradients:
+        # Scale gradients to have norm at most 1 instead of l2_norm_clip.
+        scales = scales / self.l2_norm_clip
 
     # Pass 2: get average of clipped gradients
-    params_with_sq_norms = jax.tree_map(
+    params_with_sq_norms = jax.tree.map(
         lambda x: ghostnorm_base.ParamWithAux(x, scales), mdl_vars_grad[PARAMS]
     )
     (loss, aux), clipped_grads = grad_fn(
@@ -541,16 +765,24 @@ class GhostClippingDpSgdStochasticGradient(DpSgdStochasticGradient):
         mdl_vars_nograd_and_inputs,
         prng_key,
     )
-    clipped_grads[PARAMS] = jax.tree_map(
+    clipped_grads[PARAMS] = jax.tree.map(
         lambda x: x.param, clipped_grads[PARAMS], is_leaf=is_leaf
     )
 
     # Note here noise stddev is divided by num_devices because in PAX the loss
     # is scaled by global batch size when pmap is used (see above)
-    noise_stddev = self.noise_multiplier * self.l2_norm_clip / batch_size
-    noised_grads = self._add_noise(
-        clipped_grads, noise_stddev, aux.loss_weight, prng_key
-    )
+    if self.noise_multiplier > 0.0:
+      noise_stddev = (
+          self.noise_multiplier
+          / batch_size
+          * (1.0 if self.normalize_gradients else self.l2_norm_clip)
+      )
+      noised_grads = self._add_noise(
+          clipped_grads, noise_stddev, aux.loss_weight, prng_key
+      )
+    else:
+      # Optimization if using this class only for clipping (e.g., with DP-MF)
+      noised_grads = clipped_grads
 
     aux = DPGradAuxInfo(
         dp_aux_info={'frac_clipped': frac_clipped},

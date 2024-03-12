@@ -28,6 +28,7 @@ from praxis import decoder_utils
 from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
+from praxis import sample_decode
 from praxis import test_utils
 from praxis.layers import attentions
 from praxis.layers import embedding_softmax
@@ -74,7 +75,13 @@ class MockLM(base_layer.BaseLayer):
     del inputs
     ret = NestedMap()
     time_step = self.get_variable(DECODE_CACHE, 'time_step')
-    ret.logits = self._logits.at[time_step].get()
+    if segment_pos is not None:
+      logits = jnp.take_along_axis(
+          self._logits, segment_pos[jnp.newaxis, :, jnp.newaxis], axis=0
+      )
+      ret.logits = jnp.squeeze(logits, axis=0)
+    else:
+      ret.logits = self._logits.at[time_step].get()
     self.put_variable(DECODE_CACHE, 'time_step', time_step + 1)
     return ret
 
@@ -332,6 +339,9 @@ class LanguageModelTest(test_utils.TestCase):
       p.max_decode_steps = 3
     logits = [
         [
+            [0, 0, 0, 0, 0, 1],  # argmax=5, prefix
+        ],
+        [
             [0, 1, 0, 0, 0, 0],  # argmax=1
         ],
         [
@@ -345,29 +355,31 @@ class LanguageModelTest(test_utils.TestCase):
         ],
     ]
     input_batch = NestedMap(
-        ids=jnp.array([[11, 12, 13, 14, 15]], dtype=jnp.int32),
-        paddings=jnp.array([[0., 0., 1., 1., 1.]], dtype=jnp.float32),
+        ids=jnp.array([[11, 5, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0.0, 0.0, 1.0, 1.0, 1.0]], dtype=jnp.float32),
     )
     results = self._run_decode(p, logits, input_batch)
-    self.assertArraysEqual(results.prefix_lengths,
-                           np.array([[2]], dtype=np.int32))
-    # We copy prefix of length 2 from input.ids, so the first argmax
-    # from logits is unused. Remaining 3 ids are from argmax.
-    if fprop_for_prefix:
-      self.assertArraysEqual(
-          results.output_ids,
-          np.array([[[11, 12, 1, 3, 4, 0, 0, 0]]], dtype=np.int32))
-      self.assertArraysEqual(
-          results.prefix_ids,
-          np.array([[[11, 12, 0, 0, 0, 0, 0, 0]]], dtype=np.int32))
-    else:
-      self.assertArraysEqual(results.output_ids,
-                             np.array([[[11, 12, 3, 4, 5]]], dtype=np.int32))
-      self.assertArraysEqual(results.prefix_ids,
-                             np.array([[[11, 12, 0, 0, 0]]], dtype=np.int32))
+    self.assertArraysEqual(
+        results.prefix_lengths, np.array([[2]], dtype=np.int32)
+    )
 
-    self.assertArraysEqual(results.decode_lengths,
-                           np.array([[5]], dtype=np.int32))
+    expected_output_ids = np.array([[[11, 5, 1, 3, 4]]], dtype=np.int32)
+    expected_prefix_ids = np.array([[[11, 5, 0, 0, 0]]], dtype=np.int32)
+
+    if fprop_for_prefix:
+      total_len = p.seqlen + p.max_decode_steps
+      expected_output_ids = py_utils.pad_or_trim_to(
+          expected_output_ids, [1, 1, total_len], pad_val=0
+      )
+      expected_prefix_ids = py_utils.pad_or_trim_to(
+          expected_prefix_ids, [1, 1, total_len], pad_val=0
+      )
+
+    self.assertArraysEqual(results.output_ids, expected_output_ids)
+    self.assertArraysEqual(results.prefix_ids, expected_prefix_ids)
+    self.assertArraysEqual(
+        results.decode_lengths, np.array([[5]], dtype=np.int32)
+    )
 
   @parameterized.parameters([True, False])
   def test_prefix_lm(self, fprop_for_prefix):
@@ -379,6 +391,9 @@ class LanguageModelTest(test_utils.TestCase):
       p.max_decode_steps = 3
     logits = [
         [
+            [0, 0, 0, 0, 0, 1],  # argmax=5, prefix
+        ],
+        [
             [0, 1, 0, 0, 0, 0],  # argmax=1
         ],
         [
@@ -392,31 +407,101 @@ class LanguageModelTest(test_utils.TestCase):
         ],
     ]
     input_batch = NestedMap(
-        ids=jnp.array([[11, 12, 13, 14, 15]], dtype=jnp.int32),
-        paddings=jnp.array([[0., 0., 1., 1., 1.]], dtype=jnp.float32),
+        ids=jnp.array([[11, 5, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0.0, 0.0, 1.0, 1.0, 1.0]], dtype=jnp.float32),
         inputs_indicator=jnp.array([[1, 1, 0, 0, 0]], dtype=jnp.float32),
     )
     results = self._run_decode(
         p, logits, input_batch, model_type=LanguageModelType.PREFIX)
     self.assertArraysEqual(results.prefix_lengths,
                            np.array([[2]], dtype=np.int32))
-    # We copy prefix of length 2 from input.ids, so the first argmax
-    # from logits is unused. Remaining 3 ids are from argmax.
-    if fprop_for_prefix:
-      self.assertArraysEqual(
-          results.output_ids,
-          np.array([[[11, 12, 1, 3, 4, 0, 0, 0]]], dtype=np.int32))
-      self.assertArraysEqual(
-          results.prefix_ids,
-          np.array([[[11, 12, 0, 0, 0, 0, 0, 0]]], dtype=np.int32))
-    else:
-      self.assertArraysEqual(results.output_ids,
-                             np.array([[[11, 12, 3, 4, 5]]], dtype=np.int32))
-      self.assertArraysEqual(results.prefix_ids,
-                             np.array([[[11, 12, 0, 0, 0]]], dtype=np.int32))
 
-    self.assertArraysEqual(results.decode_lengths,
-                           np.array([[5]], dtype=np.int32))
+    expected_output_ids = np.array([[[11, 5, 1, 3, 4]]], dtype=np.int32)
+    expected_prefix_ids = np.array([[[11, 5, 0, 0, 0]]], dtype=np.int32)
+
+    if fprop_for_prefix:
+      total_len = p.seqlen + p.max_decode_steps
+      expected_output_ids = py_utils.pad_or_trim_to(
+          expected_output_ids, [1, 1, total_len], pad_val=0
+      )
+      expected_prefix_ids = py_utils.pad_or_trim_to(
+          expected_prefix_ids, [1, 1, total_len], pad_val=0
+      )
+
+    self.assertArraysEqual(results.output_ids, expected_output_ids)
+    self.assertArraysEqual(results.prefix_ids, expected_prefix_ids)
+    self.assertArraysEqual(
+        results.decode_lengths, np.array([[5]], dtype=np.int32)
+    )
+
+  @parameterized.parameters([(True, True), (True, False), (False, False)])
+  def test_sample_decoding_prefix(
+      self, fprop_for_prefix, vanilla_sample_decode
+  ):
+    p = models.SampleDecoderHParams(
+        seqlen=5,
+        min_prefix_len=2,
+        eos_id=2,
+        k=1,  # greedy_decoding
+        fprop_for_prefix=fprop_for_prefix,
+        vanilla_sample_decode=vanilla_sample_decode,
+    )
+    p.max_decode_steps = 3 if fprop_for_prefix else p.seqlen
+    logits = [
+        [
+            [0, 0, 0, 0, 0, 1],  # argmax=5, prefix
+        ],
+        [
+            [0, 1, 0, 0, 0, 0],  # argmax=1
+        ],
+        [
+            [0, 0, 0, 1, 0, 0],  # argmax=3
+        ],
+        [
+            [0, 0, 0, 0, 1, 0],  # argmax=4
+        ],
+        [
+            [0, 0, 0, 0, 0, 1],  # argmax=5
+        ],
+    ]
+    # The test doesn't check (False, True) case, because vanilla_sample_decode
+    # doesn't forgive the case where input_batch has prefix but fprop_for_prefix
+    # is False.
+    input_batch = NestedMap(
+        ids=jnp.array([[11, 5, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0.0, 0.0, 1.0, 1.0, 1.0]], dtype=jnp.float32),
+    )
+    results = self._run_decode(p, logits, input_batch)
+
+    def to_expected(x):
+      if vanilla_sample_decode:
+        # Extend the sample axis, as vanilla doesn't have sample concept.
+        return x[:, jnp.newaxis]
+      return x
+
+    results = results.Transform(to_expected)
+    self.assertArraysEqual(
+        results.prefix_lengths, np.array([[2]], dtype=np.int32)
+    )
+
+    expected_output_ids = np.array([[[11, 5, 1, 3, 4]]], dtype=np.int32)
+    expected_prefix_ids = np.array([[[11, 5, 0, 0, 0]]], dtype=np.int32)
+
+    if fprop_for_prefix:
+      total_len = p.seqlen + p.max_decode_steps
+      expected_output_ids = py_utils.pad_or_trim_to(
+          expected_output_ids, [1, 1, total_len], pad_val=0
+      )
+      if not vanilla_sample_decode:
+        expected_prefix_ids = py_utils.pad_or_trim_to(
+            expected_prefix_ids, [1, 1, total_len], pad_val=0
+        )
+
+    self.assertArraysEqual(results.output_ids, expected_output_ids)
+    self.assertArraysEqual(results.prefix_ids, expected_prefix_ids)
+    self.assertArraysEqual(
+        results.decode_lengths, np.array([[5]], dtype=np.int32)
+    )
 
   def test_eos_terminate(self):
     p = pax_fiddle.Config(models.LanguageModel).decoder_tpl
@@ -558,10 +643,12 @@ class LanguageModelTest(test_utils.TestCase):
         ],
     ]
     input_batch = NestedMap(
-        ids=jnp.array([[11, 13, 15], [12, 14, 16], [20, 30, 40]],
-                      dtype=jnp.int32),
-        paddings=jnp.array([[0, 0, 1], [0, 1, 1], [0, 1, 1]],
-                           dtype=jnp.float32),
+        ids=jnp.array(
+            [[11, 4, 15], [12, 14, 16], [20, 30, 40]], dtype=jnp.int32
+        ),
+        paddings=jnp.array(
+            [[0, 0, 1], [0, 1, 1], [0, 1, 1]], dtype=jnp.float32
+        ),
         prefix_lengths=jnp.array([2, 1, 1], dtype=jnp.int32),
     )
     results = self._run_decode(p, logits, input_batch)
@@ -574,9 +661,15 @@ class LanguageModelTest(test_utils.TestCase):
     # The prefix is right aligned to the generated sequence.
     self.assertArraysEqual(
         results.output_ids,
-        np.array([[[11, 13, 4, 3, 3, 4, 0]], [[12, 3, 4, 2, 0, 0, 0]],
-                  [[20, 3, 2, 0, 0, 0, 0]]],
-                 dtype=np.int32))
+        np.array(
+            [
+                [[11, 4, 3, 3, 4, 0, 0]],
+                [[12, 3, 4, 2, 0, 0, 0]],
+                [[20, 3, 2, 0, 0, 0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+    )
     self.assertArraysEqual(results.decode_lengths,
                            np.array([[6], [4], [3]], dtype=np.int32))
 
@@ -869,10 +962,15 @@ class LanguageModelTest(test_utils.TestCase):
     if k == 1:
       self.assertArraysEqual(
           results.output_ids,
-          np.array([[[11, 13, 4, 3, 3, 4, 0], [11, 13, 4, 3, 3, 4, 0]],
-                    [[12, 3, 4, 2, 0, 0, 0], [12, 3, 4, 2, 0, 0, 0]],
-                    [[20, 3, 2, 0, 0, 0, 0], [20, 3, 2, 0, 0, 0, 0]]],
-                   dtype=np.int32))
+          np.array(
+              [
+                  [[11, 13, 3, 3, 4, 0, 0], [11, 13, 3, 3, 4, 0, 0]],
+                  [[12, 3, 4, 2, 0, 0, 0], [12, 3, 4, 2, 0, 0, 0]],
+                  [[20, 3, 2, 0, 0, 0, 0], [20, 3, 2, 0, 0, 0, 0]],
+              ],
+              dtype=np.int32,
+          ),
+      )
       self.assertArraysEqual(
           results.decode_lengths,
           np.array([[6, 6], [4, 4], [3, 3]], dtype=np.int32),
@@ -881,10 +979,15 @@ class LanguageModelTest(test_utils.TestCase):
       # Gumbel noise will make some difference between samples.
       self.assertArraysEqual(
           results.output_ids,
-          np.array([[[11, 13, 4, 3, 3, 4, 0], [11, 13, 4, 0, 3, 4, 0]],
-                    [[12, 3, 4, 2, 0, 0, 0], [12, 3, 4, 0, 0, 0, 0]],
-                    [[20, 3, 2, 0, 0, 0, 0], [20, 3, 2, 0, 0, 0, 0]]],
-                   dtype=np.int32))
+          np.array(
+              [
+                  [[11, 13, 3, 3, 4, 0, 0], [11, 13, 3, 0, 4, 0, 0]],
+                  [[12, 3, 4, 2, 0, 0, 0], [12, 3, 4, 0, 0, 0, 0]],
+                  [[20, 3, 2, 0, 0, 0, 0], [20, 3, 2, 0, 0, 0, 0]],
+              ],
+              dtype=np.int32,
+          ),
+      )
       self.assertArraysEqual(
           results.decode_lengths,
           np.array([[6, 6], [4, 5], [3, 3]], dtype=np.int32),
@@ -961,7 +1064,7 @@ class LanguageModelTest(test_utils.TestCase):
         [
             [0, 1, 0, 0, 0],
             [0, 0, 0, 0, 1],
-            [0, 0, 1, 0, 0],  # argmax=[1, 4, 2]
+            [0, 0, 0, 1, 0],  # argmax=[1, 4, 3]
         ],
         [
             [0, 0, 0, 1, 0],
@@ -987,15 +1090,15 @@ class LanguageModelTest(test_utils.TestCase):
         results.output_ids,
         np.array(
             [
-                [[11, 13, 4, 0, 3, 0, 0]],
-                [[12, 14, 1, 0, 0, 0, 0]],
-                [[20, 3, 2, 0, 0, 0, 0]],
+                [[11, 13, 1, 0, 0, 0, 0]],
+                [[12, 14, 4, 2, 0, 0, 0]],
+                [[20, 3, 3, 3, 0, 0, 0]],
             ],
             dtype=np.int32,
         ),
     )
     self.assertArraysEqual(
-        results.decode_lengths, np.array([[6], [3], [3]], dtype=np.int32)
+        results.decode_lengths, np.array([[3], [4], [5]], dtype=np.int32)
     )
 
   def test_sample_decoding_with_entropy_score(self):
@@ -1041,6 +1144,76 @@ class LanguageModelTest(test_utils.TestCase):
     )
     results = self._run_decode(p, logits, input_batch)
     self.assertLen(results.entropy, 3)
+
+  def test_sample_decoding_with_num_per_token_logprobs(self):
+    p = models.SampleDecoderHParams(
+        seqlen=7,
+        min_prefix_len=0,
+        eos_id=[1, 2],
+        num_samples=1,
+        k=2,
+        temperature=0.5,
+        fprop_for_prefix=True,
+        max_decode_steps=4,
+    )
+    logits = [
+        [
+            [0, 0, 0, 0, 1],
+            [0, 1, 0, 0, 0],
+            [0, 0, 0, 1, 0],  # argmax=[4, 1, 3]
+        ],
+        [
+            [0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 1],
+            [0, 0, 1, 0, 0],  # argmax=[1, 4, 2]
+        ],
+        [
+            [0, 0, 0, 1, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],  # argmax=[3, 2, 3]
+        ],
+        [
+            [0, 0, 0, 0, 1],
+            [0, 0, 0, 0, 1],
+            [0, 0, 0, 1, 0],  # argmax=[4, 4, 3]
+        ],
+    ]
+    num_per_token_logprobs = 3
+    input_batch = NestedMap(
+        ids=jnp.array(
+            [[11, 13, 15], [12, 14, 16], [20, 30, 40]], dtype=jnp.int32
+        ),
+        paddings=jnp.zeros(shape=(3, 3), dtype=jnp.float32),
+        prefix_lengths=jnp.array([2, 2, 1], dtype=jnp.int32),
+        num_per_token_logprobs=jnp.array(
+            [num_per_token_logprobs], dtype=jnp.int32
+        ),
+    )
+    results = self._run_decode(p, logits, input_batch)
+    top_candidate_ids = results.top_candidate_ids
+    top_candidate_logprobs = results.top_candidate_logprobs
+    # Check shape.
+    shape = (
+        3,  # batch_size
+        1,  # num_samples
+        7,  # seq_len
+        sample_decode.MAX_NUM_PER_TOKEN_LOGPROBS,
+    )
+    self.assertEqual(shape, top_candidate_ids.shape)
+    self.assertEqual(shape, top_candidate_logprobs.shape)
+    # Check that values outside of the top `num_per_token_logprobs` are 0.
+    self.assertArraysEqual(
+        top_candidate_ids[:, :, :, num_per_token_logprobs:], 0
+    )
+    self.assertArraysEqual(
+        top_candidate_logprobs[:, :, :, num_per_token_logprobs:], 1.0
+    )
+    # Check that logprobs are sorted in descending order.
+    logprobs = top_candidate_logprobs[:, :, :, :num_per_token_logprobs]
+    self.assertArraysEqual(
+        jnp.flip(jnp.sort(logprobs), -1),
+        logprobs,
+    )
 
   def test_cf_guidance_unimplemented_exception(self):
     p = models.SampleDecoderHParams(seqlen=5, cf_guidance_scale=2.0)
@@ -1284,6 +1457,132 @@ class SequenceModelTest(test_utils.TestCase):
     self.assertIn('embeddings', results)
     self.assertSequenceEqual(results.embeddings.shape, (1, 5, 8))
 
+  def _run_decode(self, decoder_p, input_batch):
+    model_dims = 8
+    model_p = pax_fiddle.Config(models.SequenceModel, name='test')
+    model_p.model_tpl = pax_fiddle.Config(
+        models.transformer_models.TransformerEncoderDecoder,
+        model_dims=model_dims,
+    )
+    encoder_stacked_transformer_tpl = pax_fiddle.Config(
+        transformers.StackedTransformer
+    )
+    encoder_stacked_transformer_tpl.num_layers = 2
+    encoder_stacked_transformer_tpl.num_heads = 4
+    encoder_stacked_transformer_tpl.model_dims = model_dims
+    encoder_stacked_transformer_tpl.hidden_dims = model_dims * 4
+    encoder_stacked_transformer_tpl.mask_self_attention = False
+    decoder_stacked_transformer_tpl = pax_fiddle.Config(
+        transformers.StackedTransformer
+    )
+    decoder_stacked_transformer_tpl.num_layers = 2
+    decoder_stacked_transformer_tpl.num_heads = 4
+    decoder_stacked_transformer_tpl.model_dims = model_dims
+    decoder_stacked_transformer_tpl.hidden_dims = model_dims * 4
+    decoder_stacked_transformer_tpl.mask_self_attention = True
+    model_p.model_tpl.encoder_stacked_transformer_tpl = (
+        encoder_stacked_transformer_tpl
+    )
+    model_p.model_tpl.decoder_stacked_transformer_tpl = (
+        decoder_stacked_transformer_tpl
+    )
+    model_p.model_tpl.softmax_tpl = pax_fiddle.Config(
+        embedding_softmax.SharedEmbeddingSoftmax,
+        input_dims=model_dims,
+        num_classes=16,
+    )
+    seq_model = instantiate(model_p)
+    prng_key = jax.random.PRNGKey(seed=9)
+    mdl_vars = seq_model.init(prng_key, input_batch)
+    results, _ = seq_model.apply(
+        mdl_vars,
+        mutable=[
+            DECODE_CACHE,
+        ],
+        rngs={RANDOM: prng_key},
+        method=seq_model.decode_with_params,
+        input_batch=input_batch,
+        decoder_params=decoder_p,
+    )
+    _, results, _ = results
+    return results
+
+  def test_greedy_decode(self):
+    data = NestedMap(
+        ids=jnp.array([[11, 12, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0, 1, 1, 1, 1]], dtype=jnp.float32),
+        labels=jnp.ones([1, 5], jnp.float32),
+        weights=jnp.ones([1, 5], jnp.float32),
+    )
+    input_batch = NestedMap(src=data, tgt=data)
+    decoder_p = models.GreedyDecoderHParams(seqlen=5, max_decode_steps=5)
+    results = self._run_decode(decoder_p, input_batch)
+    self.assertIn('output_ids', results)
+    self.assertSequenceEqual(results.output_ids.shape, (1, 1, 5))
+    self.assertArraysEqual(results.output_ids, [[[11, 10, 10, 10, 10]]])
+
+  def test_sample_decode(self):
+    data = NestedMap(
+        ids=jnp.array([[11, 12, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0, 1, 1, 1, 1]], dtype=jnp.float32),
+        labels=jnp.ones([1, 5], jnp.float32),
+        weights=jnp.ones([1, 5], jnp.float32),
+    )
+    input_batch = NestedMap(src=data, tgt=data)
+    decoder_p = models.SampleDecoderHParams(
+        num_samples=3, k=0, seqlen=5, max_decode_steps=5
+    )
+    results = self._run_decode(decoder_p, input_batch)
+    self.assertIn('output_ids', results)
+    self.assertSequenceEqual(results.output_ids.shape, (1, 3, 5))
+    self.assertArraysEqual(
+        results.output_ids,
+        [[[11, 10, 9, 1, 14], [11, 14, 14, 7, 14], [11, 11, 13, 3, 6]]],
+    )
+
+  def test_beam_search_decode(self):
+    data = NestedMap(
+        ids=jnp.array([[11, 12, 13, 14, 15]], dtype=jnp.int32),
+        paddings=jnp.array([[0, 1, 1, 1, 1]], dtype=jnp.float32),
+        labels=jnp.ones([1, 5], jnp.float32),
+        weights=jnp.ones([1, 5], jnp.float32),
+    )
+    input_batch = NestedMap(src=data, tgt=data)
+    decoder_p = models.BeamSearchHParams(
+        beam_size=4, seqlen=5, max_decode_steps=5
+    )
+    results = self._run_decode(decoder_p, input_batch)
+    self.assertIn('output_ids', results)
+    self.assertSequenceEqual(results.output_ids.shape, (1, 4, 6))
+    self.assertArraysEqual(
+        results.output_ids,
+        [[
+            [2, 0, 0, 0, 0, 0],
+            [11, 2, 0, 0, 0, 0],
+            [15, 2, 0, 0, 0, 0],
+            [15, 15, 2, 0, 0, 0],
+        ]],
+    )
+
+
+def _flatten_input_data(lm_input):
+  return {
+      'y_w/inputs': lm_input.inputs,
+      'y_w/paddings': lm_input.paddings,
+      'y_w/labels/ids': lm_input.labels.class_ids,
+      'y_w/labels/weights': lm_input.labels.class_weights,
+      'y_w/segment_ids': lm_input.segment_ids,
+      'y_w/segment_pos': lm_input.segment_pos,
+      'y_w/inputs_indicator': lm_input.inputs_indicator,
+      'y_l/inputs': lm_input.inputs,
+      'y_l/paddings': lm_input.paddings,
+      'y_l/labels/ids': lm_input.labels.class_ids,
+      'y_l/labels/weights': lm_input.labels.class_weights,
+      'y_l/segment_ids': lm_input.segment_ids,
+      'y_l/segment_pos': lm_input.segment_pos,
+      'y_l/inputs_indicator': lm_input.inputs_indicator,
+  }
+
 
 class TransformerLmDpoTest(test_utils.TestCase):
 
@@ -1294,26 +1593,19 @@ class TransformerLmDpoTest(test_utils.TestCase):
 
   def test_transformer_lm_dpo(self):
     seq_len = 512
-    position_emb_tpl = pax_fiddle.Config(embedding_softmax.PositionalEmbedding)
-    stacked_transformer_tpl = pax_fiddle.Config(
-        transformers.StackedTransformer,
-        model_dims=32,
-        hidden_dims=4 * 32,
-        num_heads=4,
-        num_layers=1,
-    )
-    p_ref = pax_fiddle.Config(
-        transformer_models.TransformerLm,
+    model_config = transformer_models.TransformerLm.config(
         model_dims=32,
         vocab_size=52,
-        position_emb_tpl=position_emb_tpl,
-        stacked_transformer_tpl=stacked_transformer_tpl,
+        position_emb_tpl=embedding_softmax.PositionalEmbedding.config(),
+        stacked_transformer_tpl=transformers.StackedTransformer.config(
+            model_dims=32,
+            hidden_dims=4 * 32,
+            num_heads=4,
+            num_layers=1,
+        ),
     )
-    p_ref.softmax_tpl.scale_sqrt_depth = True
-    p_mdl = p_ref.clone()
-    p = pax_fiddle.Config(
-        models.LanguageModelDPO, ref_mdl_tpl=p_ref, mdl_tpl=p_mdl
-    )
+    model_config.softmax_tpl.scale_sqrt_depth = True
+    p = models.LanguageModelDPO.config(ref_mdl=model_config, mdl=model_config)
 
     batch_size = 8
     dpo_lm = instantiate(p)
@@ -1323,26 +1615,23 @@ class TransformerLmDpoTest(test_utils.TestCase):
     )
     labels = jnp.concatenate((input_ids[:, 1:], input_ids[:, :1]), axis=1)
     weights = jnp.ones([batch_size, seq_len])
-    lm_input = NestedMap(
-        ids=input_ids,
-        labels=labels,
+    lm_input = models.DPOExampleHalf(
+        inputs=input_ids,
+        inputs_indicator=jnp.ones([batch_size, seq_len]),
+        labels=models.Labels(class_ids=labels, class_weights=weights),
         paddings=jnp.zeros([batch_size, seq_len]),
         segment_ids=jnp.ones([batch_size, seq_len]),
-        segment_pos=jnp.tile(
-            jnp.arange(0, seq_len), [batch_size, 1]
-        ),
-        weights=weights,
-        eval_sample_weights=jnp.ones([batch_size])
+        segment_pos=jnp.tile(jnp.arange(0, seq_len), [batch_size, 1]),
     )
-    input_batch = NestedMap(y_l=lm_input, y_w=lm_input)
+
+    input_batch = _flatten_input_data(lm_input)
 
     with base_layer.JaxContext.new_context():
       prng_key = jax.random.PRNGKey(seed=123)
       initial_vars = dpo_lm.init(prng_key, input_batch)
       outputs, _ = dpo_lm.apply(initial_vars, input_batch)
       logging.info('outputs: %s', outputs)
-      self.assertEqual(0.0, outputs.total_loss[0])
-      self.assertEqual(0.6931472, outputs.dpo_loss[0])
+      self.assertEqual(0.6931472, outputs.total_loss[0])
 
 
 if __name__ == '__main__':

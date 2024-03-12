@@ -18,10 +18,11 @@
 import dataclasses
 import functools
 import inspect
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Callable, Sequence, cast
 
 from flax import core as flax_core
 import jax
+from jax import lax
 from jax import numpy as jnp
 from praxis import base_layer
 from praxis import py_utils
@@ -66,10 +67,10 @@ class StreamingResultCallback:
 
   # Optional callable to be called at the beginning of decoding. Accepts batch
   # size (`batch` or `[batch, num_samples]`) as the argument.
-  init_fn: Optional[Callable[[Union[int, Sequence[int]]], None]] = None
+  init_fn: Callable[[int | Sequence[int]], None] | None = None
 
   # Optional callable to be called at the end of decoding.
-  done_fn: Optional[Callable[[], None]] = None
+  done_fn: Callable[[], None] | None = None
 
 
 @dataclasses.dataclass
@@ -133,8 +134,11 @@ def gather_logprobs(
 
 
 def two_stage_topk(
-    logits: jnp.ndarray, hyp_scores: jnp.ndarray, terminal_ids: List[int]
-) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    logits: jnp.ndarray,
+    hyp_scores: jnp.ndarray,
+    terminal_ids: list[int],
+    tokens_per_beam: int | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
   """Two stage TopK to choose TopK values and indices from each beam.
 
   Args:
@@ -142,26 +146,29 @@ def two_stage_topk(
       vocab_size].
     hyp_scores: The topK scores of [batch_size, beam_size].
     terminal_ids: terminal ids. In most cases this is simply eos_id.
+    tokens_per_beam: Number of tokens to explore per beam, defaulting to
+      beam_size if None.
 
   Returns:
-    topk_value, topk_indices of shape [batch_size, beam_size * beam_size], they
-      are the topk of `logits` on the last dimenension and merged on the last
-      two dimensions.
+    topk_value, topk_indices of shape [batch_size, beam_size * tokens_per_beam],
+      they are the topk of `logits` on the last dimenension and merged on the
+      last two dimensions.
     final_topk_value, final_topk_indices of shape [batch_size, beam_size],
       they are the topk value and inidices of `topk_value`.
   """
   vocab_size = logits.shape[-1]
   batch_size = hyp_scores.shape[0]
   beam_size = hyp_scores.shape[1]
+  tokens_per_beam = beam_size if tokens_per_beam is None else tokens_per_beam
   logits_reshape = jnp.reshape(
       logits, newshape=(batch_size * beam_size, vocab_size)
   )
-  topk_value, topk_indices = jax.lax.top_k(logits_reshape, beam_size)
+  topk_value, topk_indices = jax.lax.top_k(logits_reshape, tokens_per_beam)
   topk_value = jnp.reshape(
-      topk_value, newshape=(batch_size, beam_size, beam_size)
+      topk_value, newshape=(batch_size, beam_size, tokens_per_beam)
   )
   topk_indices = jnp.reshape(
-      topk_indices, newshape=(batch_size, beam_size, beam_size)
+      topk_indices, newshape=(batch_size, beam_size, tokens_per_beam)
   )
   topk_value += jnp.expand_dims(hyp_scores, -1)
   for terminal_id in terminal_ids:
@@ -170,10 +177,10 @@ def two_stage_topk(
     )
 
   topk_value = jnp.reshape(
-      topk_value, newshape=(batch_size, beam_size * beam_size)
+      topk_value, newshape=(batch_size, beam_size * tokens_per_beam)
   )
   topk_indices = jnp.reshape(
-      topk_indices, newshape=(batch_size, beam_size * beam_size)
+      topk_indices, newshape=(batch_size, beam_size * tokens_per_beam)
   )
 
   final_topk_value, final_topk_indices = jax.lax.top_k(topk_value, beam_size)
@@ -340,6 +347,59 @@ def left_align_tensor(
   return jax.vmap(_align_one)(x, prefix_lengths)
 
 
+def left_align_kv_cache(
+    x: JTensor,
+    prefix_lengths: JTensor,
+    max_prefix_len: int,
+    pad_value: float = 0.0,
+    batch_size: int = 1,
+) -> JTensor:
+  """Changes middle aligned sequence to be left aligned.
+
+  x has the following middle aligned format:
+  |-max_prefix_len--|
+  [0, 0, 0, 0, P, P, X, X, X, 0, 0, 0]
+  where prefix_lengths = 2, max_prefix_len = 6, there are 4 paddings in the
+  prefix.
+
+  After left aligned, x will have the following format:
+  |-max_prefix_len--|
+  [P, P, X, X, X, 0, 0, 0, 0, 0, 0, 0]
+
+  Args:
+    x: Tensor of shape [batch_size, seq_len, num_heads, head_dim].
+    prefix_lengths: prefix lengths of shape [batch_size].
+    max_prefix_len: max prefix lengths.
+    pad_value: Value for padding.
+    batch_size: x.shape[0] in int.
+
+  Returns:
+    Left aligned tensor with shape [batch_size, seqlen, num_heads, head_dim].
+  """
+  rank = len(x.shape)
+  slice_sizes = x.shape[1:]
+  if rank not in [3, 4]:
+    raise ValueError(
+        f'Argument `x` needs to be 3 or 4-index, but has shape: {x.shape}'
+    )
+  pad_width = [[0, max_prefix_len], [0, 0]]
+  if rank == 4:
+    pad_width = pad_width + [[0, 0]]
+  for i in range(batch_size):
+    start_indices = [max_prefix_len - prefix_lengths[i], 0]
+    if rank == 4:
+      start_indices = start_indices + [0]
+    padded = jnp.pad(
+        x[i],
+        pad_width,
+        mode='constant',
+        constant_values=x.dtype.type(pad_value),
+    )
+    padded = jax.lax.dynamic_slice(padded, start_indices, slice_sizes)
+    x = x.at[i].set(padded)
+  return x
+
+
 def concat_suffix_and_left_align(
     decoded_tensors: JTensor,
     suffix_tensors: JTensor,
@@ -351,7 +411,6 @@ def concat_suffix_and_left_align(
     pad_value: float,
 ):
   """Concatenates suffix tensor to decoded tensor and then left aligns.
-
 
   When batch_size = 1, num_samples = 1, num_suffix = 1 if decoded_tensors has
   the following middle align format:
@@ -430,8 +489,8 @@ def concat_suffix_and_left_align(
 
 def maybe_reshard_mdl_for_decode(
     model: base_layer.BaseLayer,
-    mesh_transpose: Optional[Dict[str, str]],
-    model_var_pspecs: Optional[base_layer.NestedPartitionSpec],
+    mesh_transpose: dict[str, str] | None,
+    model_var_pspecs: base_layer.NestedPartitionSpec | None,
     transform_decode_state_fn: TransformStateFn,
 ) -> base_layer.BaseLayer:
   """Reshards model variables if mesh_transpose is given."""
@@ -481,7 +540,7 @@ def maybe_reshard_mdl_for_decode(
 
 
 def maybe_decode_mesh_transpose(
-    model: base_layer.BaseLayer, mesh_transpose: Optional[Dict[str, str]]
+    model: base_layer.BaseLayer, mesh_transpose: dict[str, str] | None
 ) -> base_layer.JaxContext:
   """Creates a new JaxContext with mesh_transpose."""
   if base_layer.JaxContext.has_context():
@@ -493,52 +552,160 @@ def maybe_decode_mesh_transpose(
   return base_layer.JaxContext.new_context(hparams=new_context_params)
 
 
-def end_with_sequences(
-    end_sequences: JTensor,
-    output_ids: JTensor,
-    decode_step: Union[int, JTensor],
-) -> JTensor:
-  """Check if the output_ids ended with given sequences.
+def find_first_new_stop_seq_match(
+    first_new_decode_idx: JTensor,
+    num_new_tokens: int,
+    stop_sequences: JTensor,
+    sequences: JTensor,
+):
+  """Finds index of first stop sequence match in newly decoded tokens.
 
-  The end_sequences tensor is a 2D tensor, if the original end_sequences is
+  *The returned index is relative to the first new decode index.*
+
+  Example:
+    first_new_decode_idx = [2, 0, 2]
+    num_new_tokens = 2
+    stop_sequences = [[[3, 4, 5], [0, 2, 6]],
+                      [[3, 4, 5], [0, 2, 6]]]
+    sequences = [[3, 4, 5, 0],
+                 [3, 4, 5, 0],
+                 [4, 2, 6, 7]]
+
+    * batch element 0: we look for a match starting from index 2. The
+        subsequence ending at index 2 is [3, 4, 5], which matches stop sequence
+        0. Relative to the first new decode index (2), the match index is 0.
+    * batch element 1: we look for a match starting from index 0. The
+        subsequence ending at index 0 is [3], doesn't match any stop sequence.
+        At position 1 the subsequence is [3, 4] -> no match. The number of new
+        tokens is 2, so we stop with no match and return 2.
+    * batch element 2: we look for a match starting from index 2. The
+        subsequence ending at index 2 is [4, 2, 6], which matches stop sequence
+        1. Relative to the first new decode index (2), the match index is 0.
+
+  Args:
+    first_new_decode_idx: [B], idx of first new decode
+    num_new_tokens: scalar, number of new decoded tokens
+    stop_sequences: [B, num_stop_sequences, max_stop_seq_len]
+    sequences: [B, max_seq_len]
+
+  Returns:
+    Tensor of shape [B]. Indices of the first stop sequence match for each batch
+    element, *relative to their respective first new decode indices*.
+  """
+
+  # [B, num_new_tokens]
+  col_idxs = (
+      first_new_decode_idx[:, jnp.newaxis]
+      + jnp.arange(num_new_tokens)[jnp.newaxis, :]
+  )
+
+  # First find all idx, stop_seq, seq triples that match.
+  # [B, num_new_tokens, num_stop_sequences]
+  matches = end_with_any_sequence_any_position(
+      stop_sequences, sequences, col_idxs
+  )
+
+  # For any idx and sequence, we only care if _any_ stop sequence matched.
+  # [B, num_new_tokens]
+  any_eos_match = jax.numpy.any(matches, axis=-1, keepdims=False)
+
+  # Some funky way to find the index of the first true value along the axis.
+  # We add first new decode idx because the indices we tried for each sequence
+  # don't start at 0.
+  # If the value is equal to the number of sequences, no match was found.
+  # [B]
+  first_stop_seq_hit = jnp.sum(
+      jax.lax.cummin(1 - any_eos_match.astype(jnp.int32), axis=1), axis=-1
+  )
+
+  return first_stop_seq_hit
+
+
+def _end_with_sequence_single(
+    stop_sequence: JTensor,
+    output_ids: JTensor,
+    decode_step: int | JTensor,
+) -> JTensor:
+  """Check if the output_ids end with given sequence.
+
+  The stop_sequence tensor is a 1D tensor. If you want to use the vmapped
+  version of this function, and the original stop_sequences is
   [[2], [3, 4], [5, 5, 5]], it should be padded to
   [[0, 0, 2], [0, 3, 4], [5, 5, 5]] before passed to this function.
 
-  The comparison is performed by matching the tokens of output_ids ended at
-  index 'decode_step' with the tokens in `end_sequences`.
+  The comparison is performed by matching the tokens of output_ids ending at
+  index 'decode_step' with the tokens in `stop_sequence`.
 
   Args:
-    end_sequences: Given end of sequences of shape [batch_size, eos_len].
-    output_ids: Generated output ids of shape [batch_size, seq_len].
+    stop_sequence: Given end of sequences of shape [eos_len].
+    output_ids: Generated output ids of shape [seq_len].
     decode_step: Current decode step as an int or a 0D tensor.
 
   Returns:
-    A JTensor of shape [batch] which indicates if the output_ids ended with
-    end_sequences.
+    A JTensor of rank 0 which indicates if the output_ids ended with
+    stop_sequences.
   """
-  batch, eos_len = end_sequences.shape
-  padded_output_ids = jnp.pad(output_ids, [[0, 0], [eos_len, 0]])
+
+  eos_len = stop_sequence.shape[0]
+  padded_output_ids = jnp.pad(output_ids, [eos_len, 0])
   # Slice start index = decode_step + eos_len - eos_len + 1.
   sliced_output_ids = jax.lax.dynamic_slice(
-      padded_output_ids, [0, decode_step + 1], [batch, eos_len]
+      padded_output_ids, [decode_step + 1], [eos_len]
   )
 
-  # end_sequences are padded from the left with 0s.
-  ignore_tokens = jnp.equal(end_sequences, 0)
+  # stop_sequences are padded from the left with 0s.
+  ignore_tokens = jnp.equal(stop_sequence, 0)
+
   tokens_equal = jnp.logical_or(
-      jnp.equal(sliced_output_ids, end_sequences), ignore_tokens
+      jnp.equal(sliced_output_ids, stop_sequence), ignore_tokens
   )
   return jnp.all(tokens_equal, axis=-1)
 
 
-def has_any_eos(arr: JTensor, eos_ids: Union[int, Sequence[int]]):
+def end_with_sequences(
+    stop_sequences: JTensor, output_ids: JTensor, decode_step: int | JTensor
+) -> JTensor:
+  """Applies _end_with_sequence_single to a batch of (stop_seq, sequence) pairs."""
+  return jax.vmap(_end_with_sequence_single, in_axes=(0, 0, None))(
+      stop_sequences, output_ids, decode_step
+  )
+
+
+@functools.partial(jax.vmap, in_axes=(0, 0, 0))  # map over batch
+@functools.partial(jax.vmap, in_axes=(None, None, 0))  # map over decode step
+@functools.partial(jax.vmap, in_axes=(0, None, None))  # map over stop sequence
+def end_with_any_sequence_any_position(stop_sequence, output_ids, decode_step):
+  """Checks for matches of stop_sequence in output_ids at at decode_step.
+
+  The un-vmapped function will return true if stop_sequence matches
+  output_ids[decode_step-len(stop_seq):decode_step].
+
+  The vmapped function allows you to pass multiple stop sequences, check
+  multiple column indices, and do this for all items in a batch.
+
+  Args:
+    stop_sequence: stop sequences to look for of shape [B, num_stop_seqs,
+      max_stop_seq_len].
+    output_ids: sequences, of shape [B, seq_len].
+    decode_step: step to check for matches, shape [B, num_positions_to_check].
+
+  Returns:
+    Tensor of shape [B, num_positions_to_check, num_stop_seqs] denoting whether
+    there was a match for each position to check in the sequence with each
+    stop sequence.
+  """
+
+  return _end_with_sequence_single(stop_sequence, output_ids, decode_step)
+
+
+def has_any_eos(arr: JTensor, eos_ids: int | Sequence[int]):
   """Check if the given array contains any of the eos_ids."""
   eos = jnp.array(eos_ids, dtype=jnp.int32).reshape([1] * arr.ndim + [-1])
   return jnp.any(jnp.equal(arr[..., jnp.newaxis], eos), axis=-1)
 
 
 def coerce_to_expanded_extend_step_fn(
-    extend_step_fn: Union[ExtendStepFn, ExpandedExtendStepFn]
+    extend_step_fn: ExtendStepFn | ExpandedExtendStepFn,
 ) -> ExpandedExtendStepFn:
   """Wraps or casts the `extend_step_fn` into an `ExpandedExtendStepFn`."""
   if len(inspect.signature(extend_step_fn).parameters) == 4:
@@ -558,8 +725,9 @@ def coerce_to_expanded_extend_step_fn(
   return _expanded_extend_step_fn
 
 
-def collect_results_to_optimize_eos(result: NestedMap,
-                                    decode_length_shift: int = 0) -> NestedMap:
+def collect_results_to_optimize_eos(
+    result: NestedMap, decode_length_shift: int = 0
+) -> NestedMap:
   """Collects decoding results when optimize_eos=True."""
   new_result = result.DeepCopy()
   cumulative_logprobs = jnp.cumsum(new_result.logprobs, -1)

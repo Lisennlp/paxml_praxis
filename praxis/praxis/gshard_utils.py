@@ -22,17 +22,16 @@ import jax.numpy as jnp
 import numpy as np
 from praxis import pytypes
 
-SplitDimsMapping = pytypes.SplitDimsMapping
 
-
-def remove_dim(dim: int,
-               split_dims_mapping: SplitDimsMapping) -> SplitDimsMapping:
+def remove_dim(
+    dim: int, split_dims_mapping: pytypes.SplitDimsMapping
+) -> pytypes.SplitDimsMapping:
   """Returns a copy of split_dims_mapping with dimension 'dim' removed."""
   if dim < 0:
     num_dims = len(split_dims_mapping)
     dim = num_dims + dim
   assert dim >= 0 and dim < len(split_dims_mapping)
-  return list(split_dims_mapping[:dim]) + list(split_dims_mapping[dim + 1:])
+  return list(split_dims_mapping[:dim]) + list(split_dims_mapping[dim + 1 :])
 
 
 def cum_sum(elements, axis=0, exclusive=False, reverse=False):
@@ -62,15 +61,17 @@ def cum_sum(elements, axis=0, exclusive=False, reverse=False):
     return result
 
 
-def _create_over_capacity_ratio_summary(mask, position_in_expert, capacity,
-                                        name):
+def _create_over_capacity_ratio_summary(
+    mask, position_in_expert, capacity, name
+):
   _ = name  # TODO(lepikhin): consider inlined summary
   masked_position_in_expert = mask * position_in_expert
   ge_capacity = jnp.greater_equal(masked_position_in_expert, capacity)
   over_capacity = jnp.sum(ge_capacity).astype(jnp.float32)
   denom = jnp.sum(mask).astype(jnp.float32)
   over_capacity_ratio = over_capacity / jnp.maximum(
-      jnp.array(1.0, dtype=jnp.float32), denom)
+      jnp.array(1.0, dtype=jnp.float32), denom
+  )
   return over_capacity_ratio
 
 
@@ -84,20 +85,21 @@ def _create_over_capacity_ratio_summary(mask, position_in_expert, capacity,
 #   - inputs: unused, since gating logits are supplied explicitly.
 #   - use_xla_sharding: historic option, specifically for 1D sharding by E
 #   - num_devices: historic option, specifically for 1D sharding by E
-def top2_gating_on_logits(paddings,
-                          logits,
-                          experts_dim,
-                          expert_capacity_dim,
-                          fprop_dtype,
-                          prng_key=None,
-                          second_expert_policy='all',
-                          second_expert_threshold=0.0,
-                          legacy_mtf_behavior=True,
-                          capacity_factor=None,
-                          importance=None,
-                          mask_dtype=jnp.int32,
-                          gating_logit_cap=0.0,
-                          z_loss=False):
+def top2_gating_on_logits(
+    paddings,
+    logits,
+    experts_dim,
+    expert_capacity_dim,
+    fprop_dtype,
+    prng_key=None,
+    second_expert_policy='all',
+    second_expert_threshold=0.0,
+    legacy_mtf_behavior=True,
+    capacity_factor=None,
+    importance=None,
+    mask_dtype=jnp.int32,
+    gating_logit_cap=0.0,
+):
   """Computes Top-2 gating for Mixture-of-Experts.
 
   This function takes gating logits, potentially sharded across tpu cores as
@@ -154,7 +156,7 @@ def top2_gating_on_logits(paddings,
       were not dispatched due to lack of capcity for top_1 and top_2 expert
       respectively, e.g. (over_capacity_1, over_capacity_2)
   """
-  assert (capacity_factor or expert_capacity_dim)
+  assert capacity_factor or expert_capacity_dim
   if mask_dtype is None:
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
@@ -164,7 +166,6 @@ def top2_gating_on_logits(paddings,
     logits = logits.astype(jnp.float32)
 
   def _cap_logits(logits):
-    # tanh的范围为[-1, 1]，该函数的目的只要是控制gate logits的范围不至于过大
     if gating_logit_cap > 0.0:
       logging.info('gating_logit_cap: %f', gating_logit_cap)
       cap = jnp.array(gating_logit_cap, dtype=logits.dtype)
@@ -181,23 +182,25 @@ def top2_gating_on_logits(paddings,
     auto_expert_capacity = int(group_size_dim * capacity_factor / experts_dim)
     if expert_capacity_dim is None:
       expert_capacity_dim = 1
-    # 自己设的expert_capacity_dim 和 容量因子计算出来的auto_expert_capacity，二者取最大值
     if expert_capacity_dim < auto_expert_capacity:
       expert_capacity_dim = auto_expert_capacity
       # Round up to a multiple of 4 to avoid possible padding.
-      while expert_capacity_dim % 4:
-        expert_capacity_dim += 1
+      expert_capacity_dim = ((expert_capacity_dim + 3) // 4) * 4
       logging.info(
           'Setting expert_capacity_dim=%r (capacity_factor=%r '
-          'group_size_dim=%r experts_dim=%r)', expert_capacity_dim,
-          capacity_factor, group_size_dim, experts_dim)
+          'group_size_dim=%r experts_dim=%r)',
+          expert_capacity_dim,
+          capacity_factor,
+          group_size_dim,
+          experts_dim,
+      )
 
   capacity = jnp.array(expert_capacity_dim, dtype=jnp.int32)
 
-  # top-1 index: GS tensor  bsz * length * 1
+  # top-1 index: GS tensor
   index_1 = jnp.argmax(raw_gates, axis=-1)
 
-  # GSE. bsz * length * expert_dim
+  # GSE
   mask_1 = jax.nn.one_hot(index_1, experts_dim, dtype=mask_dtype)
   density_1_proxy = raw_gates
 
@@ -205,7 +208,8 @@ def top2_gating_on_logits(paddings,
     importance_is_one = jnp.equal(importance, 1.0)
     mask_1 *= jnp.expand_dims(importance_is_one.astype(mask_1.dtype), -1)
     density_1_proxy *= jnp.expand_dims(
-        importance_is_one.astype(density_1_proxy.dtype), -1)
+        importance_is_one.astype(density_1_proxy.dtype), -1
+    )
   else:
     assert len(mask_1.shape) == 3
     importance = jnp.ones_like(mask_1[:, :, 0]).astype(fprop_dtype)
@@ -213,11 +217,11 @@ def top2_gating_on_logits(paddings,
       nonpaddings = 1.0 - paddings
       mask_1 *= jnp.expand_dims(nonpaddings.astype(mask_1.dtype), -1)
       density_1_proxy *= jnp.expand_dims(
-          nonpaddings.astype(density_1_proxy.dtype), -1)
+          nonpaddings.astype(density_1_proxy.dtype), -1
+      )
       importance = nonpaddings
-  # bsz * length * 1, top1 score
+
   gate_1 = jnp.einsum('GSE,GSE->GS', raw_gates, mask_1.astype(raw_gates.dtype))
-  # 无top1的score
   gates_without_top_1 = raw_gates * (1.0 - mask_1.astype(raw_gates.dtype))
 
   if second_expert_policy == 'sampling':
@@ -229,10 +233,10 @@ def top2_gating_on_logits(paddings,
     noise = jax.random.uniform(subkey, logits.shape, dtype=logits.dtype)
     # Generates standard Gumbel(0, 1) noise, GSE tensor.
     noise = -jnp.log(-jnp.log(noise))
-    very_negative_logits = jnp.ones_like(logits) * (-0.7) * np.finfo(
-        logits.dtype).max
+    very_negative_logits = (
+        jnp.ones_like(logits) * (-0.7) * np.finfo(logits.dtype).max
+    )
     # Get rid of the first expert by setting its logit to be very negative.
-    # m > 0时，选择very_negative_logits，否则选择logits
     updated_logits = jnp.where(mask_1 > 0.0, very_negative_logits, logits)
     # Add Gumbel noise to the updated logits.
     noised_logits = updated_logits + noise
@@ -247,10 +251,13 @@ def top2_gating_on_logits(paddings,
   if paddings is not None:
     importance_is_nonzero = importance > 0.0
     mask_2 *= jnp.expand_dims(importance_is_nonzero.astype(mask_2.dtype), -1)
-  gate_2 = jnp.einsum('GSE,GSE->GS', gates_without_top_1,
-                      mask_2.astype(gates_without_top_1.dtype))
+  gate_2 = jnp.einsum(
+      'GSE,GSE->GS',
+      gates_without_top_1,
+      mask_2.astype(gates_without_top_1.dtype),
+  )
 
-  # See notes in lingvo/core/gshard_layers.py. is True
+  # See notes in lingvo/core/gshard_layers.py.
   if legacy_mtf_behavior:
     # Renormalize.
     denom = gate_1 + gate_2 + 1e-9
@@ -268,38 +275,38 @@ def top2_gating_on_logits(paddings,
   # density_1[:, e] represents assignment ration (num assigned / total) to
   # expert e as top_1 expert without taking capacity into account.
   assert importance.dtype == fprop_dtype
-  # true
   if legacy_mtf_behavior:
     density_denom = jnp.asarray(1.0, dtype=jnp.float32)
   else:
-    density_denom = jnp.mean(
-        importance, axis=1, dtype=jnp.float32)[:, jnp.newaxis] + 1e-6
+    density_denom = (
+        jnp.mean(importance, axis=1, dtype=jnp.float32)[:, jnp.newaxis] + 1e-6
+    )
   density_1 = jnp.mean(mask_1.astype(jnp.float32), axis=-2) / density_denom
   # density_1_proxy[:, e] represents mean of raw_gates for expert e, including
   # those of examples not assigned to e with top_k
-  density_1_proxy = jnp.mean(
-      density_1_proxy, axis=-2, dtype=jnp.float32) / density_denom
+  density_1_proxy = (
+      jnp.mean(density_1_proxy, axis=-2, dtype=jnp.float32) / density_denom
+  )
 
   # Compute aux_loss
   aux_loss = jnp.mean(
-      density_1_proxy * density_1, dtype=jnp.float32)  # element-wise
-  aux_loss *= (experts_dim * experts_dim)  # const coefficients
+      density_1_proxy * density_1, dtype=jnp.float32
+  )  # element-wise
+  aux_loss *= experts_dim * experts_dim  # const coefficients
 
   # Add the over capacity ratio for expert 1
-  over_capacity_1 = _create_over_capacity_ratio_summary(mask_1,
-                                                        position_in_expert_1,
-                                                        capacity,
-                                                        'over_capacity_1')
-  # Return the truth value of (x1 < x2) element-wise.
-  mask_1 *= jnp.less(position_in_expert_1,
-                     expert_capacity_dim).astype(mask_1.dtype)
-  # bsz * length, token在top1专家选择的token中的索引
+  over_capacity_1 = _create_over_capacity_ratio_summary(
+      mask_1, position_in_expert_1, capacity, 'over_capacity_1'
+  )
+
+  mask_1 *= jnp.less(position_in_expert_1, expert_capacity_dim).astype(
+      mask_1.dtype
+  )
   position_in_expert_1 = jnp.einsum('GSE,GSE->GS', position_in_expert_1, mask_1)
 
   # How many examples in this sequence go to this expert?
   mask_1_count = jnp.einsum('GSE->GE', mask_1)
   # [batch, group] - mostly ones, but zeros where something didn't fit.
-  # mask_1_flat表示每个token是否选择了专家
   mask_1_flat = jnp.sum(mask_1, axis=-1, dtype=mask_dtype)
   assert mask_1_count.dtype == mask_dtype
   assert mask_1_flat.dtype == mask_dtype
@@ -322,22 +329,24 @@ def top2_gating_on_logits(paddings,
     prng_key, subkey = jax.random.split(prng_key)
     sampled_2 = jnp.less(
         jax.random.uniform(subkey, gate_2.shape, dtype=gate_2.dtype),
-        gate_2 / max(second_expert_threshold, 1e-9))
+        gate_2 / max(second_expert_threshold, 1e-9),
+    )
     gate_2 *= sampled_2.astype(gate_2.dtype)
     mask_2 *= jnp.expand_dims(sampled_2, -1).astype(mask_2.dtype)
-  # position_in_expert_2的位置已经是累加了position_in_expert_1的位置了
-  position_in_expert_2 = cum_sum(
-      mask_2, exclusive=True, axis=-2) + jnp.expand_dims(mask_1_count, -2)
-  over_capacity_2 = _create_over_capacity_ratio_summary(mask_2,
-                                                        position_in_expert_2,
-                                                        capacity,
-                                                        'over_capacity_2')
 
-  mask_2 *= jnp.less(position_in_expert_2,
-                     expert_capacity_dim).astype(mask_2.dtype)
+  position_in_expert_2 = cum_sum(
+      mask_2, exclusive=True, axis=-2
+  ) + jnp.expand_dims(mask_1_count, -2)
+  over_capacity_2 = _create_over_capacity_ratio_summary(
+      mask_2, position_in_expert_2, capacity, 'over_capacity_2'
+  )
+
+  mask_2 *= jnp.less(position_in_expert_2, expert_capacity_dim).astype(
+      mask_2.dtype
+  )
   position_in_expert_2 = jnp.einsum('GSE,GSE->GS', position_in_expert_2, mask_2)
   mask_2_flat = jnp.sum(mask_2, axis=-1, dtype=mask_dtype)
-  # 过滤掉没有选择专家的token
+
   gate_1 *= mask_1_flat.astype(gate_1.dtype)
   gate_2 *= mask_2_flat.astype(gate_2.dtype)
 
@@ -348,65 +357,77 @@ def top2_gating_on_logits(paddings,
     gate_1 /= denom
     gate_2 /= denom
 
-  # GSC tensor， 过滤掉大于expert_capacity_dim的token。并制作one_hot mask
-  # bsz * length * expert_capacity_dim
+  # GSC tensor
   b = jax.nn.one_hot(
       position_in_expert_1.astype(np.int32),
       expert_capacity_dim,
-      dtype=jnp.float32)
+      dtype=jnp.float32,
+  )
   # GSE tensor
-  # bsz * length
-  # mask_1_flat: 表示哪些token被选中了
-  # index_1: bsz * length 表示token选择了哪个专家, -> one_hot: bsz * length * expert
-  # -> a：被专家选择的token的分数, bsz * length * expert
   a = jnp.expand_dims(
-      gate_1 * mask_1_flat.astype(jnp.float32), axis=-1) * jax.nn.one_hot(
-          index_1, experts_dim, dtype=jnp.float32)
+      gate_1 * mask_1_flat.astype(jnp.float32), axis=-1
+  ) * jax.nn.one_hot(index_1, experts_dim, dtype=jnp.float32)
   # GSEC tensor
   first_part_of_combine_tensor = jnp.einsum('GSE,GSC->GSEC', a, b)
 
   # GSC tensor
-  # position_in_expert_2已经是累积了position_in_expert_1的索引了，因此直接通过expert_capacity_dim过滤就可以
   b = jax.nn.one_hot(
       position_in_expert_2.astype(np.int32),
       expert_capacity_dim,
-      dtype=jnp.float32)
+      dtype=jnp.float32,
+  )
   # GSE tensor
   a = jnp.expand_dims(
-      gate_2 * mask_2_flat.astype(fprop_dtype), axis=-1) * jax.nn.one_hot(
-          index_2, experts_dim, dtype=jnp.float32)
+      gate_2 * mask_2_flat.astype(fprop_dtype), axis=-1
+  ) * jax.nn.one_hot(index_2, experts_dim, dtype=jnp.float32)
   second_part_of_combine_tensor = jnp.einsum('GSE,GSC->GSEC', a, b)
 
   # GSEC tensor
   combine_tensor = first_part_of_combine_tensor + second_part_of_combine_tensor
 
+  dispatch_count_tensor = jnp.sum(
+      combine_tensor.astype(bool).astype(jnp.int32), [-2, -1]
+  )
+  # Counts for 0, 1 and 2 (returning as array somehow has artefacts when
+  # summaries are being reported in training)
+  dispatch_0 = jnp.sum(dispatch_count_tensor == 0)
+  dispatch_1 = jnp.sum(dispatch_count_tensor == 1)
+  dispatch_2 = jnp.sum(dispatch_count_tensor == 2)
+  if paddings is not None:
+    paddings_count = jnp.sum(paddings.astype(jnp.int32))
+    dispatch_0 -= paddings_count
+
   # GSEC tensor
   dispatch_tensor = combine_tensor.astype(bool).astype(fprop_dtype)
-  aux_loss = aux_loss.astype(fprop_dtype)
+
   combine_tensor = combine_tensor.astype(fprop_dtype)
-  dispatch_tensor = dispatch_tensor.astype(fprop_dtype)
 
-  # lsp
-  if z_loss:
-    # <=> torch.logsumexp(logits, dim = -1)
-    router_z_loss = jnp.log(jnp.sum(jnp.exp(logits), dim=-1))
-    router_z_loss = jnp.square(router_z_loss)            
-    router_z_loss = router_z_loss.mean()
-    aux_loss += router_z_loss
+  return (
+      aux_loss,
+      combine_tensor,
+      dispatch_tensor,
+      (
+          over_capacity_1,
+          over_capacity_2,
+          # Counting tokens routed to 0, 1 and 2 experts.
+          dispatch_0,
+          dispatch_1,
+          dispatch_2,
+      ),
+  )
 
-  return aux_loss, combine_tensor, dispatch_tensor, (over_capacity_1,
-                                                     over_capacity_2)
 
-
-def topk_gating_on_logits(paddings,
-                          logits,
-                          experts_dim,
-                          expert_capacity_dim,
-                          fprop_dtype,
-                          capacity_factor=None,
-                          mask_dtype=jnp.int32,
-                          k=2,
-                          gating_logit_cap=0.0):
+def topk_gating_on_logits(
+    paddings,
+    logits,
+    experts_dim,
+    expert_capacity_dim,
+    fprop_dtype,
+    capacity_factor=None,
+    mask_dtype=jnp.int32,
+    k=2,
+    gating_logit_cap=0.0,
+):
   """Computes Top-k gating for Mixture-of-Experts.
 
   This function takes gating logits, potentially sharded across tpu cores as
@@ -455,7 +476,7 @@ def topk_gating_on_logits(paddings,
       were not dispatched due to lack of capcity for top_1 and top_2 expert
       respectively, e.g. (over_capacity_1, over_capacity_2)
   """
-  assert (capacity_factor or expert_capacity_dim)
+  assert capacity_factor or expert_capacity_dim
   if mask_dtype is None:
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
@@ -483,12 +504,15 @@ def topk_gating_on_logits(paddings,
     if expert_capacity_dim < auto_expert_capacity:
       expert_capacity_dim = auto_expert_capacity
       # Round up to a multiple of 4 to avoid possible padding.
-      while expert_capacity_dim % 4:
-        expert_capacity_dim += 1
+      expert_capacity_dim = ((expert_capacity_dim + 3) // 4) * 4
       logging.info(
           'Setting expert_capacity_dim=%r (capacity_factor=%r '
-          'group_size_dim=%r experts_dim=%r)', expert_capacity_dim,
-          capacity_factor, group_size_dim, experts_dim)
+          'group_size_dim=%r experts_dim=%r)',
+          expert_capacity_dim,
+          capacity_factor,
+          group_size_dim,
+          experts_dim,
+      )
 
   capacity = jnp.array(expert_capacity_dim, dtype=jnp.int32)
 
@@ -503,7 +527,8 @@ def topk_gating_on_logits(paddings,
     nonpaddings = 1.0 - paddings
     mask_1 *= jnp.expand_dims(nonpaddings.astype(mask_1.dtype), -1)
     density_1_proxy *= jnp.expand_dims(
-        nonpaddings.astype(density_1_proxy.dtype), -1)
+        nonpaddings.astype(density_1_proxy.dtype), -1
+    )
 
   density_1 = jnp.mean(mask_1.astype(jnp.float32), axis=-2)
   # density_1_proxy[:, e] represents mean of raw_gates for expert e, including
@@ -512,8 +537,9 @@ def topk_gating_on_logits(paddings,
 
   # Compute aux_loss
   aux_loss = jnp.mean(
-      density_1_proxy * density_1, dtype=jnp.float32)  # element-wise
-  aux_loss *= (experts_dim * experts_dim)  # const coefficients
+      density_1_proxy * density_1, dtype=jnp.float32
+  )  # element-wise
+  aux_loss *= experts_dim * experts_dim  # const coefficients
 
   gate_1 = jnp.einsum('GSE,GSE->GS', raw_gates, mask_1.astype(raw_gates.dtype))
   gates_list = [gate_1]  # GS
@@ -528,15 +554,16 @@ def topk_gating_on_logits(paddings,
 
   for i in range(1, k):
     # Gates without the selected value from the last step
-    raw_gates_i *= (1.0 - masks_list[i - 1].astype(raw_gates_i.dtype))
+    raw_gates_i *= 1.0 - masks_list[i - 1].astype(raw_gates_i.dtype)
     # Greedily pick the current expert
     index_i = jnp.argmax(raw_gates_i, axis=-1)
     mask_i = jax.nn.one_hot(index_i, experts_dim, dtype=mask_dtype)
     if paddings is not None:
       nonpaddings = 1.0 - paddings
       mask_i *= jnp.expand_dims(nonpaddings.astype(mask_i.dtype), -1)
-    gate_i = jnp.einsum('GSE,GSE->GS', raw_gates_i,
-                        mask_i.astype(raw_gates_i.dtype))
+    gate_i = jnp.einsum(
+        'GSE,GSE->GS', raw_gates_i, mask_i.astype(raw_gates_i.dtype)
+    )
     denom += gate_i
     gates_list.append(gate_i)
     masks_list.append(mask_i)
@@ -553,14 +580,17 @@ def topk_gating_on_logits(paddings,
   position_in_expert_1 = cum_sum(masks_list[0], exclusive=True, axis=-2)
   # Add the over capacity ratio for expert 1
   over_capacity_list = [
-      _create_over_capacity_ratio_summary(masks_list[0], position_in_expert_1,
-                                          capacity, 'over_capacity_1')
+      _create_over_capacity_ratio_summary(
+          masks_list[0], position_in_expert_1, capacity, 'over_capacity_1'
+      )
   ]
   # Filter valid positions for top 1 selection
-  masks_list[0] *= jnp.less(position_in_expert_1,
-                            expert_capacity_dim).astype(masks_list[0].dtype)
-  position_in_expert_1 = jnp.einsum('GSE,GSE->GS', position_in_expert_1,
-                                    masks_list[0])
+  masks_list[0] *= jnp.less(position_in_expert_1, expert_capacity_dim).astype(
+      masks_list[0].dtype
+  )
+  position_in_expert_1 = jnp.einsum(
+      'GSE,GSE->GS', position_in_expert_1, masks_list[0]
+  )
 
   # How many examples in this sequence go to this expert?
   mask_1_count = jnp.einsum('GSE->GE', masks_list[0])
@@ -572,38 +602,48 @@ def topk_gating_on_logits(paddings,
 
   for i in range(1, k):
     position_in_expert_i = cum_sum(
-        masks_list[i], exclusive=True, axis=-2) + jnp.expand_dims(
-            mask_count_all, -2)
+        masks_list[i], exclusive=True, axis=-2
+    ) + jnp.expand_dims(mask_count_all, -2)
     # Add the over capacity ratio for expert 1
     over_capacity_list.append(
-        _create_over_capacity_ratio_summary(masks_list[i], position_in_expert_i,
-                                            capacity, f'over_capacity_{i+1}'))
+        _create_over_capacity_ratio_summary(
+            masks_list[i],
+            position_in_expert_i,
+            capacity,
+            f'over_capacity_{i+1}',
+        )
+    )
     # Filter invalid positions for top i selection
-    masks_list[i] *= jnp.less(position_in_expert_i,
-                              expert_capacity_dim).astype(masks_list[i].dtype)
+    masks_list[i] *= jnp.less(position_in_expert_i, expert_capacity_dim).astype(
+        masks_list[i].dtype
+    )
     # How many examples in this sequence go to this expert?
     mask_count_all += jnp.einsum('GSE->GE', masks_list[i])
-    position_in_expert_i = jnp.einsum('GSE,GSE->GS', position_in_expert_i,
-                                      masks_list[i])
+    position_in_expert_i = jnp.einsum(
+        'GSE,GSE->GS', position_in_expert_i, masks_list[i]
+    )
     position_in_expert_list.append(position_in_expert_i)
     mask_i_flat_list.append(jnp.sum(masks_list[i], axis=-1, dtype=mask_dtype))
 
   combine_tensor = jnp.zeros(
-      [logits.shape[0], logits.shape[1], experts_dim,
-       expert_capacity_dim], dtype=jnp.float32)
+      [logits.shape[0], logits.shape[1], experts_dim, expert_capacity_dim],
+      dtype=jnp.float32,
+  )
   for gate_i, index_i, position_in_expert_i, mask_i_flat in zip(
-      gates_list, index_list, position_in_expert_list, mask_i_flat_list):
+      gates_list, index_list, position_in_expert_list, mask_i_flat_list
+  ):
     #  GS Filter valid gate values
     gate_i *= mask_i_flat.astype(gate_i.dtype)
     # GSC
     b = jax.nn.one_hot(
         position_in_expert_i.astype(np.int32),
         expert_capacity_dim,
-        dtype=jnp.float32)
+        dtype=jnp.float32,
+    )
     # GSE
     a = jnp.expand_dims(
-        gate_i * mask_i_flat.astype(jnp.float32), axis=-1) * jax.nn.one_hot(
-            index_i, experts_dim, dtype=jnp.float32)
+        gate_i * mask_i_flat.astype(jnp.float32), axis=-1
+    ) * jax.nn.one_hot(index_i, experts_dim, dtype=jnp.float32)
     combine_tensor += jnp.einsum('GSE,GSC->GSEC', a, b)
 
   # GSEC tensor
@@ -614,24 +654,23 @@ def topk_gating_on_logits(paddings,
   return aux_loss, combine_tensor, dispatch_tensor, over_capacity_list
 
 
-def compute_gating(paddings,
-                   logits,
-                   experts_dim,
-                   expert_capacity_dim,
-                   fprop_dtype,
-                   gating_func='top2',
-                   prng_key=None,
-                   second_expert_policy='all',
-                   second_expert_threshold=0.0,
-                   legacy_mtf_behavior=True,
-                   capacity_factor=None,
-                   mask_dtype=jnp.int32,
-                   gating_logit_cap=0.0, 
-                   topk=2,
-                   z_loss=False):
+def compute_gating(
+    paddings,
+    logits,
+    experts_dim,
+    expert_capacity_dim,
+    fprop_dtype,
+    gating_func='top2',
+    prng_key=None,
+    second_expert_policy='all',
+    second_expert_threshold=0.0,
+    legacy_mtf_behavior=True,
+    capacity_factor=None,
+    mask_dtype=jnp.int32,
+    gating_logit_cap=0.0,
+):
   """Compute gating."""
   if gating_func == 'top2':
-    # lsp：token选择top2专家
     gating = top2_gating_on_logits(
         paddings=paddings,
         logits=logits.astype(jnp.float32),
@@ -650,29 +689,17 @@ def compute_gating(paddings,
         capacity_factor=capacity_factor,
         mask_dtype=mask_dtype,
         gating_logit_cap=gating_logit_cap,
-        z_loss=z_loss)
-  # lsp: 添加topk
-  elif gating_func == 'topk':
-    topk_gating_on_logits(paddings=paddings,
-                          logits=logits.astype(jnp.float32),
-                          experts_dim=experts_dim,
-                          expert_capacity_dim=expert_capacity_dim,
-                          fprop_dtype=fprop_dtype,
-                          capacity_factor=capacity_factor,
-                          mask_dtype=mask_dtype,
-                          k=topk,
-                          gating_logit_cap=gating_logit_cap)
+    )
   elif gating_func == 'expert_choice':
-    # lsp：全局选择 int(logits.shape[1] // experts_dim * capacity_factor) 个token
     gating = expert_choice_gating_on_logits(
         logits=logits.astype(jnp.float32),
         experts_dim=experts_dim,
         expert_capacity_dim=expert_capacity_dim,
         fprop_dtype=fprop_dtype,
         capacity_factor=capacity_factor,
-        mask_dtype=jnp.int32)
+        mask_dtype=jnp.int32,
+    )
   elif gating_func == 'expert_choice_v2':
-    # lsp：全局选择 top expert_capacity_dim 个token，同上，但实现有点区别,并且返回值不同
     gating = expert_choice_gating_on_logits_v2(
         paddings=paddings,
         logits=logits.astype(jnp.float32),
@@ -681,7 +708,8 @@ def compute_gating(paddings,
         fprop_dtype=fprop_dtype,
         capacity_factor=capacity_factor,
         mask_dtype=jnp.int32,
-        gating_logit_cap=0.0)
+        gating_logit_cap=0.0,
+    )
   else:
     raise ValueError('Unsupported gating function type: %s' % gating_func)
   return gating
@@ -695,12 +723,14 @@ def top_k(x, k):
   return sorted_vals[..., -k:], sorted_idxs[..., -k:]
 
 
-def expert_choice_gating_on_logits(logits,
-                                   experts_dim,
-                                   expert_capacity_dim,
-                                   fprop_dtype,
-                                   capacity_factor=None,
-                                   mask_dtype=jnp.int32):
+def expert_choice_gating_on_logits(
+    logits,
+    experts_dim,
+    expert_capacity_dim,
+    fprop_dtype,
+    capacity_factor=None,
+    mask_dtype=jnp.int32,
+):
   """Computes Expert Choice Gating for Mixture-of-Experts.
 
   Paper Link: https://arxiv.org/abs/2202.09368
@@ -747,7 +777,7 @@ def expert_choice_gating_on_logits(logits,
       were not dispatched due to lack of capcity for top_1 and top_2 expert
       respectively, e.g. (over_capacity_1, over_capacity_2)
   """
-  assert (capacity_factor or expert_capacity_dim)
+  assert capacity_factor or expert_capacity_dim
   if mask_dtype is None:
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
@@ -772,14 +802,16 @@ def expert_choice_gating_on_logits(logits,
   return jnp.asarray(0.0, dtype=fprop_dtype), gate, perm
 
 
-def expert_choice_gating_on_logits_v2(paddings,
-                                      logits,
-                                      experts_dim,
-                                      expert_capacity_dim,
-                                      fprop_dtype,
-                                      capacity_factor=None,
-                                      mask_dtype=jnp.int32,
-                                      gating_logit_cap=0.0):
+def expert_choice_gating_on_logits_v2(
+    paddings,
+    logits,
+    experts_dim,
+    expert_capacity_dim,
+    fprop_dtype,
+    capacity_factor=None,
+    mask_dtype=jnp.int32,
+    gating_logit_cap=0.0,
+):
   """Compute gating with expert choice.
 
   There are two expected usages of this function:
@@ -825,7 +857,7 @@ def expert_choice_gating_on_logits_v2(paddings,
     - dispatch_tensor: G`ECS Tensor, scattering/dispatching inputs to experts.
   """
 
-  assert (capacity_factor or expert_capacity_dim)
+  assert capacity_factor or expert_capacity_dim
   if mask_dtype is None:
     assert fprop_dtype != jnp.bfloat16, 'Using bfloat16 for mask is an error.'
     mask_dtype = fprop_dtype
@@ -860,18 +892,21 @@ def expert_choice_gating_on_logits_v2(paddings,
 
   if capacity_factor is not None:
     # Determine expert capacity automatically depending on the input size
-     # Determine expert capacity automatically depending on the input size
+    # Determine expert capacity automatically depending on the input size
     group_size_dim = logits.shape[1]
     auto_expert_capacity = int(group_size_dim * capacity_factor / experts_dim)
     if expert_capacity_dim < auto_expert_capacity:
       expert_capacity_dim = auto_expert_capacity
       # Round up to a multiple of 4 to avoid possible padding.
-      while expert_capacity_dim % 4:
-        expert_capacity_dim += 1
+      expert_capacity_dim = ((expert_capacity_dim + 3) // 4) * 4
       logging.info(
           'Setting expert_capacity_dim=%r (capacity_factor=%r '
-          'group_size_dim=%r experts_dim=%r)', expert_capacity_dim,
-          capacity_factor, group_size_dim, experts_dim)
+          'group_size_dim=%r experts_dim=%r)',
+          expert_capacity_dim,
+          capacity_factor,
+          group_size_dim,
+          experts_dim,
+      )
   # GEC
   _, token_indices = top_k(token_scores, k=expert_capacity_dim)
   # GECS
@@ -885,41 +920,53 @@ def expert_choice_gating_on_logits_v2(paddings,
   # Filtered out the padded positions
   mask *= jnp.expand_dims(nonpaddings.astype(mask.dtype), -1)
   # GSE - Indices of the selected expert per token
-  expert_indices = jnp.reshape(jnp.arange(experts_dim),
-                               [1, 1, experts_dim]).astype(mask.dtype) * mask
+  expert_indices = (
+      jnp.reshape(jnp.arange(experts_dim), [1, 1, experts_dim]).astype(
+          mask.dtype
+      )
+      * mask
+  )
 
   # GSE
   position_in_expert = cum_sum(mask, exclusive=True, axis=-2)
   position_in_expert *= jnp.less(
-      position_in_expert, expert_capacity_dim).astype(position_in_expert.dtype)
+      position_in_expert, expert_capacity_dim
+  ).astype(position_in_expert.dtype)
   position_in_expert *= mask.astype(position_in_expert.dtype)
 
   # GSEC
   combine_tensor = jnp.zeros(
       [logits.shape[0], logits.shape[1], experts_dim, expert_capacity_dim],
-      dtype=fprop_dtype)
+      dtype=fprop_dtype,
+  )
 
   for i in range(experts_dim):
     # GSE
     expert_indicator = jax.nn.one_hot(expert_indices[:, :, i], experts_dim)
     # GS
-    gate_i = jnp.einsum('...GSE,...GSE->...GS', gates,
-                        expert_indicator.astype(gates.dtype))
+    gate_i = jnp.einsum(
+        '...GSE,...GSE->...GS', gates, expert_indicator.astype(gates.dtype)
+    )
     # GS - Filters out the tokens that are not selected by the current expert
     gate_i *= mask[:, :, i].astype(gate_i.dtype)
 
     # GSE
-    gate_i = jnp.expand_dims(
-        gate_i, axis=-1) * expert_indicator.astype(gate_i.dtype)
+    gate_i = jnp.expand_dims(gate_i, axis=-1) * expert_indicator.astype(
+        gate_i.dtype
+    )
     # GS - Position in the current expert
     pos_i = position_in_expert[:, :, i]
     # GSC
     pos_i_indicator = jax.nn.one_hot(pos_i, expert_capacity_dim)
     pos_i_indicator *= jnp.expand_dims(
-        mask[:, :, i].astype(pos_i_indicator.dtype), axis=-1)
+        mask[:, :, i].astype(pos_i_indicator.dtype), axis=-1
+    )
     # GSEC
-    combine_tensor += jnp.einsum('GSE,GSC->GSEC', gate_i.astype(fprop_dtype),
-                                 pos_i_indicator.astype(fprop_dtype))
+    combine_tensor += jnp.einsum(
+        'GSE,GSC->GSEC',
+        gate_i.astype(fprop_dtype),
+        pos_i_indicator.astype(fprop_dtype),
+    )
 
   # GSEC tensor
   dispatch_tensor = combine_tensor.astype(bool).astype(fprop_dtype)

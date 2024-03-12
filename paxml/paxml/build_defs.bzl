@@ -15,8 +15,10 @@
 
 """Starlark macros for Pax users."""
 
-load("//paxml:paxml.bzl", "py_strict_test")
 load("//paxml:paxml.bzl", "pytype_binary", "pytype_strict_binary")
+load("//paxml:paxml.bzl", "py_strict_test")
+# Internal fragmented binary bazel rule.
+# Placeholder: load PyInfo
 
 def _shell_quote(s):
     """Copy of bazel-skylib's shell.quote.
@@ -78,7 +80,11 @@ def pax_targets(
         smoke_test_py_test_rule = py_strict_test,
         smoke_test_args = None,
         smoke_test_kwargs = None,
-        main_src = "//paxml:main.py"):
+        dump_input_specs_kwargs = None,
+        # Internal enable fragmented build argument, toggled to True.
+        # Internal tooling mock backend attribute
+        main_src = "//paxml:main.py",
+        model_analysis_kwargs = None):
     """Macro to define a collection of Pax targets with custom dependencies.
 
     It currently defines the following targets:
@@ -88,6 +94,7 @@ def pax_targets(
     ":main_mpm", an MPM target, which contains main.par, that can be used
         in the xm launcher with --binary_type=mpm_target. Only available if
         `add_main_mpm_target` is True.
+    # Internal mock backend target docstring
     ":all_experiments_smoke_test", a Python test that runs a sanity check
         on all registered experiments.
     ":dump_hparams", a Python util binary that writes experiment hparams to
@@ -117,7 +124,12 @@ def pax_targets(
           match one of these regexes in order to be smoke tested.
       smoke_test_kwargs: Additional kwargs that are passed to the
           :all_experiments_smoke_test target.
+      dump_input_specs_kwargs: Additional kwargs that are passed to the
+          :dump_input_specs target.
+      # Internal mock backend docstrings
       main_src: The src file for the ":main" target created.
+      model_analysis_kwargs: Additional kwargs that are passed to the
+          :model_analysis target.
     """
     if not experiments:
         fail("pax_targets() expects a non-empty list of deps that defines " +
@@ -139,8 +151,10 @@ def pax_targets(
     export_binary(
         name = main_name,
         main = main_src,
+        # Internal enable fragmented build argument.
         py_binary_rule = pytype_binary,
         deps = [
+            # proto dep
             "//paxml:main_lib",
             # Implicit tpu dependency.
         ] + extra_deps,
@@ -168,8 +182,10 @@ def pax_targets(
         export_binary(
             name = main_name,
             main = main_src,
+            # Internal enable fragmented build argument.
             py_binary_rule = pytype_binary,
             deps = [
+                # proto dep
                 "//paxml:main_lib",
                 # Implicit gpu dependency.
             ] + extra_deps,
@@ -208,6 +224,7 @@ def pax_targets(
                 # Implicit absl.testing.absltest.absltest dependency.
                 "//paxml:experiment_imports_test_helper",
                 "//paxml:experiment_registry",
+                # proto dep
             ] + extra_deps,
             timeout = "long",
             py_test_rule = smoke_test_py_test_rule,
@@ -225,6 +242,7 @@ def pax_targets(
         main = "//paxml/tools:dump_hparams.py",
         py_binary_rule = pytype_strict_binary,
         deps = [
+            # proto dep
             "//paxml/tools:dump_hparams_lib",
         ] + extra_deps,
         exp_sources = exp_sources,
@@ -237,11 +255,13 @@ def pax_targets(
         prefix_name,
         dump_input_specs_name,
     )
+    dump_input_specs_kwargs = dump_input_specs_kwargs or {}
     export_binary(
         name = dump_input_specs_name,
         main = "//paxml/tools:dump_input_specs.py",
         py_binary_rule = pytype_strict_binary,
         deps = [
+            # proto dep
             # Implicit absl.app dependency.
             # Implicit absl.flags dependency.
             "//paxml:experiment_registry",
@@ -249,6 +269,7 @@ def pax_targets(
             # Implicit tensorflow_no_contrib dependency.
         ] + extra_deps,
         exp_sources = exp_sources,
+        **dump_input_specs_kwargs
     )
 
     model_analysis_name = "model_analysis"
@@ -256,11 +277,13 @@ def pax_targets(
         prefix_name,
         model_analysis_name,
     )
+    model_analysis_kwargs = model_analysis_kwargs or {}
     export_binary(
         name = model_analysis_name,
         main = "//paxml/tools:model_analysis.py",
         py_binary_rule = pytype_strict_binary,
         deps = [
+            # proto dep
             # Implicit absl.app dependency.
             # Implicit absl.flags dependency.
             # Implicit jax dependency.
@@ -272,6 +295,7 @@ def pax_targets(
             "//praxis:py_utils",
         ] + extra_deps,
         exp_sources = exp_sources,
+        **model_analysis_kwargs
     )
 
     validate_config_name = "validate_config"
@@ -284,12 +308,15 @@ def pax_targets(
         main = "//paxml/tools:validate_config.py",
         py_binary_rule = pytype_strict_binary,
         deps = [
+            # proto dep
             "//paxml/tools:validate_config_lib",
         ] + extra_deps,
         exp_sources = exp_sources,
         exec_properties = {"mem": "20g"},  # validate_config is a very large executable.
         # Implicit py_binary flag
     )
+
+    # Internal mock backend target.
 
 def export_test(
         name,
@@ -326,6 +353,7 @@ def export_binary(
         deps,
         py_binary_rule,
         exp_sources,
+        # Internal arguments for fragmented build.
         **kwargs):
     """Define an existing `py_binary()` at the current package.
 
@@ -339,6 +367,8 @@ def export_binary(
     """
     main_copied = "%s.py" % name
     _copy_src(output_name = main_copied, source_target = main, exp_sources = exp_sources)
+
+    # Internal implementation for fragmented build.
 
     # Main script.
     py_binary_rule(

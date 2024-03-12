@@ -15,7 +15,8 @@
 
 """Defines a parameterizable BaseExperiment subclass."""
 
-from typing import List, Optional, Sequence
+from typing import Sequence
+import warnings
 
 from paxml import base_experiment
 from paxml import base_task
@@ -42,7 +43,7 @@ class ParameterizedExperiment(base_experiment.BaseExperiment):
         return pax_fiddle.Config(
             ParameterizedExperiment,
             task=pax_fiddle.Config(tasks_lib.SingleTask, model=model_cfg),
-            train_dataset=train_dataset_cfg,
+            train_datasets=[train_dataset_cfg],
             eval_datasets=[eval_dataset_cfg],
         )
 
@@ -76,14 +77,13 @@ class ParameterizedExperiment(base_experiment.BaseExperiment):
       self,
       *,
       task: pax_fiddle.Config[base_task.BaseTask],
-      training_dataset: Optional[
-          pax_fiddle.Config[base_input.BaseInput]
-      ] = None,
+      train_datasets: Sequence[pax_fiddle.Config[base_input.BaseInput]] = (),
       eval_datasets: Sequence[pax_fiddle.Config[base_input.BaseInput]] = (),
+      decode_datasets: Sequence[pax_fiddle.Config[base_input.BaseInput]] = (),
+      input_specs_provider: pax_fiddle.Config[base_input.BaseInputSpecsProvider]
+      | None = None,
+      training_dataset: pax_fiddle.Config[base_input.BaseInput] | None = None,
       decoder_datasets: Sequence[pax_fiddle.Config[base_input.BaseInput]] = (),
-      input_specs_provider: Optional[
-          pax_fiddle.Config[base_input.BaseInputSpecsProvider]
-      ] = None,
   ):
     """Initializes a `ParameterizedExpermiment` instance.
 
@@ -92,62 +92,88 @@ class ParameterizedExperiment(base_experiment.BaseExperiment):
 
     Args:
       task: The config for the task.
-      training_dataset: The training dataset config to use.
+      train_datasets: A sequence of dataset configs for training. If not
+        provided, defaults to an empty sequence.
       eval_datasets: A sequence of dataset configs for evaluation. If not
         provided, defaults to an empty sequence.
-      decoder_datasets: A sequence of dataset configs for decoding. If not
+      decode_datasets: A sequence of dataset configs for decoding. If not
         provided, defaults to an empty sequence.
       input_specs_provider: The config for a `BaseInputSpecsProvider` subclass.
         If not provided, a `DatasetInputSpecsProvider` will be created using the
         training dataset.
+      training_dataset: (Deprecated) A training dataset config to use.
+      decoder_datasets: (Deprecated) A sequence of dataset configs for decoder.
     """
-    if training_dataset is not None and not training_dataset.is_training:
-      raise ValueError(
-          f"The training dataset with name {training_dataset.name!r} must have"
-          " `is_training` set to `True`."
-      )
+    for train_dataset in train_datasets:
+      if not train_dataset.is_training:
+        raise ValueError(
+            f"The training dataset with name {train_dataset.name!r} must have"
+            " `is_training` set to `True`."
+        )
     for eval_dataset in eval_datasets:
       if eval_dataset.is_training:
         raise ValueError(
             f"The evaluation dataset with name {eval_dataset.name!r} must have"
             " `is_training` set to `False`."
         )
-    for decoder_dataset in decoder_datasets:
-      if decoder_dataset.is_training:
+    for decode_dataset in decode_datasets:
+      if decode_dataset.is_training:
         raise ValueError(
-            f"The decoder dataset with name {decoder_dataset.name!r} must have"
+            f"The decode dataset with name {decode_dataset.name!r} must have"
             " `is_training` set to `False`."
         )
     self._task = task
-    self._training_dataset = training_dataset
+    self._train_datasets = list(train_datasets)
     self._eval_datasets = list(eval_datasets)
-    self._decoder_datasets = list(decoder_datasets)
+    self._decode_datasets = list(decode_datasets)
     self._input_specs_provider = input_specs_provider
+
+    if training_dataset is not None:
+      warnings.warn(
+          "`training_dataset` is deprecated in favor of `train_datasets`.",
+          DeprecationWarning,
+      )
+      if not training_dataset.is_training:
+        raise ValueError(
+            f"The training dataset with name {training_dataset.name!r} must"
+            " have `is_training` set to `True`."
+        )
+      self._train_datasets.append(training_dataset)
+
+    if decoder_datasets is not None:
+      warnings.warn(
+          "`decoder_datasets` is deprecated in favor of `decode_datasets`.",
+          DeprecationWarning,
+      )
+      for decoder_dataset in decoder_datasets:
+        if decoder_dataset.is_training:
+          raise ValueError(
+              f"The decode dataset with name {decoder_dataset.name!r} must"
+              " have `is_training` set to `False`."
+          )
+        self._decode_datasets.append(decoder_dataset)
+
     super().__init__()
 
   def task(self) -> pax_fiddle.Config[base_task.BaseTask]:
     """Returns the task config."""
     return self._task
 
-  def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
-    """Returns the union of training and eval dataset configs."""
-    return (
-        [self._training_dataset] if self._training_dataset else []
-    ) + self.eval_datasets()
+  def datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the union of train and eval dataset configs."""
+    return self.train_datasets() + self.eval_datasets()
 
-  def training_dataset(self) -> pax_fiddle.Config[base_input.BaseInput]:
-    """Returns the training dataset config. Raises an error if it is `None`."""
-    if self._training_dataset is None:
-      raise ValueError("No training dataset was provided.")
-    return self._training_dataset
+  def train_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the list of training dataset configs."""
+    return self._train_datasets
 
-  def eval_datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  def eval_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns the list of evaluation dataset configs."""
     return self._eval_datasets
 
-  def decoder_datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
-    """Returns the list of decoder dataset configs."""
-    return self._decoder_datasets
+  def decode_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the list of decoding dataset configs."""
+    return self._decode_datasets
 
   def get_input_specs_provider_params(
       self,

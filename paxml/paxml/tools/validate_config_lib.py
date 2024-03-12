@@ -20,7 +20,6 @@ See validate_config.py for usage.
 
 import contextlib
 import os
-from typing import Optional
 
 from absl import app
 from absl import flags
@@ -71,7 +70,7 @@ def _hparams_post_init(model_param, input_specs) -> None:
   # TODO(pax-dev): Add better/cleaner API to identify pmap vs. pjit models
   # (and check for dcn_mesh_shape too).
   if hasattr(model, 'ici_mesh_shape') and model.ici_mesh_shape is not None:
-    input_specs = jax.tree_map(
+    input_specs = jax.tree.map(
         py_utils.get_global_input_shape_dtype, input_specs
     )
 
@@ -79,7 +78,7 @@ def _hparams_post_init(model_param, input_specs) -> None:
   _ = model.abstract_init_with_metadata(input_specs)
 
 
-def _extract_num_cores(model_p) -> Optional[int]:
+def _extract_num_cores(model_p) -> int | None:
   """Extracts the number of cores used by the experiment.
 
   Args:
@@ -160,7 +159,7 @@ def _main(argv) -> None:
     if _CHECK_LEVEL.value >= 8:
       _ = instantiate(dataset)
 
-  dec_datasets = experiment_config.decoder_datasets()
+  dec_datasets = experiment_config.decode_datasets()
   for dataset in dec_datasets:
     if _CHECK_LEVEL.value >= 8:
       _ = instantiate(dataset)

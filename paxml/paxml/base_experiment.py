@@ -20,14 +20,18 @@ to a specific ML experiment.
 """
 
 import abc
-from typing import Dict, List, Optional, Type, TypeVar
-from paxml import automl
+from typing import Type, TypeVar
+import warnings
+
+from paxml import automl_interfaces
 from paxml import base_executor
 from paxml import base_task
+from paxml import decode_programs
 from paxml import partitioning
 from paxml import programs
 from praxis import base_input
 from praxis import pax_fiddle
+
 
 _BaseExperimentT = TypeVar('_BaseExperimentT', bound='BaseExperiment')
 BaseExperimentT = Type[_BaseExperimentT]
@@ -40,7 +44,7 @@ class BaseExperiment(metaclass=abc.ABCMeta):
   # the dataset is used for training or eval.
   # All training and eval datasets must have unique names.
   @abc.abstractmethod
-  def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  def datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns the list of dataset parameters."""
 
   def training_dataset(self) -> pax_fiddle.Config[base_input.BaseInput]:
@@ -49,6 +53,10 @@ class BaseExperiment(metaclass=abc.ABCMeta):
     Raises a ValueError exception if there is no training split or there are
     multiple of them.
     """
+    warnings.warn(
+        '`training_dataset` is deprecated in favor of `train_datasets`.',
+        DeprecationWarning,
+    )
     training_splits = [s for s in self.datasets() if s.is_training]
     if not training_splits:
       raise ValueError(
@@ -60,10 +68,26 @@ class BaseExperiment(metaclass=abc.ABCMeta):
           f'config (`{self.datasets()}`).')
     return training_splits[0]
 
+  def train_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the list of dataset parameters for training."""
+    return [dataset for dataset in self.datasets() if dataset.is_training]
+
+  def eval_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the list of dataset parameters for evaluation."""
+    return [dataset for dataset in self.datasets() if not dataset.is_training]
+
+  def decode_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
+    """Returns the list of dataset parameters for decoding."""
+    return self.decoder_datasets()
+
   # Optional. Returns a list of datasets to be decoded.
-  # When specified, all decoder datasets must have unique names.
-  def decoder_datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  # When specified, all decode datasets must have unique names.
+  def decoder_datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns the list of dataset parameters for decoder."""
+    warnings.warn(
+        '`decoder_dataset` is deprecated in favor of `decode_datasets`.',
+        DeprecationWarning,
+    )
     return []
 
   @abc.abstractmethod
@@ -99,12 +123,12 @@ class BaseExperiment(metaclass=abc.ABCMeta):
     """Validates the experiment config but raises if misconfigured."""
     return
 
-  def search(self) -> automl.SearchHParams:
+  def search(self) -> automl_interfaces.SearchHParams:
     """Returns the parameters for AutoML search."""
     raise NotImplementedError(
         'Please implement `search` method for your experiment for tuning.')
 
-  def sub_experiments(self) -> Dict[str, Type['BaseExperiment']]:
+  def sub_experiments(self) -> dict[str, Type['BaseExperiment']]:
     """Creates sub-experiments for joint tuning.
 
     A PAX experiment can have multiple sub-experiments during tuning, which
@@ -122,7 +146,7 @@ class BaseExperiment(metaclass=abc.ABCMeta):
     """
     return {'': self.__class__}
 
-  def partitioner(self) -> Optional[partitioning.Partitioner]:
+  def partitioner(self) -> partitioning.Partitioner | None:
     """Returns the partitioner to use for partitioning model functions.
 
     Returns:
@@ -130,21 +154,27 @@ class BaseExperiment(metaclass=abc.ABCMeta):
       be created based on the task settings.
     """
     return None
-  # lsp: train_program
-  def train_program(self) -> programs.BaseTrainProgram:
-    """Returns the train program to use for training the model."""
-    return programs.SingleTaskTrainProgram()
 
-  def eval_programs(self) -> List[programs.BaseEvalProgram]:
+  def train_programs(self) -> list[programs.BaseTrainProgram]:
+    """Returns the list of train program to use for model training."""
+    return [programs.SingleTaskTrainProgram()]
+
+  def eval_programs(self) -> list[programs.BaseEvalProgram]:
     """Returns the list of eval programs to use for model evaluation."""
-    eval_programs = [
+    return [
         programs.SingleTaskEvalProgram(input_p)
-        for input_p in self.datasets() # lsp: 获取训练和测试集对象
-        if not input_p.is_training # 过滤掉训练集，只评测测试集
+        for input_p in self.eval_datasets()
     ]
-    return eval_programs
 
-  def executor(self) -> Optional[base_executor.BaseExecutor]:
+  def decode_programs(self) -> list[decode_programs.SingleTaskDecodeProgram]:
+    """Returns the list of decode_programs to use for model decode."""
+    decode_program_list = [
+        decode_programs.SingleTaskDecodeProgram(input_p)
+        for input_p in self.decode_datasets()
+    ]
+    return decode_program_list
+
+  def executor(self) -> base_executor.BaseExecutor | None:
     """Returns the executor to use to run the programs.
 
     Returns:
@@ -157,4 +187,4 @@ class BaseExperiment(metaclass=abc.ABCMeta):
 
   def __init_subclass__(cls):
     """Modifications to the subclasses."""
-    automl.enable_class_level_hyper_primitives(cls)
+    automl_interfaces.enable_class_level_hyper_primitives(cls)

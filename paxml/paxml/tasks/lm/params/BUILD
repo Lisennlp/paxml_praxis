@@ -38,6 +38,7 @@ pytype_library(
     deps = [
         ":lm_cloud",
         # Implicit absl.logging dependency.
+        # Implicit etils dependency.
         # Implicit fiddle dependency.
         # Implicit jax dependency.
         "//paxml:base_experiment",
@@ -70,15 +71,21 @@ pytype_library(
     deps = [
         ":lm_cloud",
         ":params",
+        # Implicit fiddle dependency.
         # Implicit jax dependency.
+        # Implicit numpy dependency.
         "//paxml:experiment_registry",
         "//paxml:tasks_lib",
+        "//paxml/tasks/lm:model_params",
         "//praxis:base_layer",
         "//praxis:optimizers",
         "//praxis:pax_fiddle",
         "//praxis:schedules",
         "//praxis/layers",
+        "//praxis/layers:activations",
+        "//praxis/layers:glam",
         "//praxis/layers:gpu_fast_attention",
+        "//praxis/layers:transformers",
     ],
 )
 

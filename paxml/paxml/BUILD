@@ -79,14 +79,12 @@ pytype_strict_library(
         ":checkpoint_paths",
         ":checkpoint_types",
         ":checkpoint_version",
+        ":train_states",
         # Implicit absl.logging dependency.
         # Implicit etils dependency.
-        # Implicit jax dependency.
         # Implicit orbax.checkpoint dependency.
-        "//paxml:preemption",
         "//praxis:base_input",
         "//praxis:pytypes",
-        # Implicit tensorflow_no_contrib dependency.
     ],
 )
 
@@ -94,9 +92,10 @@ pytype_strict_library(
     name = "base_experiment",
     srcs = ["base_experiment.py"],
     deps = [
-        ":automl",
+        ":automl_interfaces",
         ":base_executor",
         ":base_task",
+        ":decode_programs",
         ":partitioning",
         ":programs",
         "//praxis:base_input",
@@ -112,6 +111,7 @@ pytype_strict_library(
         "//praxis:base_hyperparams",
         "//praxis:base_layer",
         "//praxis:base_model",
+        "//praxis:lazy_loader",
         "//praxis:py_utils",
         "//praxis:pytypes",
         # Implicit tensorflow_datasets dependency.
@@ -122,11 +122,14 @@ pytype_strict_library(
     name = "base_metrics",
     srcs = ["base_metrics.py"],
     deps = [
-        ":summary_utils",
+        ":metric_utils",
+        # Implicit clu.metrics dependency.
+        # Implicit flax.core dependency.
         # Implicit jax dependency.
         # Implicit numpy dependency.
         "//praxis:base_hyperparams",
         "//praxis:base_layer",
+        "//praxis:lazy_loader",
         "//praxis:pax_fiddle",
     ],
 )
@@ -263,6 +266,7 @@ pytype_strict_library(
         # Implicit numpy dependency.
         # Implicit orbax.checkpoint dependency.
         "//paxml:checkpoints",
+        "//praxis:lazy_loader",
         "//praxis:py_utils",
         # Implicit tensorflow_no_contrib dependency.
     ],
@@ -283,6 +287,7 @@ pytype_strict_library(
     srcs = ["learners.py"],
     deps = [
         ":sgf",
+        # Implicit absl.logging dependency.
         # Implicit jax dependency.
         # Implicit optax dependency.
         "//praxis:asserts",
@@ -292,6 +297,7 @@ pytype_strict_library(
         "//praxis:optimizers",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
+        "//praxis:pytypes",
     ],
 )
 
@@ -320,7 +326,6 @@ pytype_strict_library(
         ":train",
         ":trainer_lib",
         ":tuning_lib",
-        # Implicit internal tf.data service dependency.  # BC internal suffix.
         # Implicit internal Jax runtime dependency.  # BC internal suffix.
         # Implicit Jax software support dependency.  # BC internal suffix.
         # Implicit absl.app dependency.
@@ -333,15 +338,20 @@ pytype_strict_library(
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         # Implicit seqio dependency.
-    ],
+    ] + select({
+        # Internal empty GCE platform
+        "//conditions:default": [
+            # Implicit internal tf.data service dependency.  # BC internal suffix.
+        ],
+    }),
 )
 
 pytype_strict_library(
     name = "metric_utils",
     srcs = ["metric_utils.py"],
     deps = [
-        ":summary_utils",
         # Implicit absl.logging dependency.
+        # Implicit clu.metrics dependency.
         # Implicit clu.values dependency.
         # Implicit jax dependency.
         # Implicit numpy dependency.
@@ -360,14 +370,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "preemption",
-    srcs = ["preemption.py"],
-    deps = [
-        # Implicit jax dependency.
-    ],
-)
-
-pytype_strict_library(
     name = "profiling",
     srcs = ["profiling.py"],
     deps = [
@@ -380,6 +382,7 @@ pytype_strict_library(
     srcs = ["seqio_input.py"],
     deps = [
         ":metric_utils",
+        ":summary_utils",
         # Implicit absl.logging dependency.
         # Implicit etils dependency.
         # Implicit jax dependency.
@@ -411,6 +414,7 @@ pytype_strict_library(
     name = "sgf",
     srcs = ["sgf.py"],
     deps = [
+        # Implicit absl.logging dependency.
         # Implicit flax.core dependency.
         # Implicit jax dependency.
         # Implicit optax dependency.
@@ -426,9 +430,11 @@ pytype_strict_library(
     name = "summary_utils",
     srcs = ["summary_utils.py"],
     deps = [
+        ":metric_utils",
         ":train_states",
         # Implicit absl.flags dependency.
         # Implicit absl.logging dependency.
+        # Implicit clu.values dependency.
         # Implicit clu.platform dependency.
         # Implicit etils dependency.
         # Implicit flax dependency.
@@ -437,6 +443,7 @@ pytype_strict_library(
         "//praxis:base_layer",
         "//praxis:py_utils",
         "//praxis:pytypes",
+        # Implicit seqio dependency.
         # Implicit tensorflow_no_contrib dependency.
     ],
 )
@@ -448,6 +455,7 @@ pytype_strict_library(
         ":base_inference_runner",
         ":base_metrics",
         ":base_task",
+        ":checkpoint_types",
         ":io_utils",
         ":learners",
         ":train_states",
@@ -464,11 +472,13 @@ pytype_strict_library(
         "//praxis:base_input",
         "//praxis:base_layer",
         "//praxis:base_model",
+        "//praxis:lazy_loader",
         "//praxis:optimizer_prefix_vectorization",
         "//praxis:optimizers",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         "//praxis:pytypes",
+        "//praxis:trees",
     ],
 )
 
@@ -510,7 +520,6 @@ pytype_strict_library(
     srcs = ["programs.py"],
     deps = [
         ":io_utils",
-        ":metric_utils",
         ":partitioning",
         ":seqio_input",
         ":summary_utils",
@@ -520,6 +529,7 @@ pytype_strict_library(
         ":xla_passthrough",
         # Implicit absl.flags dependency.
         # Implicit absl.logging dependency.
+        # Implicit clu.periodic_actions dependency.
         # Implicit etils dependency.
         # Implicit jax dependency.
         # Implicit numpy dependency.
@@ -527,11 +537,11 @@ pytype_strict_library(
         "//praxis:base_hyperparams",
         "//praxis:base_input",
         "//praxis:base_layer",
+        "//praxis:lazy_loader",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         "//praxis:pytypes",
         "//praxis:trees",
-        # Implicit tensorflow_no_contrib dependency.
     ],
 )
 
@@ -588,6 +598,7 @@ pytype_strict_library(
         "//praxis:base_input",
         "//praxis:base_layer",
         "//praxis:base_model",
+        "//praxis:lazy_loader",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         "//praxis:pytypes",
@@ -601,25 +612,49 @@ pytype_strict_library(
     srcs = ["trainer_lib.py"],
     deps = [
         ":base_metrics",
+        ":checkpoint_types",
         ":learners",
+        ":metric_utils",
         ":sgf",
         ":summary_utils",
         ":tasks_lib",
         ":train_states",
         # Implicit absl.logging dependency.
+        # Implicit clu.metrics dependency.
         # Implicit etils dependency.
         # Implicit fiddle dependency.
         # Implicit flax.core dependency.
         # Implicit jax dependency.
-        "//paxml:checkpoints",
         "//praxis:asserts",
         "//praxis:base_hyperparams",
         "//praxis:base_input",
         "//praxis:base_layer",
         "//praxis:base_model",
+        "//praxis:lazy_loader",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         "//praxis:pytypes",
+    ],
+)
+
+py_strict_test(
+    name = "trainer_lib_test",
+    srcs = ["trainer_lib_test.py"],
+    deps = [
+        ":tasks_lib",
+        ":trainer_lib",
+        # Implicit absl.testing.absltest.absltest dependency.
+        # Implicit absl.testing.parameterized dependency.
+        # Implicit etils dependency.
+        # Implicit jax dependency.
+        "//praxis:base_hyperparams",
+        "//praxis:base_layer",
+        "//praxis:base_model",
+        "//praxis:optimizers",
+        "//praxis:pax_fiddle",
+        "//praxis:py_utils",
+        "//praxis:pytypes",
+        "//praxis:schedules",
     ],
 )
 
@@ -629,10 +664,12 @@ pytype_strict_library(
     deps = [
         # Implicit flax.core dependency.
         # Implicit jax dependency.
+        # Implicit jaxtyping dependency.
         # Implicit optax dependency.
         "//praxis:base_layer",
         "//praxis:py_utils",
         "//praxis:pytypes",
+        "//praxis:trees",
     ],
 )
 
@@ -642,7 +679,9 @@ pytype_strict_library(
     deps = [
         ":automl",
         ":base_experiment",
+        ":base_task",
         ":metric_utils",
+        ":tasks_lib",
         ":trainer_lib",
         # Implicit absl.logging dependency.
         # Implicit clu.platform dependency.
@@ -661,6 +700,7 @@ pytype_strict_library(
     name = "partitioning",
     srcs = ["partitioning.py"],
     deps = [
+        ":checkpoint_types",
         ":tasks_lib",
         ":tf_data_service_lib",
         ":train_states",
@@ -675,6 +715,7 @@ pytype_strict_library(
         "//praxis:asserts",
         "//praxis:base_input",
         "//praxis:base_layer",
+        "//praxis:lazy_loader",
         "//praxis:pax_fiddle",
         "//praxis:py_utils",
         "//praxis:pytypes",
@@ -878,6 +919,7 @@ py_strict_test(
     deps = [
         ":base_metrics",
         # Implicit absl.testing.absltest.absltest dependency.
+        # Implicit absl.testing.parameterized dependency.
         # Implicit jax dependency.
         "//praxis:base_layer",
         "//praxis:pax_fiddle",
@@ -929,6 +971,7 @@ pytype_strict_test(
     deps = [
         ":io_utils",
         # Implicit absl.flags dependency.
+        # Implicit absl.logging dependency.
         # Implicit absl.testing.absltest.absltest dependency.
         # Implicit absl.testing.parameterized dependency.
         # Implicit etils dependency.
@@ -994,7 +1037,7 @@ py_strict_test(
 py_strict_test(
     name = "seqio_input_test",
     srcs = ["seqio_input_test.py"],
-    shard_count = 3,
+    shard_count = 8,
     deps = [
         ":seqio_input",
         # Implicit absl.testing.absltest.absltest dependency.
@@ -1013,6 +1056,8 @@ py_strict_test(
     name = "summary_utils_test",
     srcs = ["summary_utils_test.py"],
     deps = [
+        ":base_metrics",
+        ":metric_utils",
         ":summary_utils",
         # Implicit absl.testing.absltest.absltest dependency.
         # Implicit absl.testing.parameterized dependency.
@@ -1029,6 +1074,7 @@ py_strict_test(
         ":checkpoints",
         ":learners",
         ":partitioning",
+        ":summary_utils",
         ":tasks_lib",
         ":trainer_lib",
         # Implicit absl.testing.absltest.absltest dependency.
@@ -1036,6 +1082,7 @@ py_strict_test(
         # Implicit flax.core dependency.
         # Implicit jax dependency.
         # Implicit numpy dependency.
+        # Implicit optax dependency.
         "//praxis:base_hyperparams",
         "//praxis:base_input",
         "//praxis:base_layer",
@@ -1059,8 +1106,10 @@ py_strict_test(
         ":trainer_lib",
         ":tuning_lib",
         # Implicit absl.testing.absltest.absltest dependency.
+        # Implicit absl.testing.parameterized dependency.
         # Implicit clu.platform dependency.
         # Implicit etils dependency.
+        # Implicit jax dependency.
         "//praxis:base_hyperparams",
         "//praxis:pax_fiddle",
         # Implicit pyglove dependency.

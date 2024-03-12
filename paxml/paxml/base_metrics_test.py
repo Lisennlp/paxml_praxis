@@ -16,6 +16,7 @@
 """Tests for Paxml base_metrics."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 from paxml import base_metrics
@@ -29,7 +30,7 @@ instantiate = base_layer.instantiate
 PMAP_PARALLEL_AXIS_NAME = base_layer.PMAP_PARALLEL_AXIS_NAME
 
 
-def _decode(feats):
+def _decode(feats, return_clu_loss_metrics=False):
   b, t, d = feats.shape
   mean_val = jnp.mean(feats)
   max_val = jnp.max(feats)
@@ -40,15 +41,20 @@ def _decode(feats):
   hist = hist.at[val[1]].add(1)
   hist = hist.at[0].set(1)
   nframes = jnp.array(b * t)
-  metrics = {
-      'mean': (mean_val, nframes),
-      'max': (max_val, nframes),
-      'min': (min_val, nframes),
-      'hist': (hist, nframes),
-      'loss': (mean_val, nframes),
-      'loss_a': (mean_val + 10, nframes),
-      'loss_b': (mean_val + 20, nframes),
-  }
+  if not return_clu_loss_metrics:
+    metrics = {
+        'mean': (mean_val, nframes),
+        'max': (max_val, nframes),
+        'min': (min_val, nframes),
+        'hist': (hist, nframes),
+        'loss': (mean_val, nframes),
+        'loss_a': (mean_val + 10, nframes),
+        'loss_b': (mean_val + 20, nframes),
+    }
+  else:
+    metrics = {
+        'loss': base_metrics.WeightedScalarCluMetric.create(mean_val, nframes),
+    }
   return metrics
 
 
@@ -105,7 +111,8 @@ class BaseMetricsTest(test_utils.TestCase):
 
 class LossAggregatorTest(test_utils.TestCase):
 
-  def test_loss_aggregate_metrics(self):
+  @parameterized.parameters(False, True)
+  def test_loss_aggregate_metrics(self, use_clu_loss_metrics: bool):
     feats = jax.random.uniform(jax.random.PRNGKey(1234), [1, 10, 100, 128])
 
     loss_metrics_p = pax_fiddle.Config(
@@ -114,7 +121,7 @@ class LossAggregatorTest(test_utils.TestCase):
     loss_aggregator = instantiate(loss_metrics_p)
 
     def _decode_step(feats):
-      metrics = _decode(feats)
+      metrics = _decode(feats, use_clu_loss_metrics)
       weighted_loss, mean_loss, loss_weight = loss_aggregator.aggregate(metrics)
       return weighted_loss, mean_loss, loss_weight
 
@@ -126,6 +133,8 @@ class LossAggregatorTest(test_utils.TestCase):
     self.assertAllClose(loss_weight,
                         jnp.mean(weighted_loss) / jnp.mean(mean_loss))
 
+  # Note: this test isn't parameterized like the test above because
+  # `metrics_aggregator` doesn't support aggregating `clu.Metrics`.
   def test_multiloss_aggregate_metrics(self):
     feats = jax.random.uniform(jax.random.PRNGKey(1234), [1, 10, 100, 128])
 
@@ -157,6 +166,52 @@ class LossAggregatorTest(test_utils.TestCase):
     self.assertAllClose(weighted_loss, expected_loss)
     self.assertAllClose(mean_loss, expected_loss)
     self.assertIsNone(loss_weight)
+
+
+class WeightedScalarCluMetricTest(test_utils.TestCase):
+
+  def test_weighted_scalar_metric(self):
+    values1 = jnp.array([1, 2, 3])
+    weights1 = jnp.array([0.1, 0.2, 0.3])
+    metric1 = base_metrics.WeightedScalarCluMetric.create(
+        weight=weights1,
+        value=values1,
+    )
+    self.assertAllClose(
+        metric1.compute(), jnp.average(values1, weights=weights1)
+    )
+
+    values2 = jnp.array([4, 5, 6])
+    weights2 = jnp.array([0.4, 0.5, 0.6])
+    metric2 = base_metrics.WeightedScalarCluMetric.create(
+        weight=weights2,
+        value=values2,
+    )
+
+    metric1 = metric1.merge(metric2)
+    self.assertAllClose(
+        metric1.compute(),
+        jnp.average(
+            jnp.concatenate([values1, values2]),
+            weights=jnp.concatenate([weights1, weights2]),
+        ),
+    )
+
+    values3 = jnp.array([7, 8, 9])
+    weights3 = jnp.array([1.1, 2.2, 3.3])
+    metric3 = base_metrics.WeightedScalarCluMetric.create(
+        weight=weights3,
+        value=values3,
+    )
+
+    metric1 = metric1.merge(metric3)
+    self.assertAllClose(
+        metric1.compute(),
+        jnp.average(
+            jnp.concatenate([values1, values2, values3]),
+            weights=jnp.concatenate([weights1, weights2, weights3]),
+        ),
+    )
 
 
 if __name__ == '__main__':

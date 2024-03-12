@@ -19,7 +19,7 @@ This simply passes input through the layer stack.
 """
 
 import functools
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Sequence
 
 from flax import linen as nn
 from flax.core import meta
@@ -96,7 +96,7 @@ class Repeat(base_layer.BaseLayer):
     positional_args_as_scan_carry: Passing positional args as scan carry instead
       of broadcast args.
   """
-  sub_tpl: Optional[LayerTpl] = base_layer.template_field(None)
+  sub_tpl: LayerTpl | None = base_layer.template_field(None)
   x_times: int = 0
   unpack_summaries: bool = False
   checkpoint_policy: AutodiffCheckpointType = AutodiffCheckpointType.SAVE_NOTHING
@@ -105,7 +105,7 @@ class Repeat(base_layer.BaseLayer):
   optimizer_dims_mapping: SplitDimsMapping = None
   collect_intermediate_outputs: bool = False
   return_intermediate_outputs: bool = False
-  nd_prefix_shape: Optional[Sequence[int]] = None
+  nd_prefix_shape: Sequence[int] | None = None
   positional_args_as_scan_carry: bool = False
 
   class WeightSharding(base_layer.BaseLayer.WeightSharding):
@@ -124,7 +124,7 @@ class Repeat(base_layer.BaseLayer):
     if nd_shape is not None:
       assert len(nd_shape) >= 1
       assert functools.reduce(lambda x, y: x * y, nd_shape) == self.x_times
-    #lsp: 创建sub属性，block -> StackedTransformer
+
     self.create_child(self.sublayer_name, self.sub_tpl)
 
   def _wrap_for_nd(
@@ -185,14 +185,13 @@ class Repeat(base_layer.BaseLayer):
       )
     return mapped_fn
 
-   #lsp forward-3
   def __call__(
       self,
       inputs: NestedJTensor,
       *args: Any,
-      method_name: Optional[str] = None,
-      per_layer_kwargs: Optional[Dict[str, NestedJTensor]] = None,
-      reversed_per_layer_kwargs: Optional[Dict[str, NestedJTensor]] = None,
+      method_name: str | None = None,
+      per_layer_kwargs: dict[str, NestedJTensor] | None = None,
+      reversed_per_layer_kwargs: dict[str, NestedJTensor] | None = None,
       **kwargs: Any,
   ) -> Any:
     """FProp inputs through the sub layer stack.
@@ -226,19 +225,17 @@ class Repeat(base_layer.BaseLayer):
         **kwargs,
     )
 
-  # lsp：最最最后的call前传函数
   def call_with_custom_method(
       self,
       inputs: NestedJTensor,
       *args: Any,
       method_factory: Callable[[base_layer.BaseLayer], Callable[..., Any]],
-      per_layer_kwargs: Optional[Dict[str, NestedJTensor]] = None,
-      reversed_per_layer_kwargs: Optional[Dict[str, NestedJTensor]] = None,
+      per_layer_kwargs: dict[str, NestedJTensor] | None = None,
+      reversed_per_layer_kwargs: dict[str, NestedJTensor] | None = None,
       **kwargs: Any,
   ) -> Any:
     """Similar to __call__, but allows a custom way to create a layer method."""
 
-    # 
     def body_fn(sub, layer_in):
       fn = method_factory(sub)
       if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
@@ -337,7 +334,6 @@ class Repeat(base_layer.BaseLayer):
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Add scan index.
       scan_inputs = (scan_inputs, jnp.zeros((), jnp.int32))
-    # self.sublayer: sub 
     layer_out, intermediates = mapped_scan_fn(self.sublayer, scan_inputs)
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Remove scan index.
@@ -364,7 +360,7 @@ class Repeat(base_layer.BaseLayer):
     """
     return self._quantize_fn(return_pspec=True)
 
-  def _quantize_fn(self, return_pspec: bool) -> Union[NestedJTensor, Any]:
+  def _quantize_fn(self, return_pspec: bool) -> NestedJTensor | Any:
     """Get the quantized weight or partition specs of the sublayer.
 
     Args:
@@ -733,6 +729,6 @@ class Repeat(base_layer.BaseLayer):
     mapped_scan_fn(self.sublayer, None)
 
 
-def _ensure_tuple(x: Any) -> Tuple[Any, ...]:
+def _ensure_tuple(x: Any) -> tuple[Any, ...]:
   """Ensures that `x` is a tuple."""
   return x if isinstance(x, tuple) else (x,)

@@ -14,7 +14,6 @@
 # limitations under the License.
 
 """ResNets classifiers on the Imagenet dataset."""
-from typing import List
 
 from absl import flags
 import jax
@@ -104,7 +103,6 @@ class ResNet50Pjit(base_experiment.BaseExperiment):
   NUM_EPOCHS = 90
   LEARNING_RATE = (TRAIN_BATCH_SIZE / 256) * 0.1
   L2_REGULARIZER_WEIGHT = 1e-4
-  # lsp: 需要固定的参数名称
   BPROP_VARIABLE_EXCLUSION = []
   CLIP_GRADIENT_NORM_TO_VALUE = 0.0
   EMA_DECAY = 0.0
@@ -152,7 +150,7 @@ class ResNet50Pjit(base_experiment.BaseExperiment):
         base_input.LingvoInputAdaptor, input=input_p, is_training=False
     )
 
-  def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  def datasets(self) -> list[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns a list of dataset configs."""
     return [self._dataset_train(), self._dataset_test()]
 

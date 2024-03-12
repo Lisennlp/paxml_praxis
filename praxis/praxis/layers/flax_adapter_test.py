@@ -15,7 +15,7 @@
 
 """Tests for Flax adapter."""
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from absl.testing import absltest
 import fiddle as fdl
@@ -60,6 +60,10 @@ class CNN(flax_nn.Module):
     x = flax_nn.log_softmax(x)
     return x
 
+  def classify(self, x: JTensor) -> JTensor:
+    log_softmax = self.__call__(x, use_running_average=True)
+    return log_softmax.argmax(axis=-1)
+
 
 class MixLayer(base_layer.BaseLayer):
   """A layer that mixes Pax native layer with nn.Module wrapper layer.
@@ -82,7 +86,7 @@ class MixLayer(base_layer.BaseLayer):
     bn_p = pax_fiddle.Config(normalizations.BatchNorm, dim=10)
     self.create_child('bn', bn_p)
 
-  def __call__(self, x: JTensor) -> Tuple[JTensor, JTensor, JTensor]:
+  def __call__(self, x: JTensor) -> tuple[JTensor, JTensor, JTensor]:
     # Call cnn_p1 twice to verify this doesn't break initialization.
     out1 = self.cnn_p1(
         x, use_running_average=self.use_running_average
@@ -91,16 +95,21 @@ class MixLayer(base_layer.BaseLayer):
     out = self.bn(out1 + out2)
     return out1, out2, out
 
+  def classify(self, x: JTensor) -> JTensor:
+    out1 = self.cnn_p1.call_method('classify', x)
+    out2 = self.cnn_p2.call_method('classify', x)
+    return out1, out2
+
 
 class DirectMixLayer(base_layer.BaseLayer):
   """Direct instantiation version of the mix layer above."""
 
-  cnn_p1: Optional[flax_nn.Module] = None
-  cnn_p2: Optional[flax_nn.Module] = None
-  bn: Optional[flax_nn.Module] = None
+  cnn_p1: flax_nn.Module | None = None
+  cnn_p2: flax_nn.Module | None = None
+  bn: flax_nn.Module | None = None
   use_running_average: bool = False
 
-  def __call__(self, x: JTensor) -> Tuple[JTensor, JTensor, JTensor]:
+  def __call__(self, x: JTensor) -> tuple[JTensor, JTensor, JTensor]:
     # Call cnn_p1 twice to verify this doesn't break initialization.
     # pylint: disable=not-callable
     out1 = self.cnn_p1(
@@ -150,6 +159,9 @@ class FlaxWrapperTest(test_utils.TestCase):
       jax.tree_map(assert_non_learnable, init_var_meta['non_trainable'])
       init_vars = test_layer.init(prng_key, input_x)
       _ = test_layer.apply(init_vars, input_x, mutable=True)
+      _ = test_layer.apply(
+          init_vars, input_x, mutable=True, method=test_layer.classify
+      )
 
   def test_literal_init_args(self):
     """Tests construction with literal (non-callable) init args."""

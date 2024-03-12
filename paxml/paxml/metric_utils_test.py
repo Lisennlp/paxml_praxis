@@ -14,13 +14,12 @@
 # limitations under the License.
 
 """Tests for metric_utils."""
-import os
 
-from typing import Any, Dict, List, Tuple
+import os
+from typing import Any
 # Internal unittest mock import
 
 from absl.testing import absltest
-
 import clu.metrics as clu_metrics
 import clu.values as clu_values
 import flax
@@ -116,13 +115,13 @@ class MetricUtilsTest(absltest.TestCase):
     self.assertEqual(metric_values['test'].value, 5)
 
     with summary_utils.get_summary_writer(test_dir):
-      metric_utils.write_clu_metric_summaries(metric_values, step_i=0)
+      summary_utils.write_clu_metric_summaries(metric_values, step_i=0)
 
   def test_list_compute_metric_values(self):
     @flax.struct.dataclass
     class ScalarListMetric(MockMetric):
 
-      def compute_value(self) -> List[Any]:
+      def compute_value(self) -> list[Any]:
         return [
             clu_values.Scalar(5),
             clu_values.Text('hi'),
@@ -133,6 +132,7 @@ class MetricUtilsTest(absltest.TestCase):
             _mock_clu_audio(batch_size=None),
             _mock_clu_audio(batch_size=2),
         ]
+
     metrics = {'test': ScalarListMetric()}
 
     metric_values = metric_utils.compute_metric_values(metrics)
@@ -152,8 +152,9 @@ class MetricUtilsTest(absltest.TestCase):
     @flax.struct.dataclass
     class ScalarTupleMetric(MockMetric):
 
-      def compute_value(self) -> Tuple[Any]:
+      def compute_value(self) -> tuple[Any]:
         return (clu_values.Scalar(5), clu_values.Text('hi'))
+
     metrics = {'test': ScalarTupleMetric()}
 
     metric_values = metric_utils.compute_metric_values(metrics)
@@ -164,7 +165,7 @@ class MetricUtilsTest(absltest.TestCase):
     @flax.struct.dataclass
     class ScalarDictMetric(MockMetric):
 
-      def compute_value(self) -> Dict[str, Any]:
+      def compute_value(self) -> dict[str, Any]:
         return {
             'scalar_0': clu_values.Scalar(1),
             'scalar_1': clu_values.Scalar(2),
@@ -197,7 +198,7 @@ class MetricUtilsTest(absltest.TestCase):
     @flax.struct.dataclass
     class MixedDictMetric(MockMetric):
 
-      def compute_value(self) -> Dict[str, Any]:
+      def compute_value(self) -> dict[str, Any]:
         return {
             'scalar_0': clu_values.Scalar(1),
             'list_0': [clu_values.Scalar(1), clu_values.Scalar(2)],
@@ -231,7 +232,7 @@ class MetricUtilsTest(absltest.TestCase):
     @flax.struct.dataclass
     class MixedDictMetric(MockMetric):
 
-      def compute_value(self) -> Dict[str, Any]:
+      def compute_value(self) -> dict[str, Any]:
         return {
             'scalar_0': clu_values.Scalar(1),
             'list_0': [clu_values.Scalar(1), clu_values.Scalar(2)],
@@ -251,13 +252,13 @@ class MetricUtilsTest(absltest.TestCase):
     metric_values = metric_utils.compute_metric_values(metrics)
     test_dir = self._test_dir()
     with summary_utils.get_summary_writer(test_dir):
-      metric_utils.write_clu_metric_summaries(metric_values, step_i=0)
+      summary_utils.write_clu_metric_summaries(metric_values, step_i=0)
 
   def test_write_seqio_metric_summaries(self):
     @flax.struct.dataclass
     class MixedDictMetric(MockMetric):
 
-      def compute_value(self) -> Dict[str, Any]:
+      def compute_value(self) -> dict[str, Any]:
         return {
             'scalar_0': seqio.metrics.Scalar(1),
             'list_0': [seqio.metrics.Scalar(1), seqio.metrics.Scalar(2)],
@@ -275,8 +276,9 @@ class MetricUtilsTest(absltest.TestCase):
     metric_values = metric_utils.compute_metric_values(metrics)
     test_dir = self._test_dir()
     with summary_utils.get_summary_writer(test_dir):
-      metric_utils.write_seqio_metric_summaries(
-          [metric_values], step=0, metric_name_prefix='test_prefix')
+      summary_utils.write_seqio_metric_summaries(
+          [metric_values], step=0, metric_name_prefix='test_prefix'
+      )
 
   def is_float_convertible(self):
     self.assertTrue(metric_utils.is_float_convertible(0.1))

@@ -14,12 +14,13 @@
 # limitations under the License.
 
 """A registry of experiment configurations."""
+
 import collections
 import functools
 import importlib
 import sys
 import traceback
-from typing import Dict, List, Mapping, Optional
+from typing import Mapping
 
 from paxml import base_experiment
 
@@ -41,7 +42,7 @@ class _ExperimentRegistryHelper:
   # Global variable for the experiment configuration registry
   # A mapping from a canonical key to the BaseExperimentT class.
   _registry = {}
-  _registry_tags: Dict[str, List[str]] = {}
+  _registry_tags: dict[str, list[str]] = {}
   # A mapping from a secondary key to all matching canonical keys.
   _secondary_keys = collections.defaultdict(list)
 
@@ -54,7 +55,7 @@ class _ExperimentRegistryHelper:
   _allow_overwrite = False
 
   @classmethod
-  def custom_secondary_keys(cls, canonical_key) -> List[str]:
+  def custom_secondary_keys(cls, canonical_key) -> list[str]:
     """Returns the list of custom secondary keys."""
     ret = []
     parts = canonical_key.split('.')
@@ -69,11 +70,13 @@ class _ExperimentRegistryHelper:
     return ret
 
   @classmethod
-  def register(cls,
-               experiment_class: Optional[BaseExperimentT] = None,
-               *,
-               tags: Optional[List[str]] = None,
-               allow_overwrite=False):
+  def register(
+      cls,
+      experiment_class: BaseExperimentT | None = None,
+      *,
+      tags: list[str] | None = None,
+      allow_overwrite=False,
+  ):
     """Registers an experiment configuration class into the global registry.
 
     If allow_overwrite is True, repeated registering of an existing class
@@ -114,13 +117,12 @@ class _ExperimentRegistryHelper:
       # developing in notebooks.
       allow_overwrite = True
 
-    # canonical key is the full path.   ->  canonical_key: tasks.lm.params.c4  + C4SpmdGpt37BRoPE
+    # canonical key is the full path.
     canonical_key = (
         experiment_class.__module__ + '.' + experiment_class.__name__)
     preexisting = canonical_key in cls._registry
     if preexisting and not (cls._allow_overwrite or allow_overwrite):
       raise ValueError(f'Experiment already registered: {canonical_key}')
-    # key: experiment_name(tasks.lm.params.c4.C4SpmdGpt37BRoPE) , value: experiment_class(类名)
     cls._registry[canonical_key] = experiment_class
     cls._registry_tags[canonical_key] = list(tags or [])
     # Use print - absl.logging doesn't work since this happens before main.
@@ -134,20 +136,18 @@ class _ExperimentRegistryHelper:
     # Add secondary keys, which can be any partial paths.
     secondary_keys = set()
     parts = canonical_key.split('.')
-    # 比如1.2.3.a -> 1.2.3.a, 2.3.a, 3.a, a ， 都作为key映射value为注册的类名（C4SpmdGpt37BRoPE）
     for i in range(len(parts)):
       # Any partial path is a valid secondary key.
       secondary_keys.add('.'.join(parts[i:]))
-    # 将包含params的key，变为params之后的字符串作为key
+
     for k in cls.custom_secondary_keys(canonical_key):
       secondary_keys.add(k)
-    # params之后的字符串作为key， 原始key作为value，存入_secondary_keys字典
     for k in secondary_keys:
       cls._secondary_keys[k].append(canonical_key)
     return experiment_class
 
   @classmethod
-  def get(cls, key: str) -> Optional[BaseExperimentT]:
+  def get(cls, key: str) -> BaseExperimentT | None:
     """Retrieves an experiment from the global registry from the input key.
 
     Args:
@@ -171,7 +171,7 @@ class _ExperimentRegistryHelper:
     return cls._registry.get(canonical_keys[0])
 
   @classmethod
-  def get_registry_tags(cls, key: str) -> List[str]:
+  def get_registry_tags(cls, key: str) -> list[str]:
     return cls._registry_tags.get(key, [])
 
   @classmethod

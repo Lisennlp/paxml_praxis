@@ -1,3 +1,37 @@
+# Version: 1.3.1
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.3.1
+*   Build Date: 20240220
+*   Praxis commit: a935384da88ec739d48696c2d0a55657a183de00
+# Version: 1.3.0
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.3.0
+*   Build Date: 20240216
+*   Praxis commit: ca8ad2ba8be5b77092a8e5f0a0774a39cc3ad766
+# Version: 1.2.0
+## Major Features and Improvements
+## Breaking changes
+## Deprecations
+## Note
+*   Version: 1.2.0
+*   Build Date: 20231016
+*   Praxis commit: 7bd63412bf86a68e09fcd9455f76a4909d19377e
+# Version: 1.1.0
+## Major Features and Improvements
+* Move to python 3.10 as the minimal python requirement (previously on python 3.8).
+* Add various quantization support.
+* Add support for fine-grained weight sparsity in praxis layers.
+* Add support for Direct Preference Optimization (DPO).
+## Note
+*   Version: 1.1.0
+*   Build Date: 20230824
+*   Praxis commit: 2a7d0407871502a1d79dcd0e01411e73f1d15d36
 # Version: 1.0.0
 ## Major Features and Improvements
 * **Fiddle** - Praxis layers and BaseParameterizable are now configured with [Fiddle](https://github.com/google/fiddle), a Python-first configuration library. Fiddle reduces boilerplate, and adds productivity features including history tracking, graphviz visualization, support for aliasing objects, and more.

@@ -17,13 +17,13 @@
 
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Mapping
 
 from absl import logging
 from etils import epath
 import jax
 import jax.numpy as jnp
-import orbax.checkpoint
+import orbax.checkpoint as ocp
 from paxml import checkpoint_version
 from paxml import train_states
 from praxis import py_utils
@@ -31,11 +31,11 @@ from praxis import pytypes
 
 
 PAX_METADATA_ITEM_NAME = 'pax_metadata'
-METADATA_ITEM_NAME = orbax.checkpoint.checkpoint_manager.METADATA_ITEM_NAME
+METADATA_ITEM_NAME = ocp.checkpoint_manager.METADATA_ITEM_NAME
 
 get_version_key = checkpoint_version.get_version_key
 get_version = checkpoint_version.get_version
-Checkpointer = orbax.checkpoint.Checkpointer
+Checkpointer = ocp.Checkpointer
 
 # string consts used in metadata
 ARRAY_METADATA_TAG = '_array_metadata_tag'
@@ -52,12 +52,11 @@ def _get_shape_dtype_struct(nested: Any) -> Any:
 
 
 def make_metadata(
-    version: Optional[float] = None,
-    train_state: Optional[train_states.TrainState] = None,
-    train_state_unpadded_shape_dtype_struct: Optional[
-        train_states.TrainState
-    ] = None,
-    tensorstore_use_ocdbt: Optional[bool] = None,
+    version: float | None = None,
+    train_state: train_states.TrainState | None = None,
+    train_state_unpadded_shape_dtype_struct: train_states.TrainState
+    | None = None,
+    tensorstore_use_ocdbt: bool | None = None,
 ) -> Mapping[str, Any]:
   """Returns metadata dict."""
   if version is None:
@@ -91,13 +90,13 @@ def metadata_exists(directory: epath.Path) -> bool:
 
 
 def save_metadata(directory: epath.Path, metadata: Mapping[str, Any]):
-  checkpointer = Checkpointer(orbax.checkpoint.JsonCheckpointHandler())
+  checkpointer = Checkpointer(ocp.JsonCheckpointHandler())
   path = directory / METADATA_ITEM_NAME
   checkpointer.save(path, metadata)
 
 
 def restore_metadata(directory: epath.Path) -> Mapping[str, Any]:
-  checkpointer = Checkpointer(orbax.checkpoint.JsonCheckpointHandler())
+  checkpointer = Checkpointer(ocp.JsonCheckpointHandler())
   path = directory / METADATA_ITEM_NAME
   return checkpointer.restore(path)
 
@@ -105,7 +104,7 @@ def restore_metadata(directory: epath.Path) -> Mapping[str, Any]:
 def _trees_are_equal(
     a_tree: pytypes.Nested[Any],
     b_tree: pytypes.Nested[Any],
-    equal_fn: Optional[Callable[[Any, Any], bool]] = None,
+    equal_fn: Callable[[Any, Any], bool] | None = None,
     treedef: bool = False,
 ) -> bool:
   """Checks if the two trees are equal w.r.t. equal_fn."""
@@ -128,10 +127,10 @@ def _trees_are_equal(
 class ArrayMetadata:
   """Metadata of an array, to be saved in PaxMetadata."""
 
-  unpadded_shape_dtype_struct: Optional[jax.ShapeDtypeStruct]
+  unpadded_shape_dtype_struct: jax.ShapeDtypeStruct | None
   is_optax_masked_node: bool
 
-  def to_dict(self) -> Dict[str, Any]:
+  def to_dict(self) -> dict[str, Any]:
     """Returns a dict to be serialized."""
     d = {
         IS_OPTAX_MASKED_NODE: self.is_optax_masked_node,
@@ -186,7 +185,7 @@ class PaxMetadata:
   version: float  # version of the checkpoint
   train_state_metadata: pytypes.Nested[ArrayMetadata]
 
-  def to_dict(self) -> Dict[str, Any]:
+  def to_dict(self) -> dict[str, Any]:
     """Returns a dict to be serialized."""
     train_state_metadata = jax.tree_util.tree_map(
         lambda x: x.to_dict(),
@@ -196,7 +195,7 @@ class PaxMetadata:
       train_state_metadata = dataclasses.asdict(train_state_metadata)
 
     # serialize to a nested dict so that it is json-serializable
-    train_state_metadata = orbax.checkpoint.utils.serialize_tree(
+    train_state_metadata = ocp.utils.serialize_tree(
         train_state_metadata,
         keep_empty_nodes=True,
     )
@@ -232,7 +231,7 @@ class PaxMetadata:
   def from_padded_and_unpadded(
       cls,
       padded: train_states.TrainState,  # of ShapeDtypeStruct or jax.Array
-      unpadded: Optional[train_states.TrainState],  # of ShapeDtypeStruct
+      unpadded: train_states.TrainState | None,  # of ShapeDtypeStruct
       version: float,
       mdl_vars_only: bool = True,
   ) -> 'PaxMetadata':
@@ -243,6 +242,7 @@ class PaxMetadata:
           step=train_state.step,
           mdl_vars=train_state.mdl_vars,
           opt_states=train_state.opt_states,
+          extra_state=train_state.extra_state,
       )
 
     def _maybe_remove_keys(d):
@@ -255,6 +255,8 @@ class PaxMetadata:
           del d['step']
         if 'opt_states' in d:
           del d['opt_states']
+        if 'extra_state' in d:
+          del d['extra_state']
       return d
 
     padded = _to_dict(padded)

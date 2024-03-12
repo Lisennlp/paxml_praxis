@@ -16,9 +16,10 @@
 """A generic flax.nn.Module adapter layers."""
 
 import abc
+from dataclasses import field
 import functools
 import typing
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import flax.linen as nn
 from flax.linen import partitioning as flax_partitioning
@@ -40,9 +41,17 @@ class _InternalBaseFlaxAdapter(base_layer.BaseLayer):
   Attributes:
     logical_axes_rules: Optional logical axes rules, e.g., [('input', 'mdl'),
       ('output', 'data')]
+    var_collection_map: Optional collection map for specific variables. Key is
+      collection's name and value is a list of
+      base_layer.WeightHParamsCollection. e.g {"my_variables": [
+      WeightHParamsCollection.NON_TRAINABLE,
+      WeightHParamsCollection.DISALLOW_BFLOAT16_CONVERSION]}.
   """
 
-  logical_axes_rules: Optional[LogicalAxisRules] = None
+  logical_axes_rules: LogicalAxisRules | None = None
+  var_collection_map: dict[str, list[base_layer.WeightHParamsCollection]] = (
+      field(default_factory=dict)
+  )
 
   if typing.TYPE_CHECKING:
 
@@ -86,6 +95,7 @@ class _InternalBaseFlaxAdapter(base_layer.BaseLayer):
             flax_utils.convert_to_boxed_params,
             logical_axes_rules=self.logical_axes_rules,
             mesh_shape=self.mesh_shape,
+            var_collection_map=self.var_collection_map,
         ),
     )
 
@@ -97,6 +107,14 @@ class _InternalBaseFlaxAdapter(base_layer.BaseLayer):
     # the first argument.
     return self._call_with_boxed_params_init(
         self.cld.__call__.__func__, *args, **kwargs  # pytype: disable=attribute-error
+    )
+
+  def call_method(self, method_name: str, *args, **kwargs):
+    # Note that `__func__` retrieves the unbound method that takes module as
+    # the first argument.
+    func = getattr(self.cld, method_name)
+    return self._call_with_boxed_params_init(
+        func.__func__, *args, **kwargs  # pytype: disable=attribute-error
     )
 
 
@@ -111,7 +129,7 @@ class DirectFlaxModuleAdapter(_InternalBaseFlaxAdapter):
     cld: Child Flax module.
   """
 
-  cld: Optional[nn.Module] = pax_fiddle.instance_field(None)
+  cld: nn.Module | None = pax_fiddle.instance_field(None)
 
 
 class FlaxModuleAdapterBase(_InternalBaseFlaxAdapter, metaclass=abc.ABCMeta):
@@ -146,7 +164,7 @@ class FlaxModuleAdapter(FlaxModuleAdapterBase):
     module_factory_method: A callable that constructs an instance of a module.
   """
 
-  module_factory_method: Optional[Callable[[], nn.Module]] = None
+  module_factory_method: Callable[[], nn.Module] | None = None
 
   def _build_wrapped_module(self) -> nn.Module:
     if self.module_factory_method is None:

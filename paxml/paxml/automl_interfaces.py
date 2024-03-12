@@ -15,11 +15,15 @@
 
 """Interfaces for AutoML for PAX."""
 
+from __future__ import annotations
+
 import abc
 import dataclasses
 import enum
+import inspect
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Sequence, Type
+
 from praxis import base_hyperparams
 from praxis import pax_fiddle
 import pyglove as pg
@@ -54,7 +58,7 @@ class BaseReward(
   """Base class for reward functions."""
 
   @abc.abstractmethod
-  def __call__(self, metrics_dict: Dict[str, float], global_step: int) -> float:
+  def __call__(self, metrics_dict: dict[str, float], global_step: int) -> float:
     """Returns a float value as reward from a dict of metrics."""
 
   @property
@@ -85,9 +89,8 @@ class CrossStepMetricAggregator(
 
   @abc.abstractmethod
   def __call__(
-      self,
-      metrics_across_steps: Sequence[Tuple[int, Dict[str, float]]]
-      ) -> Dict[str, float]:
+      self, metrics_across_steps: Sequence[tuple[int, dict[str, float]]]
+  ) -> dict[str, float]:
     """Aggregates metrics across multiple steps.
 
     Args:
@@ -109,55 +112,64 @@ class SearchHParams:
 
   Attributes:
     search_algorithm: Hyperparameters for search algorithm.
-    search_reward: Hyperparameters for search reward.
-      If None, 0 will be used as objective, which shall be used only
-      for grid search or random search.
-    early_stopping: An optional population-wise early stopping policy.
-      If None, no population-wise early stopping policy will be used, though
-      users still can raise `automl.EarlyStoppingError` to early terminate a
-      a single trial during training/evaluation.
+    search_reward: Hyperparameters for search reward. If None, 0 will be used as
+      objective, which shall be used only for grid search or random search.
+    early_stopping: An optional population-wise early stopping policy. If None,
+      no population-wise early stopping policy will be used, though users still
+      can raise `automl.EarlyStoppingError` to early terminate a a single trial
+      during training/evaluation.
     cross_step_metric_aggregator: Hyperparameters for cross-step metric
       aggregator. If None, `automl.LastReportedMetricValues` will be used.
     max_num_trials: Max number of trials for the search.
-    errors_to_skip: An optional field to specify on what errors the trial
-      should be skipped. It's in the form of a list of (ExceptionType) or
+    errors_to_skip: An optional field to specify on what errors the trial should
+      be skipped. It's in the form of a list of (ExceptionType) or
       (ExceptionType, regexForError). For example, if users specify:
       `[RuntimeError, (Exception, 'XLACompilation.*')]`, the trails that
-      RuntimeError or errors that match 'XLACompilation.*' will be treated as
-      to skip.
+      RuntimeError or errors that match 'XLACompilation.*' will be treated as to
+      skip.
     prior_study_ids: An optional list of Vizier study GUIDs to warm up current
-      search. All completed trials from previous studies will be feedback to
-      the controller via the `pg.DNAGenerator.recover` interface.
+      search. All completed trials from previous studies will be feedback to the
+      controller via the `pg.DNAGenerator.recover` interface.
     add_prior_trials: If True, trials from previous studies will be copied to
       current study. Effective only when `prior_study_ids` is set.
     add_experiment_config_to_metadata: If True (default), serialized experiment
-      config will be added to trial metadata for helping meta-learning later.
-      If the study will be very large and users don't want to store the
-      experiment config, set it to False.
-    treats_early_stopped_trials_as_done: If True, early stopped trials will
-      be treated as done, whose rewards will be fed back to the controller,
-      except for those trials who haven't added any measurements.
+      config will be added to trial metadata for helping meta-learning later. If
+      the study will be very large and users don't want to store the experiment
+      config, set it to False.
+    treats_early_stopped_trials_as_done: If True, early stopped trials will be
+      treated as done, whose rewards will be fed back to the controller, except
+      for those trials who haven't added any measurements.
     train_to_end: If True, training will not be stopped until it reaches
       `num_train_steps`. If False, training will be stopped when there is no
       further eval/decode steps.
-    enable_dataset_tuning: If False, skip instantiating the dataset to look for
-      tunable variables.
+    enable_dataset_tuning: If True, include the training data pipeline in search
+      space inspection.
+    enable_partitioner_tuning: If True, include the partitioner in search space
+      inspection.
+    enable_train_programs_tuning: If True, include the train programs in search
+      space inspection.
+    vizier_service_endpoint: Vizier service endpoint. This is used for debugging
+      only.
   """
-  search_algorithm: Optional[pax_fiddle.Config[BaseAlgorithm]] = None
-  search_reward: Optional[pax_fiddle.Config[BaseReward]] = None
-  early_stopping: Optional[pax_fiddle.Config[BaseEarlyStoppingPolicy]] = None
-  cross_step_metric_aggregator: Optional[
-      pax_fiddle.Config[CrossStepMetricAggregator]
-  ] = None
+  search_algorithm: pax_fiddle.Config[BaseAlgorithm] | None = None
+  search_reward: pax_fiddle.Config[BaseReward] | None = None
+  early_stopping: pax_fiddle.Config[BaseEarlyStoppingPolicy] | None = None
+  cross_step_metric_aggregator: pax_fiddle.Config[
+      CrossStepMetricAggregator
+  ] | None = None
   max_num_trials: int = 1000000
-  errors_to_skip: Optional[List[
-      Union[Type[Exception], Tuple[Type[Exception], str]]]] = None
-  prior_study_ids: Optional[List[int]] = None
+  errors_to_skip: list[Type[Exception] | tuple[Type[Exception], str]] | None = (
+      None
+  )
+  prior_study_ids: list[int] | None = None
   add_prior_trials: bool = False
   add_experiment_config_to_metadata: bool = True
   treats_early_stopped_trials_as_done: bool = False
   train_to_end: bool = False
   enable_dataset_tuning: bool = False
+  enable_partitioner_tuning: bool = False
+  enable_train_programs_tuning: bool = False
+  vizier_service_endpoint: str | None = None
 
 
 class MetricType(enum.Enum):
@@ -228,11 +240,11 @@ class Metric:
   """
   metric_name: str
   metric_type: MetricType = MetricType.CUSTOM
-  dataset_name: Optional[str] = None
-  sub_experiment_id: Optional[str] = None
-  aggregator: Optional[Union[
-      MetricAggregator,
-      Callable[[Sequence[float]], float]]] = None
+  dataset_name: str | None = None
+  sub_experiment_id: str | None = None
+  aggregator: MetricAggregator | Callable[[Sequence[float]], float] | None = (
+      None
+  )
 
   def __post_init__(self):
     self._metric_key_regex = re.compile(self.pattern, re.IGNORECASE)
@@ -303,18 +315,19 @@ class Metric:
     return (MetricType.applies_to_multiple_datasets(self.metric_type) and
             self.dataset_name is None)
 
-  def match_items(self, metric_dict: Dict[str,
-                                          float]) -> List[Tuple[str, float]]:
+  def match_items(
+      self, metric_dict: dict[str, float]
+  ) -> list[tuple[str, float]]:
     """Gets matched items of current metric from a metric dict."""
     return [(k, v)
             for k, v in metric_dict.items()
             if self._metric_key_regex.match(k)]
 
-  def get_values(self, metric_dict: Dict[str, float]) -> List[float]:
+  def get_values(self, metric_dict: dict[str, float]) -> list[float]:
     """Gets the value of current metric from a metric dict."""
     return [v for k, v in self.match_items(metric_dict)]
 
-  def get_value(self, metric_dict: Dict[str, float]) -> float:
+  def get_value(self, metric_dict: dict[str, float]) -> float:
     """Gets the only value for current metric from a metric dict."""
     items = list(self.match_items(metric_dict))
     if not items:
@@ -333,9 +346,9 @@ class Metric:
   @classmethod
   def train_steps_per_second(
       cls,
-      sub_experiment_id: Optional[str] = None,
-      aggregator: Optional[
-          Union[str, Callable[[Sequence[float]], float]]] = None) -> 'Metric':
+      sub_experiment_id: str | None = None,
+      aggregator: str | Callable[[Sequence[float]], float] | None = None,
+  ) -> 'Metric':
     """Returns metric for training steps per second."""
     return Metric('train_steps_per_sec',
                   sub_experiment_id=sub_experiment_id,
@@ -344,9 +357,9 @@ class Metric:
   @classmethod
   def eval_steps_per_second(
       cls,
-      sub_experiment_id: Optional[str] = None,
-      aggregator: Optional[
-          Union[str, Callable[[Sequence[float]], float]]] = None) -> 'Metric':
+      sub_experiment_id: str | None = None,
+      aggregator: str | Callable[[Sequence[float]], float] | None = None,
+  ) -> 'Metric':
     """Returns metric for evaluation steps per second."""
     return Metric('eval_steps_per_sec',
                   sub_experiment_id=sub_experiment_id,
@@ -355,8 +368,9 @@ class Metric:
   @classmethod
   def decode_steps_per_second(
       cls,
-      sub_experiment_id: Optional[str] = None,
-      aggregator: Optional[Union[str, MetricAggregationFn]] = None) -> 'Metric':
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns metric for `decode_steps_per_second`."""
     return Metric('decode_steps_per_sec',
                   sub_experiment_id=sub_experiment_id,
@@ -365,8 +379,9 @@ class Metric:
   @classmethod
   def num_params(
       cls,
-      sub_experiment_id: Optional[str] = None,
-      aggregator: Optional[Union[str, MetricAggregationFn]] = None) -> 'Metric':
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns metric for `num_params`."""
     return Metric('num_params',
                   sub_experiment_id=sub_experiment_id,
@@ -374,11 +389,12 @@ class Metric:
 
   # Class methods for creating eval metric types.
   @classmethod
-  def train(cls,
-            metric_name: str,
-            sub_experiment_id: Optional[str] = None,
-            aggregator: Optional[Union[str, MetricAggregationFn]] = None
-            ) -> 'Metric':
+  def train(
+      cls,
+      metric_name: str,
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns a metric from evaluation on the training dataset."""
     return Metric(metric_name,
                   MetricType.TRAIN_METRICS,
@@ -386,11 +402,12 @@ class Metric:
                   aggregator=aggregator)
 
   @classmethod
-  def eval_train(cls,
-                 metric_name: str,
-                 sub_experiment_id: Optional[str] = None,
-                 aggregator: Optional[Union[str, MetricAggregationFn]] = None
-                 ) -> 'Metric':
+  def eval_train(
+      cls,
+      metric_name: str,
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns a metric from evaluation on the training dataset."""
     return Metric(metric_name,
                   MetricType.EVAL_TRAIN_METRICS,
@@ -398,12 +415,13 @@ class Metric:
                   aggregator=aggregator)
 
   @classmethod
-  def eval(cls,
-           metric_name: str,
-           dataset_name: Optional[str] = None,
-           sub_experiment_id: Optional[str] = None,
-           aggregator: Optional[Union[str, MetricAggregationFn]] = None
-           ) -> 'Metric':
+  def eval(
+      cls,
+      metric_name: str,
+      dataset_name: str | None = None,
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns a metric from evaluation on the test dataset."""
     return Metric(metric_name,
                   MetricType.EVAL_METRICS,
@@ -412,12 +430,13 @@ class Metric:
                   aggregator=aggregator)
 
   @classmethod
-  def eval_scoring(cls,
-                   metric_name: str,
-                   dataset_name: Optional[str] = None,
-                   sub_experiment_id: Optional[str] = None,
-                   aggregator: Optional[Union[str, MetricAggregationFn]] = None
-                   ) -> 'Metric':
+  def eval_scoring(
+      cls,
+      metric_name: str,
+      dataset_name: str | None = None,
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns a metric from evaluation on the test dataset."""
     return Metric(metric_name,
                   MetricType.EVAL_SCORING_METRICS,
@@ -426,15 +445,41 @@ class Metric:
                   aggregator=aggregator)
 
   @classmethod
-  def decode(cls,
-             metric_name: str,
-             dataset_name: Optional[str] = None,
-             sub_experiment_id: Optional[str] = None,
-             aggregator: Optional[Union[str, MetricAggregationFn]] = None
-             ) -> 'Metric':
+  def decode(
+      cls,
+      metric_name: str,
+      dataset_name: str | None = None,
+      sub_experiment_id: str | None = None,
+      aggregator: str | MetricAggregationFn | None = None,
+  ) -> 'Metric':
     """Returns a metric or processed metric from a decode dataset."""
     return Metric(metric_name,
                   MetricType.DECODE_METRICS,
                   dataset_name,
                   sub_experiment_id=sub_experiment_id,
                   aggregator=aggregator)
+
+
+def enable_class_level_hyper_primitives(cls: Type[Any]) -> None:
+  """Enable class-level hypers for a BaseExperiment subclass."""
+
+  def create_hyper_property(name: str, hyper: pg.hyper.HyperPrimitive):
+    attr_name = f'_PROPERTY_{name}'
+    hyper_kwargs = dict(hyper.sym_init_args)
+    if 'name' not in hyper_kwargs or hyper_kwargs['name'] is None:
+      hyper_kwargs['name'] = name
+
+    def getter(x):
+      if hasattr(x, attr_name):
+        return getattr(x, attr_name)
+      return hyper.__class__(**hyper_kwargs)  # pytype: disable=not-instantiable
+
+    def setter(x, v):
+      setattr(x, attr_name, v)
+
+    return property(getter, setter)
+
+  for name, hyper in inspect.getmembers(
+      cls, lambda x: isinstance(x, pg.hyper.HyperPrimitive)
+  ):
+    setattr(cls, name, create_hyper_property(name, hyper))

@@ -14,6 +14,7 @@
 # limitations under the License.
 
 """FQ Tests for quantized AttentionProjection layer."""
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -350,7 +351,7 @@ class AttentionProjectionFQTest(quantization_test_util.QuantizationTestCase):
     self.assertAllClose(updated_w_f_tensor, updated_w_q_tensor, atol=1e-3)
 
     # 2. Value check.
-    self.assertNestedListClose(updated_w_q, expected_trained_weight)
+    self.assertNestedListClose(updated_w_q, expected_trained_weight, places=2)
 
   # Test the training with FQ quantization.
   @parameterized.parameters(

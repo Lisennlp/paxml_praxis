@@ -15,27 +15,23 @@
 
 """Shared checkpointing utility functions."""
 
+import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 from absl import logging
 from etils import epath
 from jax.experimental import multihost_utils
 import numpy as np
-import orbax.checkpoint
+import orbax.checkpoint as ocp
 from paxml import checkpoint_types
 from paxml import checkpoint_version
 from praxis import pytypes
 
 
-# _CHECKPOINT_PREFIX = ''
-# CHECKPOINT_PREFIX = ''
-# _STEP_FORMAT_FIXED_LENGTH = None
-SKIP_STEP_NAME = 'skip_file_and_step.json'
 _CHECKPOINT_PREFIX = 'checkpoint'
 CHECKPOINT_PREFIX = f'{_CHECKPOINT_PREFIX}_'
 _STEP_FORMAT_FIXED_LENGTH = 8
-
 STATE_ITEM_NAME = 'state'
 INPUT_ITEM_NAME = 'train_input'
 TMP_PREFIX = 'tmp_'
@@ -53,14 +49,14 @@ retrieve_checkpoint_type = checkpoint_types.retrieve_checkpoint_type
 
 JTensorOrPartitionSpec = pytypes.JTensorOrPartitionSpec
 PyTree = Any
-AsyncCheckpointer = orbax.checkpoint.AsyncCheckpointer
-Checkpointer = orbax.checkpoint.Checkpointer
+AsyncCheckpointer = ocp.AsyncCheckpointer
+Checkpointer = ocp.Checkpointer
 COMMIT_SUCCESS_FILE = 'commit_success.txt'
 
 
 def checkpoint_prefix(
     checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
-) -> Optional[str]:
+) -> str | None:
   """Checkpoint prefix, or None if no prefix is applied.
 
   The return type is optional to future-proof against instances where the
@@ -78,7 +74,7 @@ def checkpoint_prefix(
 
 def checkpoint_name_fixed_length(
     checkpoint_type: CheckpointType = CheckpointType.UNSPECIFIED,
-) -> Optional[int]:
+) -> int | None:
   """Length of the fixed width step format, or None if not used."""
   return (
       None
@@ -101,7 +97,7 @@ def is_tmp_checkpoint_asset(x: epath.Path) -> bool:
   # Very old format Flax checkpoint.
   if x.is_file():
     return False
-  return orbax.checkpoint.utils.is_tmp_checkpoint(x)
+  return ocp.utils.is_tmp_checkpoint(x)
 
 
 def checkpoint_name(
@@ -143,7 +139,7 @@ def get_step_from_checkpoint_asset(checkpoint_dir: epath.PathLike) -> int:
 
 def latest_checkpoint_if_exists(
     checkpoint_dir: epath.PathLike,
-) -> Optional[epath.Path]:
+) -> epath.Path | None:
   """Gets the path to the latest checkpoint if any.
 
   Use this method instead of latest_checkpoint() if you want to handle the case
@@ -199,7 +195,7 @@ def latest_checkpoint(checkpoint_dir: epath.PathLike) -> epath.Path:
 
 def retrieve_latest_checkpoint_step_if_exists(
     checkpoint_dir: epath.Path,
-) -> Optional[int]:
+) -> int | None:
   """Retrieves the latest checkpoint step within the given directory if any.
 
   Use this method instead of retrieve_latest_checkpoint_step() if you want to
@@ -256,6 +252,11 @@ def retrieve_latest_checkpoint_step(
   if step is None:
     _raise_checkpoint_missing_error(checkpoint_dir)
   return step
+
+
+def is_tfhub_dir(directory: epath.Path) -> bool:
+  """Returns whether the given directory is a TFHub directory."""
+  return False  # mapped to internal impl.
 
 
 def _raise_checkpoint_missing_error(checkpoint_dir: epath.Path):

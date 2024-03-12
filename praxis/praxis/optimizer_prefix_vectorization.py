@@ -46,11 +46,9 @@ indicates it's a tuple of elements separated by ','.
 Stacking variables helps reduce the number of individual variables, which can be
 beneficial for compilation time and the current GDA-based checkpointing.
 """
-
 import copy
 import functools
-from typing import Callable, Optional, Sequence, Tuple, Union
-
+from typing import Callable, Sequence
 import jax
 import optax
 from praxis import base_layer
@@ -72,6 +70,55 @@ _REPEAT_PREFIX_SEP = '#'
 
 def has_no_prefix(dct: NestedMap) -> bool:
   return dct.keys() == set([NO_PREFIX_KEY])
+
+
+def partition_params(
+    grad_tx: optax.GradientTransformation,
+    var_weight_hparams: base_layer.NestedWeightHParams | None,
+    opt_states: optax.OptState,
+    repeat_prefix_sep: str = '#',
+):
+  """Applies sharding for optimizer params with tree_map_params.
+
+  If optimizer states are a dictionary instead of a tuple, it contains
+  states grouped by prefix vectorization. If yes, we call partition_params on
+  individual group of optimizer states.
+
+  Args:
+    grad_tx: Optax optimizer transformation
+    var_weight_hparams: Weight Params for the vars
+    opt_states: Optimizer states returned from init.
+    repeat_prefix_sep: The separator for prefix vectorization key
+
+  Returns:
+    Partition spec for parameters.
+  """
+  if isinstance(grad_tx, _PrefixVectorizationTransform):
+    # Currently only the PrefixVectorizationTransformation creates a dictionary
+    # in optimizer states. In this case, we want to call tree_map_params on each
+    # group with the original gradient transformation.
+    # Since prefix vectorization modifies the params tree structure, we retain
+    # original transformation and call tree_map_params on it.
+    if isinstance(opt_states, dict):
+      opt_states_pspec = NestedMap()
+      for prefix, group in opt_states.items():
+        opt_states_pspec[prefix] = optimizers.partition_params(
+            grad_tx=grad_tx.original_grad_tx,
+            var_weight_hparams=var_weight_hparams,
+            opt_states=group,
+        )
+      return opt_states_pspec
+    else:
+      # If force_prefix_structure is False and there are no repeat prefixes,
+      # when creating prefix vectorization, opt_states will not contain a
+      # dictionary with single 'no_prefix' key. But we still want to call
+      # tree_map_params on the original transformation.
+      grad_tx = grad_tx.original_grad_tx
+  return optimizers.partition_params(
+      grad_tx,
+      var_weight_hparams,
+      opt_states,
+  )
 
 
 def _vectorize_on_prefix_dims(
@@ -99,8 +146,9 @@ def _vectorize_on_prefix_dims(
   return v_fns[-1]
 
 
-def _encode_sharding_dim(d: Optional[Union[str, Sequence[str], int]],
-                         repeat_prefix_sep: str) -> str:
+def _encode_sharding_dim(
+    d: str | Sequence[str] | int | None, repeat_prefix_sep: str
+) -> str:
   """Encodes the sharding annotation into a string for one dimension."""
   if d is None:
     return ''
@@ -117,7 +165,7 @@ def _encode_sharding_dim(d: Optional[Union[str, Sequence[str], int]],
   return 's' + d
 
 
-def _decode_sharding_dim(d: str) -> Optional[Union[str, Sequence[str], int]]:
+def _decode_sharding_dim(d: str) -> str | Sequence[str] | int | None:
   """Decodes the sharding annotation from a string for one dimension."""
   if not d:
     return None
@@ -166,7 +214,7 @@ def _get_var_param_repeat_prefix_key(var_param: base_layer.WeightHParams,
 
 def _parse_var_param_repeat_prefix_key(
     prefix: str, repeat_prefix_sep: str
-) -> Tuple[SplitDimsMapping, SplitDimsMapping, SplitDimsMapping]:
+) -> tuple[SplitDimsMapping, SplitDimsMapping, SplitDimsMapping]:
   """Parses shape and sharding prefixes from string keys."""
   if prefix == NO_PREFIX_KEY:
     return [], [], []
@@ -239,7 +287,9 @@ def _init_with_vectorized_repeat_prefix(
     tx: GeneralGradientTransformation, var_vals: NestedJTensor,
     var_hparams: NestedHParams, repeat_prefix_sep: str,
     force_prefix_structure: bool = False) -> optax.OptState:
+
   """init function for vectorized optimizers based on var_hparams."""
+
   vmap_groups = _group_by_repeat_prefix(var_vals, var_hparams,
                                         repeat_prefix_sep)
   results = NestedMap()
@@ -257,11 +307,14 @@ def _init_with_vectorized_repeat_prefix(
 
 
 def _update_with_vectorized_repeat_prefix(
-    tx: GeneralGradientTransformation, updates: NestedJTensor,
-    state: optax.OptState, old_vars: NestedJTensor, var_hparams: NestedHParams,
+    tx: GeneralGradientTransformation,
+    updates: NestedJTensor,
+    state: optax.OptState,
+    old_vars: NestedJTensor,
+    var_hparams: NestedHParams,
     repeat_prefix_sep: str,
-    force_prefix_structure: bool = False
-    ) -> Tuple[NestedJTensor, optax.OptState]:
+    force_prefix_structure: bool = False,
+) -> tuple[NestedJTensor, optax.OptState]:
   """update function for vectorized optimizers based on var_hparams."""
   grouped_updates = _group_by_repeat_prefix(updates, var_hparams,
                                             repeat_prefix_sep)
@@ -347,6 +400,20 @@ def _init_partition_spec_with_vectorized_repeat_prefix(
   return results
 
 
+class _PrefixVectorizationTransform(optax.GradientTransformationExtraArgs):
+  """Captures original gradient transformation when using prefix vectorization."""
+
+  def __new__(
+      cls,
+      init: optax.TransformInitFn,
+      update: optax.TransformUpdateExtraArgsFn,
+      original_grad_tx: optax.GradientTransformation,
+  ):
+    self = super().__new__(cls, init, update)  # pylint: disable=too-many-function-args
+    self.original_grad_tx: optax.GradientTransformation = original_grad_tx
+    return self
+
+
 def get_transformations_with_vectorized_repeat_prefix(
     tx: GeneralGradientTransformation,
     var_hparams: NestedHParams,
@@ -385,9 +452,10 @@ def get_transformations_with_vectorized_repeat_prefix(
     )
 
   if isinstance(tx, ShardedGradientTransformation):
-    # lsp
     return ShardedGradientTransformation(
         init=_init, update=_update, init_partition_spec=_init_partition_spec)
   else:
     assert isinstance(tx, optax.GradientTransformation)
-    return optax.GradientTransformation(init=_init, update=_update)
+    return _PrefixVectorizationTransform(
+        init=_init, update=_update, original_grad_tx=tx
+    )

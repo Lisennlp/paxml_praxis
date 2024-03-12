@@ -16,7 +16,6 @@
 """Helper for testing the import and construction of experiment configs."""
 
 import re
-from typing import List
 
 from absl.testing import absltest
 import jax
@@ -48,10 +47,13 @@ class ExperimentImportsTestHelper(absltest.TestCase):
     task = instantiate(task_p)
     self.assertIsInstance(task, base_task.BaseTask)
 
-    tags: List[str] = registry.get_registry_tags(name)
+    tags: list[str] = registry.get_registry_tags(name)
 
-    dataset_splits = (experiment_params.datasets()
-                      + experiment_params.decoder_datasets())
+    if hasattr(experiment_params, 'decode_datasets'):
+      decode_datasets = experiment_params.decode_datasets()
+    else:
+      decode_datasets = experiment_params.decoder_datasets()
+    dataset_splits = experiment_params.datasets() + decode_datasets
     # Registered experiment configurations must have at least a dataset split.
     self.assertNotEmpty(dataset_splits)
     for s in dataset_splits:
@@ -59,7 +61,6 @@ class ExperimentImportsTestHelper(absltest.TestCase):
           s,
           (
               pax_fiddle.Config,
-              base_input.DistributedInputHParams,
           ),
       )
 
@@ -79,8 +80,9 @@ class ExperimentImportsTestHelper(absltest.TestCase):
       # (and check for dcn_mesh_shape too).
       if (hasattr(model, 'ici_mesh_shape') and
           model.ici_mesh_shape is not None):
-        input_specs = jax.tree_map(py_utils.get_global_input_shape_dtype,
-                                   input_specs)
+        input_specs = jax.tree.map(
+            py_utils.get_global_input_shape_dtype, input_specs
+        )
       model.abstract_init_with_metadata(input_specs)
 
   @classmethod

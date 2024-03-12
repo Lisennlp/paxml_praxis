@@ -14,6 +14,7 @@
 # limitations under the License.
 
 """Parameteric tests for layers that implemented the ghost norm protocol."""
+
 import copy
 import functools
 from absl.testing import absltest
@@ -68,12 +69,29 @@ class LayersTest(parameterized.TestCase):
     np.random.seed(123456)
     tf.random.set_seed(123)
 
-  def _get_loss_fns(self, ghostnorm_layer, ref_layer, extract_outputs_fn=None):
-    noise_key = jax.random.PRNGKey(seed=12345)
+  def _get_batch_size(self, inputs_args, inputs_kwargs):
+    if inputs_args:
+      return inputs_args[0].shape[0]
+    if inputs_kwargs:
+      return list(inputs_kwargs.values())[0].shape[0]
+
+  def _get_loss_fns(
+      self,
+      ghostnorm_layer,
+      ref_layer,
+      method='__call__',
+      extract_outputs_fn=None,
+      ref_layer_method=None,
+  ):
+    noise_key = jax.random.key(seed=12345)
 
     def loss_fn(mdl_vars, *inputs_args, **inputs_kwargs):
       outputs = ghostnorm_layer.apply(
-          mdl_vars, *inputs_args, **inputs_kwargs, rngs={RANDOM: noise_key}
+          mdl_vars,
+          *inputs_args,
+          **inputs_kwargs,
+          rngs={RANDOM: noise_key},
+          method=method,
       )
       if extract_outputs_fn:
         outputs = extract_outputs_fn(outputs)
@@ -81,7 +99,11 @@ class LayersTest(parameterized.TestCase):
 
     def loss_fn_ref(mdl_vars, *inputs_args, **inputs_kwargs):
       outputs = ref_layer.apply(
-          mdl_vars, *inputs_args, **inputs_kwargs, rngs={RANDOM: noise_key}
+          mdl_vars,
+          *inputs_args,
+          **inputs_kwargs,
+          rngs={RANDOM: noise_key},
+          method=ref_layer_method or method,
       )
       if extract_outputs_fn:
         outputs = extract_outputs_fn(outputs)
@@ -96,10 +118,10 @@ class LayersTest(parameterized.TestCase):
     grad_fn = jax.grad(loss_fn)
     grad_fn_with_vars = functools.partial(grad_fn, initial_vars)
     per_eg_grad_fn = jax.vmap(grad_fn_with_vars)
-    vmap_inputs_args = jax.tree_map(
+    vmap_inputs_args = jax.tree.map(
         lambda x: jnp.expand_dims(x, axis=1), inputs_args
     )
-    vmap_inputs_kwargs = jax.tree_map(
+    vmap_inputs_kwargs = jax.tree.map(
         lambda x: jnp.expand_dims(x, axis=1), inputs_kwargs
     )
     per_eg_grad = per_eg_grad_fn(*vmap_inputs_args, **vmap_inputs_kwargs)
@@ -109,7 +131,7 @@ class LayersTest(parameterized.TestCase):
       self, initial_vars, loss_fn, scales, *inputs_args, **inputs_kwargs
   ):
     grad_fn = jax.grad(loss_fn)
-    params_with_sq_norms = jax.tree_map(
+    params_with_sq_norms = jax.tree.map(
         lambda x: base.ParamWithAux(x, scales), initial_vars[PARAMS]
     )
     params_with_sq_norms = {**initial_vars, PARAMS: params_with_sq_norms}
@@ -137,18 +159,25 @@ class LayersTest(parameterized.TestCase):
       *input_args,
       **input_kwargs,
   ):
+    method = input_kwargs.pop('method', '__call__')
+    ref_layer_method = input_kwargs.pop('ref_layer_method', method)
     extract_outputs_fn = input_kwargs.pop('extract_outputs_fn', None)
-    noise_key = jax.random.PRNGKey(seed=12345)
+    noise_key = jax.random.key(seed=12345)
 
     # make sure the layer behaves the same as the reference layer in forward
     ghostnorm_outputs = ghostnorm_layer.apply(
         ghostnorm_initial_vars,
         *input_args,
         **input_kwargs,
+        method=method,
         rngs={RANDOM: noise_key},
     )
     ref_outputs = ref_layer.apply(
-        initial_vars, *input_args, **input_kwargs, rngs={RANDOM: noise_key}
+        initial_vars,
+        *input_args,
+        **input_kwargs,
+        rngs={RANDOM: noise_key},
+        method=ref_layer_method,
     )
     if extract_outputs_fn is not None:
       ghostnorm_outputs = extract_outputs_fn(ghostnorm_outputs)
@@ -156,8 +185,7 @@ class LayersTest(parameterized.TestCase):
     np.testing.assert_allclose(
         ghostnorm_outputs,
         ref_outputs,
-        rtol=1e-5,
-        atol=1e-5,
+        rtol=1e-7,
         err_msg='outputs are different.',
     )
 
@@ -171,7 +199,7 @@ class LayersTest(parameterized.TestCase):
     per_eg_grad_norms = jax.vmap(optax.global_norm)(per_eg_grad)
 
     # first pass to compute gradient norm
-    batch_size = inputs_args[0].shape[0]
+    batch_size = self._get_batch_size(inputs_args, inputs_kwargs)
     _, fast_per_eg_grad_norms = self._get_grad_and_norms(
         initial_vars,
         loss_fn,
@@ -185,7 +213,6 @@ class LayersTest(parameterized.TestCase):
         per_eg_grad_norms,
         fast_per_eg_grad_norms,
         rtol=1e-5,
-        atol=1e-5,
         err_msg=(
             "computed per-example gradient norms don't match expected values."
         ),
@@ -200,8 +227,8 @@ class LayersTest(parameterized.TestCase):
       *inputs_args,
       **inputs_kwargs,
   ):
-    unwrap_grad = inputs_kwargs.pop('unwrap_grad', False)
-    batch_size = inputs_args[0].shape[0]
+    unwrap_grad_fn = inputs_kwargs.pop('unwrap_grad_fn', None)
+    batch_size = self._get_batch_size(inputs_args, inputs_kwargs)
     grad_with_sq_norms, _ = self._get_grad_and_norms(
         ghost_initial_vars,
         loss_fn,
@@ -209,19 +236,18 @@ class LayersTest(parameterized.TestCase):
         *inputs_args,
         **inputs_kwargs,
     )
-    if unwrap_grad:
-      grad_with_sq_norms = _remove_generic_layer_structure(grad_with_sq_norms)
+    if unwrap_grad_fn:
+      grad_with_sq_norms = unwrap_grad_fn(grad_with_sq_norms)
 
     # test if the computed gradient matches the grad of the reference layer
     grad_fn_ref = jax.grad(loss_fn_ref)
     grad_ref = grad_fn_ref(initial_vars, *inputs_args, **inputs_kwargs)[PARAMS]
-    grad_diffs = jax.tree_map(
+    grad_diffs = jax.tree.map(
         lambda x, y: np.mean(np.abs(x - y.param)), grad_ref, grad_with_sq_norms
     )
     np.testing.assert_allclose(
         jax.tree_util.tree_flatten(grad_diffs)[0],
         0,
-        rtol=1e-5,
         atol=1e-5,
         err_msg='average gradients are different.',
     )
@@ -230,7 +256,7 @@ class LayersTest(parameterized.TestCase):
       self, initial_vars, loss_fn, *inputs_args, **inputs_kwargs
   ):
     # first pass to compute gradient norm
-    batch_size = inputs_args[0].shape[0]
+    batch_size = self._get_batch_size(inputs_args, inputs_kwargs)
     _, fast_per_eg_grad_norms = self._get_grad_and_norms(
         initial_vars,
         loss_fn,
@@ -240,22 +266,24 @@ class LayersTest(parameterized.TestCase):
     )
 
     # second pass to compute norm-clipped gradients
-    l2_clip = 0.2
+    # clip at median to ensure at least some examples are clipped.
+    l2_clip = np.median(fast_per_eg_grad_norms)
+    l2_clip = max(l2_clip, 1e-4)
+
     scales = jnp.minimum(1.0, l2_clip / fast_per_eg_grad_norms)
     _, scaled_fast_per_eg_grad_norms = self._get_grad_and_norms(
         initial_vars, loss_fn, scales, *inputs_args, **inputs_kwargs
     )
 
     self.assertTrue(
-        np.all(scaled_fast_per_eg_grad_norms <= l2_clip + 1e-5),
+        np.all(scaled_fast_per_eg_grad_norms <= l2_clip * (1 + 1e-5)),
         msg='norm clipping conditions are not satisfied.',
     )
 
   def assertClippedGradEqualsScaledGrad(
       self, initial_vars, loss_fn, *inputs_args, **inputs_kwargs
   ):
-    l2_clip = 0.2
-    batch_size = inputs_args[0].shape[0]
+    batch_size = self._get_batch_size(inputs_args, inputs_kwargs)
     # get expected per-example gradient norms by explicitly materialize
     per_eg_grad = self._get_per_eg_grad(
         initial_vars, loss_fn, *inputs_args, **inputs_kwargs
@@ -263,11 +291,15 @@ class LayersTest(parameterized.TestCase):
 
     # compute the expected average gradients from the clipped per-example grads
     grads_flat, grads_treedef = jax.tree_flatten(per_eg_grad[PARAMS])
+    # clip at median to ensure at least some examples are clipped.
+    l2_clip = np.median(jax.vmap(optax.global_norm)(grads_flat))
+    l2_clip = max(l2_clip, 1e-4)
+
     sum_clipped, _ = optax.per_example_global_norm_clip(
         grads=grads_flat, l2_norm_clip=l2_clip
     )
     sum_grads = jax.tree_unflatten(grads_treedef, sum_clipped)
-    expected_grads = jax.tree_map(lambda x: x / batch_size, sum_grads)
+    expected_grads = jax.tree.map(lambda x: x / batch_size, sum_grads)
 
     _, fast_per_eg_grad_norms = self._get_grad_and_norms(
         initial_vars,
@@ -282,18 +314,17 @@ class LayersTest(parameterized.TestCase):
     )
 
     is_leaf = lambda x: isinstance(x, base.ParamWithAux)
-    obtained_grads = jax.tree_map(
+    obtained_grads = jax.tree.map(
         lambda x: x.param, grad_with_sq_norms, is_leaf=is_leaf
     )
-
-    diffs = jax.tree_map(
+    diffs = jax.tree.map(
         lambda x, y: np.mean(np.abs(x - y)), expected_grads, obtained_grads
     )
+
     np.testing.assert_allclose(
         jax.tree_util.tree_flatten(diffs)[0],
-        0,
-        rtol=1e-5,
-        atol=1e-2,
+        0.0,
+        atol=1e-5,
         err_msg='ghost norm clipping outputs incorrect average gradients.',
     )
 
@@ -324,7 +355,7 @@ class LayersTest(parameterized.TestCase):
           'reference_layer_cls': praxis_linears.Bias,
           'ghostnorm_layer_cls': linears.BiasGhostNorm,
           'configs': {'dims': 3},
-          'inputs_fn': lambda: np.random.normal(0, 0.1, size=(32, 24, 3)),
+          'inputs_fn': lambda: np.random.normal(0, 0.1, size=(32, 4, 3)),
       },
       {
           'testcase_name': 'Embedding',
@@ -356,14 +387,14 @@ class LayersTest(parameterized.TestCase):
           'reference_layer_cls': praxis_embedding.Embedding,
           'ghostnorm_layer_cls': embedding.EmbeddingGhostNorm,
           'configs': {'input_dims': 3, 'num_classes': 10},
-          'inputs_fn': lambda: np.random.randint(0, 10, size=(32, 24, 20)),
+          'inputs_fn': lambda: np.random.randint(0, 10, size=(32, 4, 4)),
       },
       {
           'testcase_name': 'EmbeddingMultiDimInputsOOB',
           'reference_layer_cls': praxis_embedding.Embedding,
           'ghostnorm_layer_cls': embedding.EmbeddingGhostNorm,
           'configs': {'input_dims': 3, 'num_classes': 2},
-          'inputs_fn': lambda: np.random.randint(0, 10, size=(32, 24, 3)),
+          'inputs_fn': lambda: np.random.randint(0, 10, size=(32, 4, 4)),
       },
       {
           'testcase_name': 'EmbeddingMatMul',
@@ -397,7 +428,7 @@ class LayersTest(parameterized.TestCase):
     ghostnorm_layer = instantiate(ghostnorm_layer_tpl)
     inputs = jnp.asarray(inputs_fn())
 
-    prng_key = jax.random.PRNGKey(seed=1234)
+    prng_key = jax.random.key(seed=1234)
     init_key, random_key = jax.random.split(prng_key)
     initial_vars = ghostnorm_layer.init(
         {PARAMS: init_key, RANDOM: random_key}, inputs
@@ -421,57 +452,97 @@ class LayersTest(parameterized.TestCase):
           'testcase_name': 'Embedding',
           'reference_layer_cls': praxis_embedding.Embedding,
           'configs': {'input_dims': 3, 'num_classes': 10},
-          'inputs_fn': lambda: np.random.randint(0, 10, size=(2, 1)),
+          'inputs_fn': lambda: (np.random.randint(0, 10, size=(32, 1)),),
+      },
+      {
+          'testcase_name': 'EmbeddingEmbLookup',
+          'reference_layer_cls': praxis_embedding.Embedding,
+          'configs': {'input_dims': 3, 'num_classes': 10},
+          'inputs_fn': lambda: (np.random.randint(0, 10, size=(32, 1)),),
+          'method': 'emb_lookup',
       },
       {
           'testcase_name': 'Linear',
           'reference_layer_cls': praxis_linears.Linear,
           'configs': {'input_dims': 10, 'output_dims': 10},
-          'inputs_fn': lambda: np.random.normal(0, 0.1, size=(32, 10)),
+          'inputs_fn': lambda: (np.random.normal(0, 0.1, size=(32, 10)),),
       },
       {
           'testcase_name': 'FeedForward',
           'reference_layer_cls': praxis_linears.FeedForward,
           'configs': {'input_dims': 3, 'output_dims': 4},
-          'inputs_fn': lambda: np.random.normal(0, 0.1, size=(2, 3)),
+          'inputs_fn': lambda: (np.random.normal(0, 0.1, size=(32, 3)),),
+      },
+      {
+          'testcase_name': 'FeedForwardKwargs',
+          'reference_layer_cls': praxis_linears.FeedForward,
+          'configs': {'input_dims': 3, 'output_dims': 4},
+          'inputs_kwargs_fn': lambda: {
+              'inputs': np.random.normal(0, 0.1, size=(32, 3))
+          },
       },
   )
   def test_calculate_grad_norms_generic(
-      self, reference_layer_cls, configs, inputs_fn
+      self,
+      reference_layer_cls,
+      configs,
+      inputs_fn=None,
+      inputs_kwargs_fn=None,
+      method='__call__',
   ):
     """Expected values calculated using reference layer that is wrapped."""
     ref_layer_tpl = pax_fiddle.Config(reference_layer_cls, **configs)
-    ghostnorm_layer_tpl = pax_fiddle.Config(generic_wrapper.WrappedGhostNorm)
-    ghostnorm_layer_tpl.layer_tpl = ref_layer_tpl.clone()
+    ghostnorm_layer_tpl = generic_wrapper.generate_wrapped_template(
+        ref_layer_tpl.clone(), force_no_replace=True, force_wrap=True
+    )
 
     ref_layer = instantiate(ref_layer_tpl)
     ghostnorm_layer = instantiate(ghostnorm_layer_tpl)
-    inputs = jnp.asarray(inputs_fn())
+    inputs, inputs_kwargs = (), {}
+    if inputs_fn is not None:
+      inputs = jnp.asarray(inputs_fn())
+    if inputs_kwargs_fn is not None:
+      inputs_kwargs = jax.tree.map(jnp.asarray, inputs_kwargs_fn())
 
-    prng_key = jax.random.PRNGKey(seed=1234)
+    prng_key = jax.random.key(seed=1234)
     init_key, random_key = jax.random.split(prng_key)
     ghost_initial_vars = ghostnorm_layer.init(
-        {PARAMS: init_key, RANDOM: random_key}, inputs
+        {PARAMS: init_key, RANDOM: random_key}, *inputs, **inputs_kwargs
     )
     initial_vars = {PARAMS: ghost_initial_vars[PARAMS][LAYER]}
 
     self.assertOutputsAreSame(
-        ghost_initial_vars, initial_vars, ghostnorm_layer, ref_layer, inputs
+        ghost_initial_vars,
+        initial_vars,
+        ghostnorm_layer,
+        ref_layer,
+        *inputs,
+        **inputs_kwargs,
+        method=method,
     )
 
-    loss_fn, loss_fn_ref = self._get_loss_fns(ghostnorm_layer, ref_layer)
+    loss_fn, loss_fn_ref = self._get_loss_fns(
+        ghostnorm_layer, ref_layer, method
+    )
 
-    self.assertGradNormsAreSame(ghost_initial_vars, loss_fn, inputs)
+    self.assertGradNormsAreSame(
+        ghost_initial_vars, loss_fn, *inputs, **inputs_kwargs
+    )
     self.assertGradIsSame(
         ghost_initial_vars,
         initial_vars,
         loss_fn,
         loss_fn_ref,
-        inputs,
-        unwrap_grad=True,
+        *inputs,
+        **inputs_kwargs,
+        unwrap_grad_fn=_remove_generic_layer_structure,
     )
-    self.assertGradIsClippedToScale(ghost_initial_vars, loss_fn, inputs)
-    self.assertClippedGradEqualsScaledGrad(ghost_initial_vars, loss_fn, inputs)
+    self.assertGradIsClippedToScale(
+        ghost_initial_vars, loss_fn, *inputs, **inputs_kwargs
+    )
+    self.assertClippedGradEqualsScaledGrad(
+        ghost_initial_vars, loss_fn, *inputs, **inputs_kwargs
+    )
 
   @parameterized.named_parameters(
       {
@@ -484,7 +555,7 @@ class LayersTest(parameterized.TestCase):
       },
   )
   def test_calculate_grad_norms_transformer(self, model_type):
-    batch_size = 2
+    batch_size = 32
     seq_len = 10
     model_dim = 32
     vocab_size = 52
@@ -503,6 +574,12 @@ class LayersTest(parameterized.TestCase):
     stacked_transformer_tpl.hidden_dims = num_heads * model_dim
     stacked_transformer_tpl.num_heads = num_heads
     stacked_transformer_tpl.num_layers = 1
+
+    tr_atten_tpl = (
+        stacked_transformer_tpl.transformer_layer_params_tpl.tr_atten_tpl
+    )
+    tr_atten_tpl.combine_qkv = True
+
     ref_layer_tpl.softmax_tpl.scale_sqrt_depth = True
 
     # Use a separate embedding as shared weights are not compatible with
@@ -512,7 +589,7 @@ class LayersTest(parameterized.TestCase):
     )
 
     inputs = jax.random.randint(
-        jax.random.PRNGKey(1234), [batch_size, seq_len], 0, vocab_size
+        jax.random.key(1234), [batch_size, seq_len], 0, vocab_size
     )
     input_paddings = jnp.zeros([batch_size, seq_len])
     input_weights = jnp.ones([batch_size, seq_len])
@@ -532,7 +609,7 @@ class LayersTest(parameterized.TestCase):
     ghostnorm_layer = instantiate(ghostnorm_layer_tpl)
 
     ghost_initial_vars = ghostnorm_layer.init(
-        jax.random.PRNGKey(1234),
+        jax.random.key(1234),
         inputs,
         paddings=input_paddings,
         labels=labels,
@@ -581,7 +658,7 @@ class LayersTest(parameterized.TestCase):
         labels=labels,
         segment_ids=input_segment_ids,
         segment_pos=input_segment_pos,
-        unwrap_grad=True,
+        unwrap_grad_fn=_remove_generic_layer_structure,
     )
     self.assertGradIsClippedToScale(
         ghost_initial_vars,
@@ -601,6 +678,84 @@ class LayersTest(parameterized.TestCase):
         segment_ids=input_segment_ids,
         segment_pos=input_segment_pos,
     )
+
+  @parameterized.product(
+      ref_layer_lookup_style=['matmul', 'index'],
+      ghostnorm_layer_lookup_style=['matmul', 'index'],
+      scale_sqrt_depth=[False, True],
+  )
+  def test_shared_embedding(
+      self,
+      ref_layer_lookup_style,
+      ghostnorm_layer_lookup_style,
+      scale_sqrt_depth,
+  ):
+    """Test EmbeddingGhostNorm and SharedEmbeddingSoftmax equivalence."""
+
+    inputs_fn = lambda: np.random.randint(0, 10, size=(32, 1))
+    configs = {
+        'input_dims': 3,
+        'num_classes': 10,
+        'scale_sqrt_depth': scale_sqrt_depth,
+    }
+
+    ref_layer_tpl = pax_fiddle.Config(
+        praxis_embedding.SharedEmbeddingSoftmax,
+        lookup_style=ref_layer_lookup_style,
+        **configs,
+    )
+    ghostnorm_layer_tpl = pax_fiddle.Config(
+        embedding.EmbeddingGhostNorm,
+        use_softmax_shared_embedding_shape_weights=True,
+        lookup_style=ghostnorm_layer_lookup_style,
+        **configs,
+    )
+
+    ref_layer = instantiate(ref_layer_tpl)
+    ghostnorm_layer = instantiate(ghostnorm_layer_tpl)
+    inputs = jnp.asarray(inputs_fn())
+
+    prng_key = jax.random.key(seed=1234)
+    init_key, random_key = jax.random.split(prng_key)
+    ghost_initial_vars = ghostnorm_layer.init(
+        {PARAMS: init_key, RANDOM: random_key}, inputs
+    )
+    initial_vars = {
+        PARAMS: {
+            'logits_ffn': {
+                'linear': {'w': ghost_initial_vars[PARAMS]['emb_var']}
+            }
+        }
+    }
+
+    self.assertOutputsAreSame(
+        ghost_initial_vars,
+        initial_vars,
+        ghostnorm_layer,
+        ref_layer,
+        inputs,
+        ref_layer_method='emb_lookup',
+    )
+
+    loss_fn, loss_fn_ref = self._get_loss_fns(
+        ghostnorm_layer, ref_layer, ref_layer_method='emb_lookup'
+    )
+
+    def _convert_grad_to_ref(grads):
+      grads = {'logits_ffn': {'linear': {'w': grads['emb_var']}}}
+      return grads
+
+    self.assertGradNormsAreSame(ghost_initial_vars, loss_fn, inputs)
+    self.assertGradIsSame(
+        ghost_initial_vars,
+        initial_vars,
+        loss_fn,
+        loss_fn_ref,
+        inputs,
+        unwrap_grad_fn=_convert_grad_to_ref,
+    )
+    self.assertGradIsClippedToScale(ghost_initial_vars, loss_fn, inputs)
+    self.assertClippedGradEqualsScaledGrad(ghost_initial_vars, loss_fn, inputs)
 
 
 if __name__ == '__main__':

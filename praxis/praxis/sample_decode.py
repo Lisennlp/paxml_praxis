@@ -21,7 +21,7 @@ Greedy decode is a special case for sample decode.
 
 import abc
 import functools
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Sequence, Tuple
 
 from flax import linen as nn
 import jax
@@ -32,7 +32,7 @@ from praxis import base_layer
 from praxis import decoder_utils
 from praxis import pax_fiddle
 from praxis import py_utils
-from praxis import pytypes
+from praxis import token_samplers
 
 NestedMap = py_utils.NestedMap
 JTensor = base_layer.JTensor
@@ -47,36 +47,18 @@ SUMMARIES = base_layer.SUMMARIES
 DECODE_CACHE = base_layer.DECODE_CACHE
 PREFIX_DECODE_CACHE = base_layer.PREFIX_DECODE_CACHE
 DUMMY_PRNG_KEY = decoder_utils.DUMMY_PRNG_KEY
+MAX_NUM_PER_TOKEN_LOGPROBS = 5
 
+# TODO(pax-dev): Remove these indirect exposures.
+_batch_rngs_random_gumbel = token_samplers._batch_rngs_random_gumbel
+epsilon_mask_logits = token_samplers.epsilon_mask_logits
+get_top_k = token_samplers.get_top_k
+sample_from_top_k_and_top_p = token_samplers.sample_from_top_k_and_top_p
+sample_from_top_p_given_top_k = token_samplers.sample_from_top_p_given_top_k
+top_p_mask_logits = token_samplers.top_p_mask_logits
 
-def _batch_rngs_random_gumbel(rngs: JTensor, shape: Sequence[int]) -> JTensor:
-  """Samples gumbel random values with one or batch of PRNGKeys.
-
-  Args:
-    rngs: JTensor of int32, a single PRNGKey with shape of (2,) or a batch of
-      PRNGKeys with shape of (batch_size, 2), where batch_size is the first
-      dimension of `shape`.
-    shape: Sequence of ints, the shape of output tensor.
-
-  Returns:
-    A tensor of sampled gumbel random values.
-  """
-  if rngs.ndim == 1:
-    return jax.random.gumbel(rngs, shape)
-
-  batch_size, *remaining_shape = shape
-
-  def _impl(rng):
-    return jax.random.gumbel(rng, remaining_shape)
-
-  if rngs.ndim != 2 or rngs.shape[0] != batch_size:
-    raise ValueError(
-        'When sample for a batch of PRNGKeys, rngs must be 2d '
-        f'with batch_size as its first dim, get {rngs.shape} '
-        f'instead when batch_size is {batch_size}.'
-    )
-
-  return jax.vmap(_impl)(rngs)
+BaseNextTokenSampler = token_samplers.BaseNextTokenSampler
+DefaultNextTokenSampler = token_samplers.DefaultNextTokenSampler
 
 
 def reorder_with_indices(x: JTensor, indices: JTensor):
@@ -97,7 +79,9 @@ def reorder_with_indices(x: JTensor, indices: JTensor):
   return x[batch_indices, indices]
 
 
-def sort_samples_by_scores(result: NestedMap) -> NestedMap:
+def sort_samples_by_scores(
+    result: NestedMap, top_k_recall_target: float = 0.85
+) -> NestedMap:
   """Sorts samples by scores.
 
   Args:
@@ -108,6 +92,9 @@ def sort_samples_by_scores(result: NestedMap) -> NestedMap:
       prefix), and `.logprobs` (the log probability of selected tokens,
       including the prefix, where a positive value of 1.0 is used to indicate
       padded positions). The result has shape [batch, num_samples, ...].
+    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
+      specified recall target for the top_k sampling. See
+      https://arxiv.org/abs/2206.14286 for more details.
 
   Returns:
     Result sorted at num_samples dimension by scores.
@@ -122,7 +109,13 @@ def sort_samples_by_scores(result: NestedMap) -> NestedMap:
   scores = jnp.sum(logprobs, -1)
   num_samples = scores.shape[-1]
   # Uses top_k to get indices.
-  _, indices = jax.lax.approx_max_k(scores, num_samples, recall_target=0.85)
+  if top_k_recall_target < 1.0:
+    assert top_k_recall_target > 0.0
+    _, indices = jax.lax.approx_max_k(
+        scores, num_samples, recall_target=top_k_recall_target
+    )
+  else:
+    _, indices = jax.lax.top_k(scores, num_samples)
   return jax.tree_map(
       functools.partial(reorder_with_indices, indices=indices), result
   )
@@ -141,81 +134,12 @@ def split_batch_dim(
   Returns:
     A tensor of shape [batch, num_samples, ...].
   """
-  assert isinstance(x, jnp.ndarray)
+  assert isinstance(x, jnp.ndarray), type(x)
   x_shape = list(x.shape)
   assert x_shape[batch_dim] % num_samples == 0
   x_shape[batch_dim] = x_shape[batch_dim] // num_samples
   x_shape.insert(batch_dim + 1, num_samples)
   return jnp.reshape(x, x_shape)
-
-
-def _get_argmax_ids(top_k_argmax_ids: JTensor, top_k_items: JTensor) -> JTensor:
-  """Gets the original top_k items with top_k_argmax_ids.
-
-  Args:
-    top_k_argmax_ids: JTensor of shape [batch_size], the argmax among
-      top_k_logits.
-    top_k_items: JTensor of shape [batch_size, top_k], the top_k items.
-
-  Returns:
-    A tensor of shape [batch_size].
-  """
-
-  selectors = [
-      jax.lax.broadcasted_iota(
-          jnp.int32, shape=top_k_argmax_ids.shape, dimension=d
-      )
-      for d in range(len(top_k_argmax_ids.shape))
-  ]
-  selectors.append(top_k_argmax_ids)
-  return top_k_items[tuple(selectors)]
-
-
-def get_top_k(
-    logits: JTensor,
-    top_k: int,
-    per_example_top_k: Optional[JTensor],
-    top_k_recall_target: float = 1.0,
-) -> Sequence[JTensor]:
-  """Gets top k logits and indices from given top K.
-
-  Args:
-    logits: Logits of current step. This is a JTensor of [batch_size *
-      num_samples, vocab_size].
-    top_k: Only selecting among the most likely k tokens at each step. top_k is
-      set to the maximum k value for sampling decode.
-    per_example_top_k: Optional per example top_k of shape [batch_size *
-      num_samples]. The value of per_example_top_k should be smaller or equal to
-      `top_k` and larger than 0.
-    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
-      specified recall target for the top_k sampling. See
-      https://arxiv.org/abs/2206.14286 for more details.
-
-  Returns:
-    A tuple of top_k_logits of shape [batch_size * num_samples, top_k] and
-      top_k_indices of shape [batch_size * num_samples, top_k].
-  """
-  # TopK of shape [batch_size * num_samples, top_k]
-  if top_k_recall_target < 1.0:
-    assert top_k_recall_target > 0.0
-    top_k_logits, top_k_indices = jax.lax.approx_max_k(
-        logits, top_k, recall_target=top_k_recall_target
-    )
-  else:
-    top_k_logits, top_k_indices = jax.lax.top_k(logits, top_k)
-
-  if per_example_top_k is not None:
-    per_example_top_k = jnp.minimum(per_example_top_k.astype(jnp.int32), top_k)
-    iota = jnp.tile(
-        jax.lax.iota(dtype=jnp.int32, size=(top_k)), [top_k_logits.shape[0], 1]
-    )
-    top_k_mask = iota < per_example_top_k[:, jnp.newaxis]
-    top_k_logits = jnp.where(
-        top_k_mask,
-        top_k_logits,
-        py_utils.get_large_negative_number(top_k_logits.dtype),
-    )
-  return top_k_logits, top_k_indices
 
 
 def right_align_segment_position(lengths: JTensor, max_length: int) -> JTensor:
@@ -271,209 +195,6 @@ def right_align_prefix_ids(
   return right_align_ids, prefix_paddings  # pytype: disable=bad-return-type  # jax-ndarray
 
 
-def top_p_mask_logits(
-    logits: JTensor,
-    p: Union[float, JTensor],
-    logits_sorted_in_descending_order: bool = False,
-    logits_sum: Optional[JTensor] = None,
-) -> JTensor:
-  """Keep only logits in the top `p` percentile of the softmax distribution.
-
-  All other logits are masked with a large negative number. Typical values of p
-  are 0.95 or 0.99. Also known as nucleus sampling. Note that logits may be
-  passed in descending order with the `logits_sorted_in_descending_order`
-
-  Args:
-    logits: logits of shape [B, T].
-    p: A scalar or a JTensor of shape [B]. In practice this means selecting the
-      highest probability tokens whose cumulative probability mass exceeds this
-      pre-chosen threshold p.
-    logits_sorted_in_descending_order: whether or not the logits is sorted in
-      descending order.
-    logits_sum: If none, apply softmax over logits to get probabilities.
-
-  Returns:
-    The masked logits.
-  """
-  if not isinstance(p, JTensor) and p >= 1.0:
-    return logits
-  batch_size = logits.shape[0]
-  if logits_sorted_in_descending_order:
-    logits_sorted = logits
-  else:
-    # Ascending order. Cumsum will go through small numbers first, which is
-    # more numerically stable.
-    logits_sorted = jnp.sort(logits, axis=-1)
-  if logits_sum is not None:
-    probs = logits_sorted.astype(jnp.float32) / logits_sum
-  else:
-    probs = jax.nn.softmax(logits_sorted.astype(jnp.float32), axis=-1)
-  sorted_cum_probs = jnp.cumsum(probs, axis=-1)
-  cutoff_threshold = p if logits_sorted_in_descending_order else 1.0 - p
-  cutoff_idx = jnp.sum(
-      (sorted_cum_probs <= cutoff_threshold).astype(jnp.int32), axis=-1
-  )
-  cutoff_logit = logits_sorted[jnp.arange(batch_size), cutoff_idx]
-  logits = jnp.where(
-      logits < jnp.expand_dims(cutoff_logit, -1),
-      py_utils.get_large_negative_number(logits.dtype),
-      logits,
-  )
-  return logits
-
-
-def sample_from_top_p_given_top_k(  # pytype: disable=annotation-type-mismatch  # jax-ndarray
-    top_k_logits: JTensor,
-    top_k_indices: JTensor,
-    prng_key: pytypes.PRNGKey,
-    temperature: Union[JTensor, float],
-    top_p: Optional[Union[float, JTensor]] = None,
-    topk_is_sorted: bool = True,
-    logits_sum: JTensor = None,
-) -> Sequence[JTensor]:
-  """Sample decode algorithm from TopP given output from TopK.
-
-  Args:
-    top_k_logits: Top k logits.
-    top_k_indices: Indices corresponding to top-k logits.
-    prng_key: The prng key.
-    temperature: Temperature of sampling decoding. It could be a float or a
-      JTensor of shape [batch_size * num_samples].
-    top_p: See params of `sample_from_top_k_and_top_p`.
-    topk_is_sorted: Whether topk logits are sorted.
-    logits_sum: logits sum.
-
-  Returns:
-    A tuple of next_token_id of shape [batch_size * num_samples] and
-      logprobs_at_new_ids of shape [batch_size * num_samples] computed from the
-      top_k_logits.  next_token_id of shape [batch_size * num_samples].
-  """
-  if top_p is None:
-    top_p_logits = top_k_logits
-  elif isinstance(top_p, JTensor):
-    # Apply top_p to the mask.
-    needs_top_p_mask = jnp.any(top_p < 1.0)
-
-    def _true_fn():
-      return top_p_mask_logits(
-          top_k_logits,
-          top_p,
-          logits_sum=logits_sum,
-          logits_sorted_in_descending_order=topk_is_sorted,
-      )
-
-    def _false_fn():
-      return top_k_logits
-
-    top_p_logits = jax.lax.cond(needs_top_p_mask, _true_fn, _false_fn)
-  else:
-    top_p_logits = top_p_mask_logits(
-        top_k_logits,
-        top_p,
-        logits_sum=logits_sum,
-        logits_sorted_in_descending_order=topk_is_sorted,
-    )
-
-  # Add gumbel noise.
-  if temperature is None:
-    temperature = 0.0
-  gumbel_noise_shape = list(top_p_logits.shape)
-  gumbel_noise = _batch_rngs_random_gumbel(prng_key, gumbel_noise_shape).astype(
-      top_k_logits.dtype
-  )
-
-  # Apply gumbel noise.
-  logits_with_noise = top_p_logits + gumbel_noise * temperature
-  argmax_ids_in_topk = jnp.argmax(logits_with_noise, axis=-1)
-  # Computes log probabilities from top_k logits
-  top_k_logprobs = jax.nn.log_softmax(top_k_logits.astype(jnp.float32))
-
-  return (
-      _get_argmax_ids(argmax_ids_in_topk, top_k_indices),
-      _get_argmax_ids(argmax_ids_in_topk, top_k_logprobs),
-  )
-
-
-def sample_from_top_k_and_top_p(
-    logits: JTensor,
-    prng_key: pytypes.PRNGKey,
-    temperature: Union[JTensor, float],
-    top_k: int,
-    top_p: Optional[Union[float, JTensor]] = None,
-    per_example_top_k: Optional[JTensor] = None,
-    global_normalize: bool = False,
-    top_k_recall_target: float = 1.0,
-) -> Sequence[JTensor]:
-  """Sample decode algorithm from TopK and TopP.
-
-  When both top_k and top_p are defined, top_k will be applied first.
-
-  Args:
-    logits: Logits of current step. This is a JTensor of [batch_size *
-      num_samples, vocab_size].
-    prng_key: The prng key.
-    temperature: Temperature of sampling decoding. It could be a float or a
-      JTensor of shape [batch_size * num_samples].
-    top_k: If nonzero, use top-k sampling, only selecting among the most likely
-      k tokens at each step. top_k is set to the maximum k value for sampling
-      decode.
-    top_p: Optional cutoff probability. A scalar or a JTensor. Use the smallest
-      number of logits whose cumulative sum of probs adds up to (at least)
-      top_p. If it is a JTensor, it has shape [batch_size * num_samples, 1]
-    per_example_top_k: Optional per example top_k of shape [batch_size *
-      num_samples]. The value of per_example_top_k should be smaller or equal to
-      `top_k` and larger than 0.
-    global_normalize: Normalize the logits over top-k logits or globally in the
-      whole vocabulary.
-    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
-      specified recall target for the top_k sampling. See
-      https://arxiv.org/abs/2206.14286 for more details.
-
-  Returns:
-    A tuple of next_token_id of shape [batch_size * num_samples] and
-      logprobs_at_new_ids of shape [batch_size * num_samples] computed from the
-      top_k_logits.  next_token_id of shape [batch_size * num_samples].
-  """
-
-  # TopK of shape [batch_size * num_samples, top_k]
-  top_k_logits, top_k_indices = get_top_k(
-      logits, top_k, per_example_top_k, top_k_recall_target
-  )
-  if global_normalize:
-    logits_sum = jnp.sum(logits.astype(jnp.float32), axis=-1, keepdims=True)
-  else:
-    logits_sum = None
-  return sample_from_top_p_given_top_k(
-      top_k_logits,
-      top_k_indices,
-      prng_key,
-      temperature,
-      top_p,
-      topk_is_sorted=True,
-      logits_sum=logits_sum,
-  )
-
-
-def epsilon_mask_logits(logits: JTensor, epsilon: float) -> JTensor:
-  """Mask logits with absolute probability below epsilon.
-
-  Args:
-    logits: logits of shape [B, T].
-    epsilon: a scalar.
-
-  Returns:
-    The masked logits.
-  """
-  if epsilon <= 0:
-    return logits
-  probs = jax.nn.softmax(logits.astype(jnp.float32), axis=-1)
-  logits = jnp.where(
-      probs < epsilon, py_utils.get_large_negative_number(logits.dtype), logits
-  )
-  # note: logits are no longer normalized after this, sum(exp(logits)) < 1
-  return logits
-
-
 def _condense_state(block_num_samples) -> base_layer.DecodeStateTransformFn:
   """Pads attention states after prefix fprop."""
 
@@ -498,203 +219,122 @@ def _condense_state(block_num_samples) -> base_layer.DecodeStateTransformFn:
   return _condense_state_fn
 
 
-class BaseNextTokenSampler(
+class BaseSampleTerminationConstraint(
     base_hyperparams.FiddleBaseParameterizable, metaclass=abc.ABCMeta
 ):
+  """Base class for sample termination constraint.
+
+  This is used to terminate certain samples early if they don't conform to some
+  specific criteria. It can be conditionally enforced at serving time via the
+  `enforce_sample_constraints` extra input field.
+  """
 
   @abc.abstractmethod
   def __call__(
       self,
-      model: base_layer.BaseLayerApi,
-      logits: JTensor,
-      temperature: Union[float, JTensor],
+      enforce_sample_constraints: JTensor | None,
       decode_loop_state: NestedMap,
-  ) -> NestedMap:
-    """Samples the next token ids given the logits output.
-
-    Args:
-      model: The model object.
-      logits: Logits at current step during decoding. This is a JTensor of [B,
-        V] where B is the batch size and V is the vocab_size.
-      temperature: Temperature of sampling decoding. It could be a float or a
-        JTensor of shape [B].
-      decode_loop_state: Decode loop state at current time step.
-
-    Returns:
-      A NestedMap containing 2 fields:
-        new_ids: JTensor of shape [B] containing the selected next token for
-          each sequence in the batch.
-        logits: JTensor of shape [B, V] containing the (possibly modified)
-          logits at the current step. This return value is used to ensure that
-          the recorded logprobs per sequence takes into account the
-          modifications made to the logits as part of the next token sampling
-          logic.
-        logprobs: [Optional] JTensor of shape [B] containing the log softmax
-          of the selected token for each sequence in. This field allows a faster
-          log probability computation within the sampler itself.
-    """
-
-  def init_decode_loop_state(
-      self,
-      decode_loop_state: NestedMap,
-      model: Optional[base_layer.BaseLayerApi] = None,
-      batch_size: Optional[int] = None,
-      eos_id: Optional[Union[int, Sequence[int], JTensor]] = None,
-  ) -> NestedMap:
-    """Initialize any addition decode loop state."""
-    return decode_loop_state
-
-  def post_process_decode_loop_state(
-      self, decode_loop_state: NestedMap
-  ) -> NestedMap:
-    """Delete unused decode loop state."""
-    return decode_loop_state
+  ) -> JTensor:
+    """Determines which samples to terminate early."""
 
 
-class DefaultNextTokenSampler(BaseNextTokenSampler):
-  """The default sampling logic implementing top-K and top-P sampling.
+def _compute_top_candidate_logprobs_and_ids(
+    num_per_token_logprobs: JTensor, logprobs: JTensor
+) -> Tuple[JTensor, JTensor]:
+  """Computes the top logprobs and token IDs at the current sampling step.
 
-  If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY, gumbel_prng_key
-  will be ignored and model.next_prng_key() is used to generate random noise
-  for sampling decode.
+  At the current sampling step, given the log probabilities of all candidate
+  tokens in the vocabulary, computes and returns the top-k
+  (k = num_per_token_logprobs) log probabilities and the corresponding token
+  IDs.
 
-  Attributes:
-    top_k: if nonzero, use top-k sampling, only selecting among the most likely
-      k tokens at each step.
-    top_p: if not None, use the smallest number of logits whose cumulative sum
-      of probs adds up to (at least) p.
-    epsilon_p: if positive, use epsilon sampling, only selecting among the
-      tokens with probability at least epsilon at each step.
-    global_normalize: if top_k and top_p are enabled together, this flag
-      indicates whether we need to normalize the logits in top_k logits or
-      globally in the whole vocabulary.
-    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
-      specified recall target for the top_k sampling. See
-      https://arxiv.org/abs/2206.14286 for more details.
-    use_top_k_for_logprobs: computes the log probability from the top k logits
-      instead of all logits.
+  Args:
+    num_per_token_logprobs: float JTensor of shape [batch_size * num_samples,].
+      See documentation for the same parameter in `sample_decode` for details.
+    logprobs: float JTensor of shape [batch_size * num_samples, vocab_size]. The
+      log probabilities of all candidate tokens in the vocabulary at the current
+      sampling step for each sample. logprobs[s][t] is the log probability for
+      token t in sample s.
+
+  Returns:
+    (top_candidate_logprobs, top_candidate_ids).
+    top_candidate_logprobs is a float JTensor of shape
+    [batch_size * num_samples, MAX_NUM_PER_TOKEN_LOGPROBS].
+    top_candidate_ids is a jnp.int32 JTensor with the same shape.
   """
-
-  top_k: int = 40
-  top_p: Optional[Union[float, JTensor]] = None
-  epsilon_p: float = 0.0
-  global_normalize: bool = False
-  top_k_recall_target: float = 1.0
-  use_top_k_for_logprobs: bool = False
-
-  def __call__(
-      self,
-      model: base_layer.BaseLayerApi,
-      logits: JTensor,
-      temperature: Union[float, JTensor],
-      decode_loop_state: NestedMap,
-      per_example_top_p: Optional[JTensor] = None,
-      per_example_top_k: Optional[JTensor] = None,
-      gumbel_prng_key: Optional[JTensor] = None,
-  ) -> NestedMap:
-    """The default sampling logic implementing top-K and top-P sampling."""
-    del decode_loop_state
-    assert self.top_k >= 0
-    input_logits = logits
-
-    def _get_prng_key(prng_key):
-      if prng_key is None:
-        # Default method, use `next_prng_key` to generate noise.
-        return model.next_prng_key()
-      else:
-        assert prng_key.shape[0] == logits.shape[0]
-        next_model_key = model.next_prng_key()
-        batch_size = prng_key.shape[0]
-        split_next_model_key = jax.random.split(next_model_key, batch_size)
-        prng_key = jax.lax.cond(
-            jnp.all(prng_key == DUMMY_PRNG_KEY),
-            lambda: split_next_model_key,
-            lambda: prng_key,
-        )
-        return prng_key
-
-    if per_example_top_p is not None:
-      top_p = per_example_top_p
-    else:
-      top_p = getattr(self, 'top_p', None)
-
-    if self.epsilon_p > 0.0:
-      logits = epsilon_mask_logits(logits, self.epsilon_p)
-
-    if self.top_k > 1:
-      new_ids, logprobs_at_new_ids = sample_from_top_k_and_top_p(
-          logits,
-          _get_prng_key(gumbel_prng_key),
-          temperature=temperature,
-          top_k=self.top_k,
-          top_p=top_p,
-          per_example_top_k=per_example_top_k,
-          global_normalize=self.global_normalize,
-          top_k_recall_target=self.top_k_recall_target,
-      )
-      if self.use_top_k_for_logprobs:
-        return NestedMap(
-            new_ids=new_ids,
-            logits=input_logits,
-            logprobs_at_new_ids=logprobs_at_new_ids,
-        )
-      else:
-        return NestedMap(
-            new_ids=new_ids,
-            logits=input_logits,
-        )
-    elif self.top_k == 0:
-      if top_p is not None:
-        logits = top_p_mask_logits(logits, top_p)
-      if isinstance(temperature, JTensor) or temperature > 0.0:
-        gumbel_noise = _batch_rngs_random_gumbel(
-            _get_prng_key(gumbel_prng_key), logits.shape
-        ).astype(logits.dtype)
-        logits += gumbel_noise * temperature
-      new_ids = jnp.argmax(logits, axis=1)
-    else:  #  k == 1
-      new_ids = jnp.argmax(logits, axis=1)
-    return NestedMap(new_ids=new_ids, logits=input_logits)
+  # It's very unlikely that vocabulary size < MAX_NUM_PER_TOKEN_LOGPROBS in
+  # production, but it's possible in tests. k will be static after tracing.
+  # NOMUTANTS -- logprobs's shape is (batch, vocab), so logprobs.shape[1]
+  # NOMUTANTS -- is the same as `logprobs.shape[-1]`.
+  k = min(logprobs.shape[-1], MAX_NUM_PER_TOKEN_LOGPROBS)
+  top_candidate_logprobs, top_candidate_ids = jax.lax.top_k(logprobs, k)
+  if k < MAX_NUM_PER_TOKEN_LOGPROBS:
+    pad_width = [[0, 0], [0, MAX_NUM_PER_TOKEN_LOGPROBS - k]]
+    top_candidate_logprobs = jnp.pad(
+        top_candidate_logprobs, pad_width, constant_values=1.0
+    )
+    top_candidate_ids = jnp.pad(top_candidate_ids, pad_width)
+  indexes = jnp.tile(
+      jnp.arange(MAX_NUM_PER_TOKEN_LOGPROBS),
+      reps=(top_candidate_logprobs.shape[0], 1),
+  )
+  num_per_token_logprobs = jnp.expand_dims(num_per_token_logprobs, axis=-1)
+  index_before_num_per_token_logprobs = jnp.less(
+      indexes, num_per_token_logprobs
+  )
+  top_candidate_logprobs = jnp.where(
+      index_before_num_per_token_logprobs,
+      top_candidate_logprobs,
+      jnp.ones_like(top_candidate_logprobs),
+  )
+  top_candidate_ids = jnp.where(
+      index_before_num_per_token_logprobs,
+      top_candidate_ids,
+      jnp.zeros_like(top_candidate_ids),
+  )
+  return top_candidate_logprobs, top_candidate_ids
 
 
 # TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
 def sample_decode(
     model: base_layer.BaseLayerApi,
-    extend_step_fn: Union[
-        decoder_utils.ExtendStepFn, decoder_utils.ExpandedExtendStepFn
-    ],
-    transform_state_fn: Optional[decoder_utils.TransformStateFn],
-    lazy_broadcast_prefix_fn: Optional[decoder_utils.LazyBroadcastPrefixFn],
-    next_token_sampler: base_layer.BaseLayerApi,
+    extend_step_fn: (
+        decoder_utils.ExtendStepFn | decoder_utils.ExpandedExtendStepFn
+    ),
+    transform_state_fn: decoder_utils.TransformStateFn | None,
+    lazy_broadcast_prefix_fn: decoder_utils.LazyBroadcastPrefixFn | None,
+    next_token_sampler: BaseNextTokenSampler,
     prefix_ids: JTensor,
     prefix_paddings: JTensor,
     seq_len: int,
     num_samples: int,
-    fprop_fn: Optional[decoder_utils.FPropFn] = None,
-    cf_guidance_scale: Optional[Union[List[float], float, JTensor]] = None,
+    fprop_fn: decoder_utils.FPropFn | None = None,
+    cf_guidance_scale: list[float] | float | JTensor | None = None,
     fprop_for_prefix: bool = False,
-    temperature: Union[float, JTensor] = 1.0,
-    gumbel_prng_key: Optional[JTensor] = None,
-    per_example_top_p: Optional[Union[JTensor, float]] = None,
-    per_example_top_k: Optional[Union[JTensor, int]] = None,
-    max_prefix_len: Optional[int] = None,
-    max_decode_steps: Optional[Union[int, Sequence[int]]] = None,
-    per_example_max_decode_steps: Optional[JTensor] = None,
-    prefix_lengths: Optional[JTensor] = None,
-    eos_id: Optional[Union[int, Sequence[int], JTensor]] = None,
-    result_callback: Optional[StreamingResultCallback] = None,
-    decode_loop_mesh_axes_transpose: Optional[Dict[str, str]] = None,
-    model_var_pspecs: Optional[base_layer.NestedPartitionSpec] = None,
+    temperature: float | JTensor = 1.0,
+    gumbel_prng_key: JTensor | None = None,
+    per_example_top_p: JTensor | float | None = None,
+    per_example_top_k: JTensor | int | None = None,
+    max_prefix_len: int | None = None,
+    max_decode_steps: int | Sequence[int] | None = None,
+    per_example_max_decode_steps: JTensor | None = None,
+    prefix_lengths: JTensor | None = None,
+    eos_id: int | Sequence[int] | JTensor | None = None,
+    result_callback: StreamingResultCallback | None = None,
+    decode_loop_mesh_axes_transpose: dict[str, str] | None = None,
+    model_var_pspecs: base_layer.NestedPartitionSpec | None = None,
     return_result_for_suffix_score: bool = False,
     sort_samples: bool = True,
+    top_k_recall_target: float = 0.85,
     early_exit: bool = True,
     use_top_k_for_logprobs: bool = False,
-    controlled_decoding: Optional[
-        decoder_utils.ControlledDecodingHParams
-    ] = None,
+    controlled_decoding: decoder_utils.ControlledDecodingHParams | None = None,
     return_entropy_score: bool = False,
-    process_result_fn: Optional[decoder_utils.ProcessResultFn] = None,
+    process_result_fn: decoder_utils.ProcessResultFn | None = None,
     optimize_eos: bool = False,
+    sample_constraint: BaseSampleTerminationConstraint | None = None,
+    enforce_sample_constraints: JTensor | None = None,
+    num_per_token_logprobs: JTensor | None = None,
 ) -> NestedMap:
   """Sampling decode the input batch.
 
@@ -708,8 +348,8 @@ def sample_decode(
       time step (with shape [B] or [B, P] where B corresponds to the batch size
       and P corresponds to a possible prefix) and returns `JTensor` corresponds
       to the logits of the next step.  The following signatures are allowed:
-      extend_step_fn(model, extend_ids, segment_pos)
-      extend_step_fn(model, extend_ids, segment_pos, decode_loop_state)
+      extend_step_fn(model, extend_ids, segment_pos) extend_step_fn(model,
+      extend_ids, segment_pos, decode_loop_state)
     transform_state_fn: A function that transforms the decode state.
     lazy_broadcast_prefix_fn: A function that lazily broadcasts decode prefix.
     next_token_sampler: Layer used to sample next token ids given the logits
@@ -737,9 +377,9 @@ def sample_decode(
     gumbel_prng_key: PRNG key for generating gumbel random noise. If None,
       model.next_prng_key() is used; if not None, must be of shape [B] or [B,
       key_shape_dim], where key_shape_dim =
-      jax.random.default_prng_impl().key_shape[0]. Usually, key_shape_dim = 2 or
-      4. where B is the batch size before being duplicated wrt num_samples or
-      cfg. If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY,
+      jax.random.key_data(jax.random.key(0)).shape[0]. Usually, key_shape_dim =
+      2 or 4. where B is the batch size before being duplicated wrt num_samples
+      or cfg. If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY,
       gumbel_prng_key will be ignored and model.next_prng_key() is used.
     per_example_top_p: Per example top_p of sampling decoding. Optional JTensor
       of shape [B].
@@ -773,6 +413,9 @@ def sample_decode(
     return_result_for_suffix_score: Whether or not to return result for suffix
       score.
     sort_samples: Whether to sort the samples by logprobs.
+    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
+      specified recall target for the top_k sampling. Used when sort_samples is
+      True. See https://arxiv.org/abs/2206.14286 for more details.
     early_exit: A bool, whether or not to allow early exit.
     use_top_k_for_logprobs: computes the log probability from the top k logits
       instead of all logits.
@@ -782,6 +425,17 @@ def sample_decode(
       such as performing suffix scoring.
     optimize_eos: Record the probability with eos ending at every step then pick
       the best one.
+    sample_constraint: Layer used to terminate samples early if they don't
+      conform to specific constraints.
+    enforce_sample_constraints: A JTensor indicating which samples to enforce
+      sample constraints for.
+    num_per_token_logprobs: A jnp.int32 JTensor with shape [batch,]. Must <=
+      MAX_NUM_PER_TOKEN_LOGPROBS. If > 0, returns the top
+      `num_per_token_logprobs` candidate token IDs with their log probabilities
+      at each step, right padded with 0s for token IDs and 1s for log
+      probabilities. If <= 0, returns 0s for token IDs and 1s for log
+      probabilities. Returned token IDs and log probabilities are of shape
+      (batch, num_samples, seqlen, MAX_NUM_PER_TOKEN_LOGPROBS).
 
   Returns:
     A NestedMap with `.prefix_lengths` (indicating the lengths of prefixes for
@@ -840,11 +494,15 @@ def sample_decode(
         result_callback,
         return_result_for_suffix_score,
         sort_samples,
+        top_k_recall_target,
         early_exit,
         use_top_k_for_logprobs,
         controlled_decoding,
         return_entropy_score,
-        optimize_eos
+        optimize_eos,
+        sample_constraint,
+        enforce_sample_constraints,
+        num_per_token_logprobs,
     )
     if process_result_fn is not None:
       result = process_result_fn(model, result)
@@ -854,37 +512,39 @@ def sample_decode(
 # TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
 def sample_decode_after_fprop(
     model: base_layer.BaseLayerApi,
-    extend_step_fn: Union[
-        decoder_utils.ExtendStepFn, decoder_utils.ExpandedExtendStepFn
-    ],
-    transform_state_fn: Optional[decoder_utils.TransformStateFn],
-    lazy_broadcast_prefix_fn: Optional[decoder_utils.LazyBroadcastPrefixFn],
+    extend_step_fn: (
+        decoder_utils.ExtendStepFn | decoder_utils.ExpandedExtendStepFn
+    ),
+    transform_state_fn: decoder_utils.TransformStateFn | None,
+    lazy_broadcast_prefix_fn: decoder_utils.LazyBroadcastPrefixFn | None,
     next_token_sampler: base_layer.BaseLayerApi,
     prefix_ids: JTensor,
     prefix_paddings: JTensor,
     seq_len: int,
     num_samples: int,
-    cf_guidance_scale: Optional[Union[List[float], float, JTensor]] = None,
+    cf_guidance_scale: list[float] | float | JTensor | None = None,
     fprop_for_prefix: bool = False,
-    temperature: Union[float, JTensor] = 1.0,
-    gumbel_prng_key: Optional[JTensor] = None,
-    per_example_top_p: Optional[JTensor] = None,
-    per_example_top_k: Optional[JTensor] = None,
-    max_prefix_len: Optional[int] = None,
-    max_decode_steps: Optional[Union[int, Sequence[int]]] = None,
-    per_example_max_decode_steps: Optional[JTensor] = None,
-    prefix_lengths: Optional[JTensor] = None,
-    eos_id: Optional[Union[int, Sequence[int], JTensor]] = None,
-    result_callback: Optional[StreamingResultCallback] = None,
+    temperature: float | JTensor = 1.0,
+    gumbel_prng_key: JTensor | None = None,
+    per_example_top_p: JTensor | None = None,
+    per_example_top_k: JTensor | None = None,
+    max_prefix_len: int | None = None,
+    max_decode_steps: int | Sequence[int] | None = None,
+    per_example_max_decode_steps: JTensor | None = None,
+    prefix_lengths: JTensor | None = None,
+    eos_id: int | Sequence[int] | JTensor | None = None,
+    result_callback: StreamingResultCallback | None = None,
     return_result_for_suffix_score: bool = False,
     sort_samples: bool = True,
+    top_k_recall_target: float = 0.85,
     early_exit: bool = True,
     use_top_k_for_logprobs: bool = False,
-    controlled_decoding: Optional[
-        decoder_utils.ControlledDecodingHParams
-    ] = None,
+    controlled_decoding: decoder_utils.ControlledDecodingHParams | None = None,
     return_entropy_score: bool = False,
     optimize_eos: bool = False,
+    sample_constraint: BaseSampleTerminationConstraint | None = None,
+    enforce_sample_constraints: JTensor | None = None,
+    num_per_token_logprobs: JTensor | None = None,
 ) -> NestedMap:
   """Sampling decode after init decode state the input batch.
 
@@ -901,8 +561,8 @@ def sample_decode_after_fprop(
       time step (with shape [B] or [B, P] where B corresponds to the batch size
       and P corresponds to a possible prefix) and returns `JTensor` corresponds
       to the logits of the next step.  The following signatures are allowed:
-      extend_step_fn(model, extend_ids, segment_pos)
-      extend_step_fn(model, extend_ids, segment_pos, decode_loop_state)
+      extend_step_fn(model, extend_ids, segment_pos) extend_step_fn(model,
+      extend_ids, segment_pos, decode_loop_state)
     transform_state_fn: A function that transforms the decode state.
     lazy_broadcast_prefix_fn: A function that lazily broadcasts decode prefix.
     next_token_sampler: Layer used to sample next token ids given the logits
@@ -928,9 +588,9 @@ def sample_decode_after_fprop(
     gumbel_prng_key: PRNG key for generating gumbel random noise. If None,
       model.next_prng_key() is used; if not None, must be of shape [B] or [B,
       key_shape_dim], where key_shape_dim =
-      jax.random.default_prng_impl().key_shape[0]. Usually, key_shape_dim = 2 or
-      4. where B is the batch size before being duplicated wrt num_samples or
-      cfg. If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY,
+      jax.random.key_data(jax.random.key(0)).shape[0]. Usually, key_shape_dim =
+      2 or 4. where B is the batch size before being duplicated wrt num_samples
+      or cfg. If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY,
       gumbel_prng_key will be ignored and model.next_prng_key() is used.
     per_example_top_p: Per example top_p of sampling decoding. Optional JTensor
       of shape [B].
@@ -962,6 +622,9 @@ def sample_decode_after_fprop(
     return_result_for_suffix_score: Whether or not to return result for suffix
       score.
     sort_samples: Whether to sort the samples by logprobs.
+    top_k_recall_target: if less than 1.0, use TPU optimized approx_top_k with
+      specified recall target for the top_k sampling. Used when sort_samples is
+      True. See https://arxiv.org/abs/2206.14286 for more details.
     early_exit: A bool, whether or not to allow early exit.
     use_top_k_for_logprobs: computes the log probability from the top k logits
       instead of all logits.
@@ -969,6 +632,11 @@ def sample_decode_after_fprop(
     return_entropy_score: Whether to return entropy score for every token.
     optimize_eos: Record the probability with eos ending at every step then pick
       the best one.
+    sample_constraint: Layer used to terminate samples early if they don't
+      conform to specific constraints.
+    enforce_sample_constraints: A JTensor indicating which samples to enforce
+      sample constraints for.
+    num_per_token_logprobs: See documentation in `sample_decode`.
 
   Returns:
     A NestedMap with `.prefix_lengths` (indicating the lengths of prefixes for
@@ -1058,6 +726,11 @@ def sample_decode_after_fprop(
           per_example_top_k, 'per_example_top_k'
       )
 
+    if num_per_token_logprobs is not None:
+      num_per_token_logprobs = _broadcast_input(
+          num_per_token_logprobs, 'num_per_token_logprobs'
+      )
+
     if eos_id is not None and isinstance(eos_id, JTensor):
       assert eos_id.ndim == 2, (
           'eos_id in sample_decode as JTensor needs to be rank 2, eos_id'
@@ -1105,14 +778,14 @@ def sample_decode_after_fprop(
       )
 
   if isinstance(temperature, JTensor):
-    temperature = temperature[:, jnp.newaxis]
+    temperature = temperature.flatten()[:, jnp.newaxis]
 
   if isinstance(per_example_top_p, JTensor):
     per_example_top_p = per_example_top_p[:, jnp.newaxis]
 
   if gumbel_prng_key is not None and isinstance(gumbel_prng_key, JTensor):
     gumbel_prng_key = gumbel_prng_key.astype(jnp.uint32)
-    dup_len = jax.random.default_prng_impl().key_shape[0]
+    dup_len = jax.random.key_data(jax.random.key(0)).shape[0]
     if len(gumbel_prng_key.shape) == 1:
       gumbel_prng_key = jnp.stack([gumbel_prng_key] * dup_len, axis=-1)
 
@@ -1130,9 +803,11 @@ def sample_decode_after_fprop(
   per_example_max_decode_steps = jnp.minimum(
       per_example_max_decode_steps, last_decode_steps
   )
-  if cf_guidance_scale is not None and isinstance(
-      per_example_max_decode_steps, JTensor
-  ) and per_example_max_decode_steps.ndim == 1:
+  if (
+      cf_guidance_scale is not None
+      and isinstance(per_example_max_decode_steps, JTensor)
+      and per_example_max_decode_steps.ndim == 1
+  ):
     per_example_max_decode_steps = jnp.concatenate(
         [per_example_max_decode_steps[:, None]] * 2, axis=1
     )
@@ -1146,6 +821,10 @@ def sample_decode_after_fprop(
     prefix_lengths = jnp.zeros([batch_size], dtype=jnp.int32)
 
   output_ids = jnp.zeros(shape=(batch_size, seq_len), dtype=jnp.int32)
+
+  assert (sample_constraint is None and enforce_sample_constraints is None) | (
+      sample_constraint is not None and enforce_sample_constraints is not None
+  )
 
   val = NestedMap()
   if fprop_for_prefix:
@@ -1171,6 +850,16 @@ def sample_decode_after_fprop(
   val.decode_lengths = jnp.ones_like(prefix_lengths) * seq_len
   # We use a positive value of 1.0 to indicate blank or padded positions.
   val.logprobs = jnp.ones_like(output_ids, dtype=jnp.float32)
+  if num_per_token_logprobs is not None:
+    num_per_token_logprobs = jnp.minimum(
+        num_per_token_logprobs, MAX_NUM_PER_TOKEN_LOGPROBS
+    )
+    val.top_candidate_ids = jnp.zeros(
+        shape=(batch_size, seq_len, MAX_NUM_PER_TOKEN_LOGPROBS), dtype=jnp.int32
+    )
+    val.top_candidate_logprobs = jnp.ones_like(
+        val.top_candidate_ids, dtype=jnp.float32
+    )
   if optimize_eos:
     assert not isinstance(
         eos_id, JTensor
@@ -1247,7 +936,8 @@ def sample_decode_after_fprop(
     if optimize_eos:
       assert eos_id
       next_token_logits = logits.at[:, eos_id].set(
-          py_utils.get_large_negative_number(jnp.float32))
+          py_utils.get_large_negative_number(jnp.float32)
+      )
     else:
       next_token_logits = logits
     sampler_output = next_token_sampler(
@@ -1310,6 +1000,8 @@ def sample_decode_after_fprop(
       prefix_offset = prefix_lengths
       decode_lengths = jnp.ones_like(val.decode_lengths) * (step + 2)
     val.segment_pos += 1
+    if sample_constraint is not None:
+      val.done = sample_constraint(enforce_sample_constraints, val)
 
     max_decoding_steps_reached = (
         jnp.ones_like(prefix_lengths) * (step + 2) - prefix_offset
@@ -1329,15 +1021,37 @@ def sample_decode_after_fprop(
         prev_done, jnp.ones_like(logprobs_at_new_ids), logprobs_at_new_ids
     )
     val.logprobs = val.logprobs.at[:, step + 1].set(logprobs_at_new_ids)
+
+    if num_per_token_logprobs is not None:
+      top_candidate_logprobs, top_candidate_ids = jax.lax.cond(
+          jnp.any(num_per_token_logprobs > 0),
+          lambda: _compute_top_candidate_logprobs_and_ids(
+              num_per_token_logprobs, logprobs
+          ),
+          lambda: (
+              jnp.ones_like(val.top_candidate_logprobs[:, 0]),
+              jnp.zeros_like(val.top_candidate_ids[:, 0]),
+          ),
+      )
+      current_sampling_step = step - val.start_step
+      val.top_candidate_logprobs = val.top_candidate_logprobs.at[
+          :, current_sampling_step
+      ].set(top_candidate_logprobs)
+      val.top_candidate_ids = val.top_candidate_ids.at[
+          :, current_sampling_step
+      ].set(top_candidate_ids)
+
     if optimize_eos:
       eos_logits = logits.at[:, eos_id].add(1e6)
       best_eos_id = jnp.argmax(eos_logits, axis=-1)
       val.eos_ids = val.eos_ids.at[:, step + 1].set(best_eos_id)
       val.eos_logprobs = val.eos_logprobs.at[:, step + 1].set(
-          logprobs[jnp.arange(batch_size), best_eos_id])
+          logprobs[jnp.arange(batch_size), best_eos_id]
+      )
     if hasattr(val, 'entropy'):
       val.entropy = val.entropy.at[:, step + 1].set(
-          -jnp.sum(logprobs * jnp.exp(logprobs), axis=-1))
+          -jnp.sum(logprobs * jnp.exp(logprobs), axis=-1)
+      )
 
     if result_callback is not None:
 
@@ -1345,7 +1059,7 @@ def sample_decode_after_fprop(
         """Dummy function."""
         pass
 
-      def _get_slice(sequence):
+      def _get_slice(sequence, const_value_for_padding):
         mod_size = (
             val.output_ids.shape[-1] - 1 - start_step
         ) % result_callback.interval_steps
@@ -1353,6 +1067,7 @@ def sample_decode_after_fprop(
           sequence = jnp.pad(
               sequence,
               [[0, 0], [0, result_callback.interval_steps - mod_size]],
+              constant_values=const_value_for_padding,
           )
         interval_start_id = (
             ((step - start_step) // result_callback.interval_steps)
@@ -1366,14 +1081,51 @@ def sample_decode_after_fprop(
             [batch_size, result_callback.interval_steps],
         )
 
+      def _get_top_candidate_slice(sequence, const_value_for_padding):
+        # top_candidate_ids/top_candidate_logprobs's shape is
+        # [batch, seqlen, MAX_NUM_PER_TOKEN_LOGPROBS].
+        # index i in the seqlen dimension means the i-th decoding step.
+        mod_size = (
+            val.top_candidate_ids.shape[1] % result_callback.interval_steps
+        )
+        if mod_size > 0:
+          sequence = jnp.pad(
+              sequence,
+              [[0, 0], [0, result_callback.interval_steps - mod_size], [0, 0]],
+              constant_values=const_value_for_padding,
+          )
+        interval_start_id = (
+            (step - start_step) // result_callback.interval_steps
+        ) * result_callback.interval_steps
+        return jax.lax.dynamic_slice(
+            sequence,
+            [0, interval_start_id, 0],
+            [batch_size, result_callback.interval_steps, sequence.shape[-1]],
+        )
+
       def _true_fn():
         """Outfeed logic."""
         # prefix_lengths: [b]
         # decode_lengths: [b * num_samples]
         # output_ids: [b * num_samples, interval_steps]
         # scores: [b * num_samples]
+        # logprobs: [b * num_samples, interval_steps]
+        # top_candidate_ids and top_candidate_logprobs:
+        #   [b * num_samples, interval_steps, MAX_NUM_PER_TOKEN_LOGPROBS]
         outfeed_tensors = NestedMap()
-        outfeed_tensors.output_ids = _get_slice(val.output_ids)
+        outfeed_tensors.output_ids = _get_slice(val.output_ids, 0)
+        if num_per_token_logprobs is not None:
+          assert hasattr(val, 'top_candidate_ids')
+          assert hasattr(val, 'top_candidate_logprobs')
+          assert hasattr(val, 'logprobs')
+          outfeed_tensors.num_per_token_logprobs = num_per_token_logprobs
+          outfeed_tensors.top_candidate_ids = _get_top_candidate_slice(
+              val.top_candidate_ids, 0
+          )
+          outfeed_tensors.top_candidate_logprobs = _get_top_candidate_slice(
+              val.top_candidate_logprobs, 1
+          )
+          outfeed_tensors.logprobs = _get_slice(val.logprobs, 1)
         outfeed_tensors.decode_lengths = (
             jnp.ones_like(val.decode_lengths) * result_callback.interval_steps
         )
@@ -1382,7 +1134,7 @@ def sample_decode_after_fprop(
         else:
           outfeed_tensors.scores = jnp.sum(
               # Padded logprobs can have values of 1.0, so we cap it to 0.0.
-              jnp.minimum(_get_slice(val.logprobs), 0.0),
+              jnp.minimum(_get_slice(val.logprobs, 1), 0.0),
               axis=-1,
           )
         outfeed_tensors.done = val.done
@@ -1534,7 +1286,8 @@ def sample_decode_after_fprop(
     else:
       decode_length_shift = 0
     result = decoder_utils.collect_results_to_optimize_eos(
-        result, decode_length_shift=max_prefix_len)
+        result, decode_length_shift=max_prefix_len
+    )
 
   if return_result_for_suffix_score:
     return result
@@ -1590,30 +1343,281 @@ def sample_decode_after_fprop(
   else:
     result = jax.tree_map(lambda x: split_batch_dim(x, 0, num_samples), result)
   if num_samples > 1 and sort_samples:
-    return sort_samples_by_scores(result)
+    return sort_samples_by_scores(result, top_k_recall_target)
 
   return result
 
 
 # TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
+def vanilla_sample_decode(
+    model: base_layer.BaseLayerApi,
+    fprop_fn: decoder_utils.FPropFn,
+    extend_step_fn: (
+        decoder_utils.ExtendStepFn | decoder_utils.ExpandedExtendStepFn
+    ),
+    transform_state_fn: decoder_utils.TransformStateFn,
+    next_token_sampler: base_layer.BaseLayerApi,
+    prefix_ids: JTensor,
+    prefix_paddings: JTensor,
+    temperature: float | JTensor = 1.0,
+    gumbel_prng_key: JTensor | None = None,
+    max_decode_steps: int = 0,
+    eos_id: int | Sequence[int] | JTensor | None = None,
+    decode_loop_mesh_axes_transpose: dict[str, str] | None = None,
+    model_var_pspecs: base_layer.NestedPartitionSpec | None = None,
+) -> NestedMap:
+  """Sampling decode the input batch.
+
+  This decoder assumes that prefix_ids and prefix_paddings are already right
+  aligned. For example, let's say we have a batch of 2 examples with length
+  3 and 4 respectively, and total length of prefix_ids is 6.
+  prefix_ids = [[0, 0, 0, a, b, c], [0, 0, d, e, f, g]]
+  prefix_paddings = [[1, 1, 1, 0, 0, 0], [1, 1, 0, 0, 0, 0]]
+
+  In the above case, first sequence is [a, b, c] and the second sequence is
+  [d, e, f, g]. It is the caller's responsibility to prepare the data in the
+  right right-aligned format.
+
+  Args:
+    model: The model object.
+    fprop_fn: A function that takes in the prefix information and initialize the
+      decode cache states.
+    extend_step_fn: A function that takes in the decoded sequence at the current
+      time step (with shape [B] or [B, P] where B corresponds to the batch size
+      and P corresponds to a possible prefix) and returns `JTensor` corresponds
+      to the logits of the next step.  The following signatures are allowed:
+      extend_step_fn(model, extend_ids, segment_pos) extend_step_fn(model,
+      extend_ids, segment_pos, decode_loop_state)
+    transform_state_fn: A function that transforms the decode state.
+    next_token_sampler: Layer used to sample next token ids given the logits
+      output. See DefaultNextTokenSampler for an example. This can be used to
+      implement decoding techniques such repetition penalty.
+    prefix_ids: The token ids that correspond to the prefix sequence. A JTensor
+      of shape [batch, target_sequence_length]. This should have an <SOS> token
+      if one is used. Also note, it is assumed tha prefix_ids has already been
+      right aligned.
+    prefix_paddings: The paddings corresponding to the prefix sequence, with a 1
+      denoting padding token and 0 denoting non-padding tokens. A JTensor of
+      shape [batch, target_sequence_length]. It is assumed that that
+      prefix_paddings has been already right aligned.
+    temperature: Temperature of sampling decoding. It could be a float or a
+      JTensor of shape [B].
+    gumbel_prng_key: PRNG key for generating gumbel random noise. If None,
+      model.next_prng_key() is used; if not None, must be of shape [B] or [B,
+      key_shape_dim], where key_shape_dim =
+      jax.random.key_data(jax.random.key(0)).shape[0]. Usually, key_shape_dim =
+      2 or 4. where B is the batch size before being duplicated wrt num_samples
+      or cfg. If all the values in gumbel_prng_key is set to DUMMY_PRNG_KEY,
+      gumbel_prng_key will be ignored and model.next_prng_key() is used.
+    max_decode_steps: Python int, the max decode step to run after the prefix
+      (if any).
+    eos_id: Optional EOS id which to terminate the decoding early. Could be a
+      sequence, an integer or a JTensor. When it is a JTensor, it is 2D tensor
+      of shape [batch, eos_len] with padded 0s on the left.
+    decode_loop_mesh_axes_transpose: Optional mesh transpose for decoding loop.
+    model_var_pspecs: Optional partition specs for model variables.
+
+  Returns:
+    A NestedMap with `.prefix_lengths` (indicating the lengths of prefixes for
+    each target sequence), `.output_ids` (matrix of int ids with the
+    decoded output), `.decode_lengths` (vector of ints indicating the lengths
+    of non-padding tokens in `.output_ids`, which includes the prefix), and
+    `.logprobs` (the log probability of selected tokens, including the prefix,
+    where a positive value of 1.0 is used to indicate padded positions).
+    The outputs has shape [batch, num_samples, ...].
+  """
+  # Init decode state using fprop_fn, state seq size is max_prefix_len.
+  fprop_fn(model, prefix_ids, prefix_paddings)
+  prefix_lengths = jnp.sum(1 - prefix_paddings.astype(jnp.int32), axis=-1)
+  model = decoder_utils.maybe_reshard_mdl_for_decode(
+      model,
+      decode_loop_mesh_axes_transpose,
+      model_var_pspecs,
+      transform_state_fn,
+  )
+  with decoder_utils.maybe_decode_mesh_transpose(
+      model, decode_loop_mesh_axes_transpose
+  ):
+    # Pad to full-sequence length.
+    transform_state_fn(model, decoder_utils.pad_state_fn(max_decode_steps))
+
+    batch_size, max_prefix_len = prefix_ids.shape
+    assert max_decode_steps > 0
+    seq_len = max_prefix_len + max_decode_steps
+
+    if isinstance(eos_id, int):
+      eos_id = [eos_id]
+
+    if gumbel_prng_key is not None and isinstance(gumbel_prng_key, JTensor):
+      gumbel_prng_key = gumbel_prng_key.astype(jnp.uint32)
+      dup_len = jax.random.key_data(jax.random.key(0)).shape[0]
+      if len(gumbel_prng_key.shape) == 1:
+        gumbel_prng_key = jnp.stack([gumbel_prng_key] * dup_len, axis=-1)
+      assert gumbel_prng_key.shape == [batch_size, dup_len]
+
+    output_ids = jnp.zeros(shape=(batch_size, seq_len), dtype=jnp.int32)
+
+    # Set up the initial values.
+    val = NestedMap()
+
+    # Update output_ids with prefix_ids.
+    output_ids = jax.lax.dynamic_update_slice(
+        output_ids, prefix_ids, [0] * output_ids.ndim
+    )
+    # Update loop init states with prefix.
+    start_step = max_prefix_len - 1
+
+    val.segment_pos = prefix_lengths - 1
+    val.step = start_step
+    val.output_ids = output_ids
+    # Shape [batch_size], whether each row has terminated and should stop.
+    val.done = jnp.zeros(shape=batch_size, dtype=jnp.bool_)
+    val.has_eos = jnp.zeros(shape=batch_size, dtype=jnp.bool_)
+    val.decode_lengths = jnp.ones_like(prefix_lengths) * seq_len
+    # We use a positive value of 1.0 to indicate blank or padded positions.
+    val.logprobs = jnp.ones_like(output_ids, dtype=jnp.float32)
+
+    val = next_token_sampler.init_decode_loop_state(
+        val, model, batch_size, eos_id
+    )
+
+    # Get an `ExpandedExtendStepFn`, regardless of which variant was passed in.
+    expanded_extend_step_fn = decoder_utils.coerce_to_expanded_extend_step_fn(
+        extend_step_fn
+    )
+
+    def cond_func(model, val):
+      """Whether the while loop should continue."""
+      del model
+      # We continue the decoding search iff both:
+      #   (1) We have yet to exceed the max steps.
+      #   (2) At least one row in the batch has not terminated.
+      max_steps = start_step + max_decode_steps
+      length_ok = val.step < max_steps
+      all_rows_done = jnp.all(val.done)
+      return jnp.logical_and(length_ok, jnp.logical_not(all_rows_done))
+
+    def loop_body(model, val):
+      """From ids at `step`, update output ids at `step + 1`."""
+      step = val.step
+      logits = expanded_extend_step_fn(
+          model, val.output_ids[:, step], val.segment_pos, val
+      )
+      if gumbel_prng_key is not None:
+        # Folds split prng_key for step.
+        split_gumbel_prng_key = jax.vmap(lambda x: jax.random.fold_in(x, step))(
+            gumbel_prng_key
+        )
+        assert split_gumbel_prng_key.shape[0] == logits.shape[0]
+
+        split_gumbel_prng_key = jax.lax.cond(
+            jnp.all(gumbel_prng_key == DUMMY_PRNG_KEY),
+            lambda: jnp.ones_like(split_gumbel_prng_key) * DUMMY_PRNG_KEY,
+            lambda: split_gumbel_prng_key,
+        )
+      else:
+        split_gumbel_prng_key = None
+
+      sampler_output = next_token_sampler(
+          model,
+          logits,
+          temperature,
+          val,
+          gumbel_prng_key=split_gumbel_prng_key,
+      )
+      new_ids, sample_logits = sampler_output.new_ids, sampler_output.logits
+      # Update additional decoder states that are in both sampler_output and
+      # val.
+      for k in sampler_output.keys() & val.keys():
+        val[k] = sampler_output[k]
+
+      assert new_ids.shape == (sample_logits.shape[0],)
+      assert new_ids.dtype == jnp.int32
+
+      model.add_summary('new_ids', new_ids)
+      model.add_summary('sample_logits', sample_logits)
+
+      prev_done = val.done
+      new_ids = jnp.where(prev_done, jnp.zeros_like(new_ids), new_ids)
+      val.output_ids = val.output_ids.at[:, step + 1].set(new_ids)
+      if eos_id is not None:
+        if isinstance(eos_id, JTensor):
+          has_eos = decoder_utils.end_with_sequences(
+              eos_id, val.output_ids, val.step + 1
+          )
+        else:
+          has_eos = decoder_utils.has_any_eos(new_ids, eos_id)
+        val.done = jnp.logical_or(
+            prev_done,
+            has_eos,
+        )
+        val.has_eos = jnp.logical_or(val.has_eos, has_eos)
+
+      decode_lengths = prefix_lengths + (step - max_prefix_len + 2)
+      val.done = jnp.logical_or(val.done, step + 2 >= seq_len)
+      done_at_this_step = jnp.logical_and(jnp.logical_not(prev_done), val.done)
+      val.decode_lengths = jnp.where(
+          done_at_this_step, decode_lengths, val.decode_lengths
+      )
+
+      val.segment_pos += 1
+
+      logprobs = jax.nn.log_softmax(logits.astype(jnp.float32))
+      logprobs_at_new_ids = logprobs.at[jnp.arange(batch_size), new_ids].get()
+      logprobs_at_new_ids = jnp.where(
+          prev_done, jnp.ones_like(logprobs_at_new_ids), logprobs_at_new_ids
+      )
+      val.logprobs = val.logprobs.at[:, step + 1].set(logprobs_at_new_ids)
+      val.step += 1
+      return val
+
+    result = nn.while_loop(
+        cond_func,
+        loop_body,
+        model,
+        val,
+        split_rngs={RANDOM: True},
+        carry_variables=[DECODE_CACHE],
+    )
+
+    result.prefix_lengths = prefix_lengths
+    result.prefix_ids = decoder_utils.left_align_tensor(
+        prefix_ids, prefix_lengths, max_prefix_len
+    )
+
+    # Change output_ids to left align.
+    result.output_ids = decoder_utils.left_align_tensor(
+        result.output_ids, prefix_lengths, max_prefix_len
+    )
+    result.logprobs = decoder_utils.left_align_tensor(
+        result.logprobs, prefix_lengths, max_prefix_len
+    )
+
+    del result.step, result.done, result.has_eos
+    result = next_token_sampler.post_process_decode_loop_state(result)
+
+    return result
+
+
+# TODO(b/249483164): Rename BaseLayerApi->BaseLayer after Fiddle migration.
 def greedy_decode(
     model: base_layer.BaseLayerApi,
-    extend_step_fn: Union[
-        decoder_utils.ExtendStepFn, decoder_utils.ExpandedExtendStepFn
-    ],
+    extend_step_fn: (
+        decoder_utils.ExtendStepFn | decoder_utils.ExpandedExtendStepFn
+    ),
     prefix_ids: JTensor,
     prefix_paddings: JTensor,
     seq_len: int,
     fprop_for_prefix: bool = False,
-    fprop_fn: Optional[decoder_utils.FPropFn] = None,
-    transform_state_fn: Optional[decoder_utils.TransformStateFn] = None,
-    max_prefix_len: Optional[int] = None,
-    max_decode_steps: Optional[Union[int, Sequence[int]]] = None,
-    prefix_lengths: Optional[JTensor] = None,
-    decode_loop_mesh_axes_transpose: Optional[Dict[str, str]] = None,
-    model_var_pspecs: Optional[base_layer.NestedPartitionSpec] = None,
-    eos_id: Optional[int] = None,
-    process_result_fn: Optional[decoder_utils.ProcessResultFn] = None,
+    fprop_fn: decoder_utils.FPropFn | None = None,
+    transform_state_fn: decoder_utils.TransformStateFn | None = None,
+    max_prefix_len: int | None = None,
+    max_decode_steps: int | Sequence[int] | None = None,
+    prefix_lengths: JTensor | None = None,
+    decode_loop_mesh_axes_transpose: dict[str, str] | None = None,
+    model_var_pspecs: base_layer.NestedPartitionSpec | None = None,
+    eos_id: int | None = None,
+    process_result_fn: decoder_utils.ProcessResultFn | None = None,
 ) -> NestedMap:
   """Greedy decode the input batch.
 
@@ -1623,8 +1627,8 @@ def greedy_decode(
       time step (with shape [B] or [B, P] where B corresponds to the batch size
       and P corresponds to a possible prefix) and returns `JTensor` corresponds
       to the logits of the next step.  The following signatures are allowed:
-      extend_step_fn(model, extend_ids, segment_pos)
-      extend_step_fn(model, extend_ids, segment_pos, decode_loop_state)
+      extend_step_fn(model, extend_ids, segment_pos) extend_step_fn(model,
+      extend_ids, segment_pos, decode_loop_state)
     prefix_ids: The token ids that correspond to the prefix sequence. This
       should contain an <SOS> token if one is used.
     prefix_paddings: The paddings corresponding to the prefix sequence, with a 1
@@ -1682,3 +1686,185 @@ def greedy_decode(
       temperature=0.0,
       process_result_fn=process_result_fn,
   )
+
+
+# functions used for continuous batching
+def sample_init_decode_state(
+    model: base_layer.BaseLayerApi,
+    prefix_ids: JTensor,
+    # # remove the logic when fprop_for_prefix=False to simplify for now
+    # fprop_for_prefix: bool = False,
+    max_prefix_len: int | None = None,
+    max_decode_steps: int | None = None,
+    top_k: int | None = 1,
+    top_p: float | JTensor | None = None,
+    prefix_lengths: JTensor | None = None,
+    eos_id: int | None = None,
+    transform_state_fn: decoder_utils.TransformStateFn | None = None,
+) -> NestedMap:
+  # set up decoding parameters
+  if transform_state_fn:
+    pad_state_sizes = max_decode_steps
+    transform_state_fn(model, decoder_utils.pad_state_fn(pad_state_sizes))
+
+  batch_size = prefix_ids.shape[0]
+  # If prefix length is not specified, set it to 0.
+  if prefix_lengths is None:
+    prefix_lengths = jnp.zeros([batch_size], dtype=jnp.int32)
+
+  seq_len = max_prefix_len + max_decode_steps
+  output_ids = jnp.zeros(shape=(batch_size,), dtype=jnp.int32)
+
+  # initialize decode state
+  decode_state = NestedMap()
+
+  # Update output_ids with last tokens of prefix_ids.
+  output_ids = output_ids.at[:].set(prefix_ids[:, max_prefix_len - 1])
+
+  assert max_prefix_len is not None
+  start_step = max_prefix_len - 1
+  decode_state.start_step = start_step
+  decode_state.step = start_step
+  decode_state.per_sample_steps = (
+      jnp.ones(shape=batch_size, dtype=jnp.int32) * start_step
+  )
+
+  decode_state.output_ids = output_ids
+  decode_state.logprobs = jnp.ones_like(output_ids, dtype=jnp.float32)
+
+  decode_state.done = jnp.zeros(shape=batch_size, dtype=jnp.bool_)
+  decode_state.has_eos = jnp.zeros(shape=batch_size, dtype=jnp.bool_)
+
+  decode_state.prefix_lengths = prefix_lengths
+  decode_state.decode_lengths = jnp.ones_like(prefix_lengths) * seq_len
+  decode_state.segment_pos = prefix_lengths - 1
+
+  next_token_sampler = base_layer.instantiate(
+      pax_fiddle.Config(DefaultNextTokenSampler, top_k=top_k, top_p=top_p)
+  )
+  decode_state = next_token_sampler.init_decode_loop_state(
+      decode_state, model, batch_size, eos_id
+  )
+  return decode_state
+
+
+def sample_decoding_step(
+    model: base_layer.BaseLayerApi,
+    decode_state: NestedMap,
+    extend_step_fn: (
+        decoder_utils.ExtendStepFn | decoder_utils.ExpandedExtendStepFn
+    ),
+    top_k: int | None = 1,
+    top_p: float | JTensor | None = None,
+    # # remove the logic when fprop_for_prefix = False to simplify for now
+    # fprop_for_prefix: bool = False,
+    max_prefix_len: int | None = None,
+    max_decode_steps: int | None = None,
+    decode_loop_mesh_axes_transpose: dict[str, str] | None = None,
+    eos_id: int | None = None,
+) -> NestedMap:
+
+  with decoder_utils.maybe_decode_mesh_transpose(
+      model, decode_loop_mesh_axes_transpose
+  ):
+    if isinstance(eos_id, int):
+      eos_id = [eos_id]
+
+    per_example_max_decode_steps = jnp.minimum(
+        decode_state.per_example_max_decode_steps, max_decode_steps
+    )
+    temperature = decode_state.temperature
+    if isinstance(temperature, JTensor):
+      temperature = temperature.flatten()[:, jnp.newaxis]
+    if isinstance(decode_state.per_example_top_p, JTensor):
+      per_example_top_p = decode_state.per_example_top_p[:, jnp.newaxis]
+
+    batch_size = decode_state.per_sample_steps.shape[0]
+
+    prefix_lengths = decode_state.prefix_lengths
+    if prefix_lengths is None:
+      prefix_lengths = jnp.zeros([batch_size], dtype=jnp.int32)
+
+    # Get an `ExpandedExtendStepFn`, regardless of which variant was passed in.
+    expanded_extend_step_fn = decoder_utils.coerce_to_expanded_extend_step_fn(
+        extend_step_fn
+    )
+
+    next_token_sampler = base_layer.instantiate(
+        pax_fiddle.Config(DefaultNextTokenSampler, top_k=top_k, top_p=top_p)
+    )
+
+    def loop_body(model, val):
+      """From ids at `step`, update output ids at `step + 1`."""
+      per_sample_steps = val.per_sample_steps
+
+      logits = expanded_extend_step_fn(
+          model, val.output_ids, val.segment_pos, val
+      )
+
+      next_token_logits = logits
+      sampler_output = next_token_sampler(
+          model,
+          next_token_logits,
+          temperature,
+          val,
+          per_example_top_p=per_example_top_p,
+          per_example_top_k=decode_state.per_example_top_k,
+          gumbel_prng_key=None,
+      )
+      new_ids, sample_logits = sampler_output.new_ids, sampler_output.logits
+      for k in sampler_output.keys() & val.keys():
+        val[k] = sampler_output[k]
+
+      assert new_ids.shape == (sample_logits.shape[0],)
+      assert new_ids.dtype == jnp.int32
+
+      model.add_summary('new_ids', new_ids)
+      model.add_summary('sample_logits', sample_logits)
+
+      prev_done = val.done
+      new_ids = jnp.where(prev_done, jnp.zeros_like(new_ids), new_ids)
+      val.output_ids = new_ids
+
+      # check if any sample ends with EOS in current step
+      if eos_id is not None:
+        if isinstance(eos_id, JTensor):
+          has_eos = decoder_utils.end_with_sequences(
+              eos_id, val.output_ids, val.step + 1
+          )
+        else:
+          has_eos = decoder_utils.has_any_eos(new_ids, eos_id)
+        val.done = jnp.logical_or(
+            prev_done,
+            has_eos,
+        )
+        val.has_eos = jnp.logical_or(val.has_eos, has_eos)
+
+      # set decode lengths
+      prefix_offset = max_prefix_len
+      decode_lengths = prefix_lengths + (per_sample_steps - max_prefix_len + 2)
+      val.segment_pos += 1
+
+      # check if any sample reached max_steps
+      max_decoding_steps_reached = (
+          jnp.ones_like(prefix_lengths) * (per_sample_steps + 2) - prefix_offset
+      ) >= per_example_max_decode_steps
+      val.done = jnp.logical_or(val.done, max_decoding_steps_reached)
+      done_at_this_step = jnp.logical_and(jnp.logical_not(prev_done), val.done)
+      val.decode_lengths = jnp.where(
+          done_at_this_step, decode_lengths, val.decode_lengths
+      )
+
+      logprobs = jax.nn.log_softmax(logits.astype(jnp.float32))
+      logprobs_at_new_ids = logprobs.at[jnp.arange(batch_size), new_ids].get()
+      logprobs_at_new_ids = jnp.where(
+          prev_done, jnp.ones_like(logprobs_at_new_ids), logprobs_at_new_ids
+      )
+      val.logprobs = logprobs_at_new_ids
+
+      val.step += 1
+      val.per_sample_steps += 1
+      return val
+
+    decode_state = loop_body(model, decode_state)
+    return decode_state

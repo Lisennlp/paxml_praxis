@@ -19,7 +19,7 @@ import collections
 import contextlib
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping
 
 from absl import flags
 from absl import logging
@@ -30,11 +30,8 @@ import jax
 import numpy as np
 from paxml import base_metrics
 from paxml import io_utils
-from paxml import metric_utils
 from paxml import partitioning
 from paxml import programs
-from paxml import seqio_input
-from paxml import summary_utils
 from paxml import tasks_lib
 from paxml import train_states
 from paxml import trainer_lib
@@ -43,51 +40,45 @@ from praxis import base_hyperparams
 from praxis import base_input
 from praxis import base_layer
 from praxis import base_model
+from praxis import lazy_loader
 from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import pytypes
 from praxis import trees
-import tensorflow.compat.v2 as tf
 
-from paxml import profiling  # mapped to internal
-
+# Those modules are slow to import, so we do it lazily.
+metric_utils = lazy_loader.LazyLoader(
+    'metric_utils', globals(), 'paxml.metric_utils'
+)
+seqio_input = lazy_loader.LazyLoader(
+    'seqio_input', globals(), 'paxml.seqio_input'
+)
+summary_utils = lazy_loader.LazyLoader(
+    'summary_utils', globals(), 'paxml.summary_utils'
+)
+tf = lazy_loader.LazyLoader('tf', globals(), 'tensorflow.compat.v2')
+profiling = lazy_loader.LazyLoader(
+    'profiling', globals(), 'paxml.profiling'  # mapped to internal
+)
 
 instantiate = base_hyperparams.instantiate
 BaseMetrics = base_metrics.BaseMetrics
 EvaluationMode = io_utils.EvaluationMode
 JTensor = pytypes.JTensor
-Metrics = pytypes.Metrics
 NestedMap = py_utils.NestedMap
 NestedJTensor = pytypes.NestedJTensor
 NestedPartitionSpec = pytypes.NestedPartitionSpec
-SummaryWriter = tf.summary.SummaryWriter
+SummaryWriter = 'tf.summary.SummaryWriter'  # pylint:disable=invalid-name
 StepFnOutput = trainer_lib.StepFnOutput
 TrainState = train_states.TrainState
 PRNGKey = pytypes.PRNGKey
 
 
-def _merge_clu_metrics(metrics: Metrics, updated_metrics: Metrics) -> Metrics:
-  """Merges existing eval metrics with updated metric data."""
-  if metrics:
-    if set(metrics.keys()) != set(updated_metrics.keys()):
-      raise ValueError(
-          'metrics and updated_metrics keys don`t match. '
-          f'metrics keys: {metrics.keys()} '
-          f'updated_metrics keys: {updated_metrics.keys()}'
-      )
-
-    for key in metrics:
-      metrics[key] = metrics[key].merge(updated_metrics[key])
-  else:
-    metrics = updated_metrics
-  return metrics
-
-
 @dataclasses.dataclass(frozen=True)
 class DecodeProgramOutput(programs.ProgramOutput):
-  decode_metrics: Optional[Mapping[str, float]] = None
-  processed_decode_metrics: Optional[Mapping[str, float]] = None
-  seqio_metrics: Optional[Mapping[str, float]] = None
+  decode_metrics: Mapping[str, float] | None = None
+  processed_decode_metrics: Mapping[str, float] | None = None
+  seqio_metrics: Mapping[str, float] | None = None
   num_decode_steps: int = 0
 
 
@@ -128,6 +119,7 @@ class SingleTaskDecodeProgram(programs.Program):
       job_log_dir: epath.Path,
       decode_prng_seed: PRNGKey,
       output_pickle: bool = True,
+      enable_summary_writer: bool = True,
   ) -> None:
     """Sets up the program.
 
@@ -137,6 +129,7 @@ class SingleTaskDecodeProgram(programs.Program):
       job_log_dir: Directory for the job logs.
       decode_prng_seed: The prng key used for decoding.
       output_pickle: Whether to write decoding results to a pickle file.
+      enable_summary_writer: Whether to write summary results to a file.
     """
     self._task = task
     self._partitioner = partitioner
@@ -170,7 +163,7 @@ class SingleTaskDecodeProgram(programs.Program):
     summary_base_dir = programs.get_summary_base_dir(job_log_dir)
     summary_dir = summary_base_dir / f'decode_test_{self._input.name}'
     self._summary_writer = self._exitstack.enter_context(
-        summary_utils.get_summary_writer(summary_dir)
+        summary_utils.get_summary_writer(summary_dir, enable_summary_writer)
     )
 
   def should_run(self, state: TrainState, train_step: int) -> bool:
@@ -219,6 +212,12 @@ class SingleTaskDecodeProgram(programs.Program):
       filename = self._output_dir / programs.get_filename(
           train_step, EvaluationMode.DECODE.value
       )
+      if flags.FLAGS.pax_only_aggregate_summaries:
+        verbose_entries = 0
+        plain_text_output_fname = None
+      else:
+        verbose_entries = 1
+        plain_text_output_fname = f'{filename}.txt'
       seqio_metric_values = seqio_input.process_outputs(
           self.decode_input,
           processed_decodes,
@@ -226,10 +225,11 @@ class SingleTaskDecodeProgram(programs.Program):
           seqio_input.MetricType.PREDICT,
           train_step,
           self._output_dir,
-          plain_text_output_fname=f'{filename}.txt',
+          verbose_entries=verbose_entries,
+          plain_text_output_fname=plain_text_output_fname,
       )
 
-    # Convert metrics to Dict[str, clu_values.Value] for summary writing.
+    # Convert metrics to dict[str, clu_values.Value] for summary writing.
     metric_values = metric_utils.compute_metric_values(metrics)
     process_metric_values = metric_utils.compute_metric_values(
         processed_metrics
@@ -247,10 +247,26 @@ class SingleTaskDecodeProgram(programs.Program):
       for key, tensor in all_summary_tensors.items():
         summary_type = base_layer.get_summary_type_from_key(key)
         summary_utils.write_summary_tensor(
-            train_step, key, np.array(tensor), summary_type
+            train_step,
+            key,
+            np.array(tensor),
+            summary_type,
+            sample_rate=(
+                self._task.model.sample_rate
+                if hasattr(self._task.model, 'sample_rate')
+                else summary_utils.AUDIO_SUMMARY_SAMPLE_RATE
+            ),
         )
-      metric_utils.write_clu_metric_summaries(metric_values, train_step)
-      metric_utils.write_clu_metric_summaries(process_metric_values, train_step)
+      summary_utils.write_clu_metric_summaries(
+          metric_values,
+          train_step,
+          metrics_prefix=self._task.decode.metrics_prefix,
+      )
+      summary_utils.write_clu_metric_summaries(
+          process_metric_values,
+          train_step,
+          metrics_prefix=self._task.decode.metrics_prefix,
+      )
 
     programs.maybe_write_eval_outputs(
         EvaluationMode.DECODE,
@@ -284,12 +300,12 @@ class SingleTaskDecodeProgram(programs.Program):
       state: TrainState,
       decode_metrics: BaseMetrics,
       process_decode_metrics: BaseMetrics,
-  ) -> Tuple[
+  ) -> tuple[
       int,
-      Dict[str, clu_metrics.Metric],
-      Dict[str, clu_metrics.Metric],
-      List[Tuple[str, Any]],
-      Dict[str, List[JTensor]],
+      dict[str, clu_metrics.Metric],
+      dict[str, clu_metrics.Metric],
+      list[tuple[str, Any]],
+      dict[str, list[JTensor]],
   ]:
     # metrics and processed_metrics are dictionaries of
     # strings -> clu_metrics.Metric objects. metrics is returned from decode()
@@ -299,18 +315,23 @@ class SingleTaskDecodeProgram(programs.Program):
     processed_decodes = []
     all_summary_tensors = collections.defaultdict(list)
     # profile xprof for decoding.
+    profiler = None
     if self._task.decode.profiler_num_steps > 0:
       profiler = profiling.Profiler(
           num_steps=self._task.decode.profiler_num_steps,
           min_duration_sec=self._task.decode.profiler_min_duration_sec,
           max_num_hosts=self._task.decode.profiler_max_num_hosts,
       )
-      profiler.capture_async()
 
     step_num = 0
     # self._num_steps < 0 indicates running until input out of range.
     while self._num_steps < 0 or step_num < self._num_steps:
       step_num += 1
+      if (
+          profiler is not None
+          and step_num == self._task.decode.profiler_capture_step
+      ):
+        profiler.capture_async()
       # Instrument decode step.
       with jax.profiler.StepTraceAnnotation('decode', step_num=step_num):
         try:
@@ -363,7 +384,7 @@ class SingleTaskDecodeProgram(programs.Program):
       summary_tensors = unreplicated_decode_out.summary_tensors
 
       # Merge clu.metrics to update for each minibatch.
-      metrics = _merge_clu_metrics(metrics, updated_metrics)
+      metrics = metric_utils.merge_clu_metrics(metrics, updated_metrics)
 
       for key, tensor in summary_utils.flatten_summary_dict(summary_tensors):
         all_summary_tensors[key].append(tensor)
@@ -376,7 +397,7 @@ class SingleTaskDecodeProgram(programs.Program):
         # Copy the tensor from device memory to ram, since accumulating such
         # tensor on devices may cause HBM OOM, when
         # task_p.train.summary_accumulate_interval_steps is set.
-        weighted_scalars = jax.tree_map(np.array, weighted_scalars)
+        weighted_scalars = jax.tree.map(np.array, weighted_scalars)
         decode_metrics.store(weighted_scalars)
 
         xla_passthrough.merge_back_xla_unsupported_batch(
@@ -387,22 +408,22 @@ class SingleTaskDecodeProgram(programs.Program):
         # is not expected to be JIT friendly. Since we keep track of
         # its outputs, we also don't want on-device allocation as
         # would eventually lead to HBM OOM.
-        with jax.default_device(jax.devices('cpu')[0]):
-          per_example_out = jax.tree_map(np.asarray, per_example_out)
+        with jax.default_device(jax.local_devices(backend='cpu')[0]):
+          per_example_out = jax.tree.map(np.asarray, per_example_out)
           process_weighted_scalars, processed_out, processed_metric_updates = (
               self._task.model.process_decode_out(
                   self.decode_input, per_example_out
               )
           )
-
-        processed_out = seqio_input.maybe_update_decode_output_keys(
-            processed_out, per_example_out
-        )
+        if processed_out:
+          processed_out = seqio_input.maybe_update_decode_output_keys(
+              processed_out, per_example_out
+          )
 
         process_decode_metrics.store(process_weighted_scalars)
         processed_decodes.extend(processed_out)
         if processed_metric_updates:
-          processed_metrics = _merge_clu_metrics(
+          processed_metrics = metric_utils.merge_clu_metrics(
               processed_metrics, processed_metric_updates
           )
 
@@ -416,7 +437,7 @@ class SingleTaskDecodeProgram(programs.Program):
 
   def _get_decode_step(
       self, inputs: NestedJTensor
-  ) -> Tuple[Any, Optional[NestedPartitionSpec]]:
+  ) -> tuple[Any, NestedPartitionSpec | None]:
     """Creates the decode step info if not done before."""
     if not self._decode_step_created:
       self._decode_step_fn, self._decode_step_input_spec = (
@@ -445,7 +466,7 @@ class SingleTaskDecodeProgram(programs.Program):
 
   def decode_input_partition_spec(
       self, inputs: NestedJTensor
-  ) -> Optional[NestedPartitionSpec]:
+  ) -> NestedPartitionSpec | None:
     """The partition spec for the decode inputs."""
     _, input_partition_spec = self._get_decode_step(inputs)
     return input_partition_spec

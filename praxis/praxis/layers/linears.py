@@ -24,7 +24,9 @@ from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import activations
 from praxis.layers import base_ops
-
+from praxis import aqt_utils
+import flax.linen as nn
+from absl import logging
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
@@ -96,6 +98,7 @@ class Linear(base_layer.BaseLayer):
     )
     self.create_child('einsum', self.einsum_tpl.clone())
 
+  @nn.compact
   def __call__(self, inputs: JTensor) -> JTensor:
     """Apply projection to inputs.
 
@@ -106,7 +109,14 @@ class Linear(base_layer.BaseLayer):
       Projected inputs.
     """
     ap = self.activation_split_dims_mapping
-    out = self.einsum('...y,yz->...z', inputs, self.theta.w)
+    eqn = '...y,yz->...z'
+    if self.quant is not None:
+        logging.info(f'ffn quant: {self.quant}')
+        dot_general = aqt_utils.DenseGeneral(quant=self.quant)
+        out = dot_general(eqn, inputs, self.theta.w)
+    else:
+        out = self.einsum(eqn, inputs, self.theta.w)
+
     # Adjust sharding annotation during decoding.
     # TODO(pax): This logic should likely be lifted somewhere else.
     ap_out = ap.out

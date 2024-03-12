@@ -43,7 +43,7 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from praxis.layers import normalizations
-import aqt_utils
+from praxis import aqt_utils
 
 WeightInit = base_layer.WeightInit
 

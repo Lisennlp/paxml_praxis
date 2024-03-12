@@ -11,7 +11,67 @@ from aqt.jax.v2 import config as aqt_config
 from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
 
-import praxis
+
+def einsum_eqn_to_dimension_numbers(
+    eqn: str,
+):
+  if '.' in eqn:
+    raise NotImplementedError(
+        f"Dynamic batch dims ('...') are not supported. Input eqn: {eqn}. "
+    )
+  inputs, out_names = eqn.split('->')
+  num_commas = inputs.count(',')
+  if num_commas != 1:
+    raise ValueError(
+        f'einsum equation ({eqn}) expected two arguments, '
+        f'but {num_commas+1} found.'
+    )
+  lhs_names, rhs_names = inputs.split(',')
+  if len(lhs_names) != len(set(lhs_names)):
+    raise ValueError(f'Repeated dim names are not supported, got {lhs_names=}')
+  if len(rhs_names) != len(set(rhs_names)):
+    raise ValueError(f'Repeated dim names are not supported, got {rhs_names=}')
+
+  # Order batch_names by their appearance in out_names to minimize the need for
+  # permutation.
+  batch_names = [
+      name for name in out_names if name in lhs_names and name in rhs_names
+  ]
+  lhs_batch_dims = [lhs_names.index(name) for name in batch_names]
+  rhs_batch_dims = [rhs_names.index(name) for name in batch_names]
+
+  # dot_general only supports contraction dims which exist in both arguments.
+  lhs_contraction_names = set(lhs_names) - set(out_names)
+  rhs_contraction_names = set(rhs_names) - set(out_names)
+  if lhs_contraction_names != rhs_contraction_names:
+    raise ValueError(
+        'Contraction dims must be present in both lhs and rhs, but got '
+        f'{lhs_contraction_names} and {rhs_contraction_names}'
+    )
+  # The order of the contraction dims does not matter to dot_general so long as
+  # it is the same for both arguments, but ensuring that the order is
+  # deterministic allows for easier validation of exported model artifacts.
+  contraction_names = sorted(lhs_contraction_names)
+
+  lhs_contraction_dims = [lhs_names.index(name) for name in contraction_names]
+  rhs_contraction_dims = [rhs_names.index(name) for name in contraction_names]
+  dimension_numbers = (
+      (tuple(lhs_contraction_dims), tuple(rhs_contraction_dims)),
+      (tuple(lhs_batch_dims), tuple(rhs_batch_dims)),
+  )
+
+  # Compute the order of the dot_general output names.
+  shared_names = set(batch_names).union(contraction_names)
+  lhs_unshared_names = [name for name in lhs_names if name not in shared_names]
+  rhs_unshared_names = [name for name in rhs_names if name not in shared_names]
+  dot_general_out_names = batch_names + lhs_unshared_names + rhs_unshared_names
+
+  # Permute the dot_general output to match the einsum output if necessary.
+  assert set(dot_general_out_names) == set(out_names), dot_general_out_names
+  perm = None
+  if dot_general_out_names != list(out_names):
+    perm = tuple(dot_general_out_names.index(name) for name in out_names)
+  return dimension_numbers, perm
 
 
 # chex==0.1.85
@@ -108,9 +168,9 @@ def get_dimension(eqn, ndim):
         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
         batch_eqn = eqn_sym[:(ndim - 1)] if ndim else '...'
         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-        dimension_numbers, _ = praxis.layers.utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+        dimension_numbers, _ = einsum_eqn_to_dimension_numbers(eqn_edited)
     else:
-        dimension_numbers, _ = praxis.layers.utils.einsum_eqn_to_dimension_numbers(eqn)
+        dimension_numbers, _ = einsum_eqn_to_dimension_numbers(eqn)
     return  dimension_numbers
    
 

@@ -1482,6 +1482,8 @@ class DotProductAttention(base_layer.BaseLayer):
 
   def _atten_logits(self, query: JTensor, key: JTensor) -> JTensor:
     """Compute logits from query and key."""
+    query = query.astype(jnp.float32)
+    key = key.astype(jnp.float32)
     logits = self.qk_einsum('BTNH,BSNH->BNTS', query, key)
     return logits
 

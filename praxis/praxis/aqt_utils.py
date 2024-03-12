@@ -11,7 +11,7 @@ from aqt.jax.v2 import config as aqt_config
 from aqt.jax.v2.flax import aqt_flax
 from dataclasses import dataclass
 
-from praxis.layers import utils
+import praxis
 
 
 # chex==0.1.85
@@ -108,9 +108,9 @@ def get_dimension(eqn, ndim):
         eqn_sym = ''.join(sorted(set(string.ascii_uppercase) - set('yz')))
         batch_eqn = eqn_sym[:(ndim - 1)] if ndim else '...'
         eqn_edited = f'{batch_eqn}y,yz->{batch_eqn}z'
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn_edited)
+        dimension_numbers, _ = praxis.layers.utils.einsum_eqn_to_dimension_numbers(eqn_edited)
     else:
-        dimension_numbers, _ = utils.einsum_eqn_to_dimension_numbers(eqn)
+        dimension_numbers, _ = praxis.layers.utils.einsum_eqn_to_dimension_numbers(eqn)
     return  dimension_numbers
    
 

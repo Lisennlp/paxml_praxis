@@ -43,6 +43,7 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from praxis.layers import normalizations
+import aqt_utils
 
 WeightInit = base_layer.WeightInit
 
@@ -668,7 +669,7 @@ def configure_gpt3_task(
     # qkv activation 快一点点
   #   transformer_layer_p.tr_atten_tpl.quant = quant_config
     # embedding 快一点点
-    model_p.lm_tpl.separate_embedding_tpl.quant = quant_config
+    # model_p.lm_tpl.separate_embedding_tpl.quant = quant_config
     # lm head 变慢了一点点
   #   model_p.lm_tpl.softmax_tpl.feed_forward_tpl.linear_tpl.quant = quant_config
 
@@ -908,13 +909,13 @@ class C4SpmdPipelineGpt3AdamMLPerfHP(C4SpmdPipelineGpt3AdamOrgHP):
 
 @experiment_registry.register
 class Llama7BTest(C4SpmdGpt3AdamOrgHP): # C4SpmdPipelineGpt3AdamOrgHP更慢
-  QUANT = True
+  QUANT = 'int8'
   NORMALIZATION_CLS = normalizations.RmsNorm
   USE_ROTARY_POSITION_EMB = True
   USE_GATED_ACTIVATION = True
   PERCORE_BATCH_SIZE = 1
   NUM_STAGES = 1
-  ICI_MESH_SHAPE = [1, 8, 1]
+  ICI_MESH_SHAPE = [1, 4, 1]
   FPROP_DTYPE = jnp.bfloat16
   CHECKPOINT_MAX_TO_KEEP = 100
   EVAL_INTERVAL_STEPS = 250000

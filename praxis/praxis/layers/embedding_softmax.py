@@ -1188,12 +1188,13 @@ class RotaryPositionalEmbedding(PositionalEmbedding):
         if position is None:
             position = jnp.arange(seq_length, dtype=jnp.float32)[jnp.newaxis, :]
         position = position[:, :, jnp.newaxis, jnp.newaxis]
-        # # lsp
-        # if self.rotary_type == 'qwen':
-        #     ntk_alpha = self.get_ntk_alpha(seq_length)
-        # else:
-        #     ntk_alpha = 1
-        ntk_alpha = 3
+        # lsp
+        if self.rotary_type == 'qwen':
+            ntk_alpha = self.get_ntk_alpha(seq_length)
+        else:
+            ntk_alpha = 1
+        # qwen sft use 3
+        # ntk_alpha = 3
         logging.info(f'ntk_alpha: {ntk_alpha}')
 
         max_timescale = self.max_timescale * ntk_alpha ** (self.embedding_dims / (self.embedding_dims - 2))

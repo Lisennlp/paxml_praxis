@@ -1772,8 +1772,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     WANDB_PROJECT = "Qwen14B"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = None
-    LM_HEAD_CHUNK_SIZE = None
+    QUERY_CHUNK_SIZE = 256
+    LM_HEAD_CHUNK_SIZE = 512
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
@@ -2010,8 +2010,8 @@ class MyDatasets(base_input.BaseInput):
         if self.shuffle_buffer_size is not None:
             logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-        # padded_shapes = {key: self.seq_len for key in self.task_features}
-        padded_shapes = {key: 4097 for key in self.task_features}
+        padded_shapes = {key: self.seq_len for key in self.task_features}
+        # padded_shapes = {key: 4097 for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
             batch_size=np.prod(self.batch_size),

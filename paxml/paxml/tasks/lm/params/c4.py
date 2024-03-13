@@ -2010,7 +2010,8 @@ class MyDatasets(base_input.BaseInput):
         if self.shuffle_buffer_size is not None:
             logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-        padded_shapes = {key: self.seq_len for key in self.task_features}
+        # padded_shapes = {key: self.seq_len for key in self.task_features}
+        padded_shapes = {key: 4097 for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
             batch_size=np.prod(self.batch_size),

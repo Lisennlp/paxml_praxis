@@ -131,10 +131,10 @@ class DenseGeneral(nn.Module):
         # 例如qk：inputs: (32, 2048, 32, 128) kernel: (32, 2048, 32, 128) dimensions: (((3,), (3,)), ((0, 2), (0, 2)))
         return dot_general(inputs, kernel, dimensions, precision=None)
     logging.info(f'inputs: {inputs.shape} kernel: {kernel.shape}')
-
     if dimensions is None:
       dimensions = get_dimension(eqn, ndim=inputs.ndim)
-
+    logging.info(f'kernel:{kernel.dtype}')
+    kernel = jnp.asarray(kernel, jnp.bfloat16)
     logging.info(f'dimensions: {dimensions}')
     # return inputs
     output = compute_dot_general(inputs, kernel, dimensions=dimensions)

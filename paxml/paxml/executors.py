@@ -386,6 +386,7 @@ def _train_and_evaluate_common(
     initial_global_step = int(
         py_utils.maybe_unreplicate_for_fully_replicated(partitioned_train_state.step)
     )
+    initial_global_step = 0
     logging.info("Model initial global_step=%d", initial_global_step)
     if checkpointer.step_to_restore is not None:
         assert checkpointer.step_to_restore == initial_global_step, (

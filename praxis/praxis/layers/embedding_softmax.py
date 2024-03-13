@@ -157,6 +157,7 @@ class Embedding(base_layer.BaseLayer):
             # Explicit casting to fprop_dtype needed for bf16.
             one_hot_ids = jax.nn.one_hot(ids, self.num_classes, dtype=self.fprop_dtype)
             eqn = "...y,yz->...z"
+            logging.info(f'one_hot_ids: {one_hot_ids.shape} self.theta.emb_var: {self.theta.emb_var.shape}')
             if self.quant is not None:
                 logging.info(f'embed quant: {self.quant}')
                 dot_general = aqt_utils.DenseGeneral(quant=self.quant)

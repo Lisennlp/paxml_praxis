@@ -386,13 +386,16 @@ def _train_and_evaluate_common(
     initial_global_step = int(
         py_utils.maybe_unreplicate_for_fully_replicated(partitioned_train_state.step)
     )
-    initial_global_step = 0
     logging.info("Model initial global_step=%d", initial_global_step)
     if checkpointer.step_to_restore is not None:
-        assert checkpointer.step_to_restore == initial_global_step, (
-            f"Checkpoint number {checkpointer.step_to_restore} and restored step"
-            f" number {initial_global_step} mismatch."
-        )
+        try:
+            assert checkpointer.step_to_restore == initial_global_step, (
+                f"Checkpoint number {checkpointer.step_to_restore} and restored step"
+                f" number {initial_global_step} mismatch."
+            )
+        except:
+            initial_global_step = checkpointer.step_to_restore
+            logging.info(f'initial_global_step is set to step_to_restore: {checkpointer.step_to_restore}')
 
     logging.info("[PAX STATUS]: Starting training loop.")
     step_i = initial_global_step

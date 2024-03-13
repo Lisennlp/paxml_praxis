@@ -165,8 +165,6 @@ class Linear(base_layer.BaseLayer):
         ap_out = ap.out
         if ap_out is not None and len(ap_out) == 3 and out.ndim == 2:
             ap_out = [ap_out[0], ap_out[2]]
-        logging.info(f'linear inputs shape: {inputs.shape}')
-        logging.info(f'ap_out: {ap_out} mesh_axis_names: {mesh_axis_names}')
         out = base_layer.maybe_shard(out, ap_out, self.mesh_axis_names)
         return out
 

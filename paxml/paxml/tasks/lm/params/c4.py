@@ -1731,18 +1731,18 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 8
+    PERCORE_BATCH_SIZE = 16
     ICI_MESH_SHAPE = [1, 16, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
-    MAX_SEQ_LEN = 4097
+    MAX_SEQ_LEN = 2049
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
-    LR_LRED_WARMUP = 500
-    LR_LRED_DECAY_START = 501
-    LR_LRED_DECAY_END = 5000
+    LR_LRED_WARMUP = 200
+    LR_LRED_DECAY_START = 201
+    LR_LRED_DECAY_END = 2000
     LR_LRED_MIN_RATIO = 1.0
     LR_LRED_MAX = 1.0
     Z_LOSS_WEIGHT = 0.0

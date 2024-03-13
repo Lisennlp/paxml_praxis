@@ -1515,7 +1515,7 @@ class BaseLayer(nn.Module):
     dcn_mesh_shape: Optional[Sequence[int]] = None
     contiguous_submeshes: Optional[bool] = None
     mesh_axis_names: Optional[Sequence[str]] = None
-    shared_weight_layer_id: Optional[str] = None
+    shared_weight_layer_id: Optional[str] = None # 需要共享的层的id号，两个共享层均设置相同的id即可
     data_full_shard: Optional[bool] = True
     # TODO(b/249483164): Change these to use instance_field rather than
     # template_field after the Fiddle migration.

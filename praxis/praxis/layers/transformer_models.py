@@ -34,7 +34,7 @@ from praxis.layers import multi_query_attention
 from praxis.layers import normalizations
 from praxis.layers import transformers
 from praxis.layers import stochastics
-
+from absl import logging
 
 NestedMap = py_utils.NestedMap
 JTensor = pytypes.JTensor
@@ -80,6 +80,7 @@ def _set_embedding_softmax_sharding_params_for_transformers(
     if fdl.get_callable(embedding_softmax_p) == embedding_softmax.GShardSharedEmbeddingSoftmax:
         # Softmax weight is of shape [vocab_size, input_dim].
         embedding_softmax_p.weight_split_dims_mapping.wt = w_vd
+    # lsp: Embedding
     elif (
         issubclass(
             fdl.get_callable(embedding_softmax_p),
@@ -90,7 +91,9 @@ def _set_embedding_softmax_sharding_params_for_transformers(
         or fdl.get_callable(embedding_softmax_p) == embedding_softmax.Embedding
     ):
         # Softmax weight is of shape [input_dim, vocab_size].
+        # lsp: wt 应该为[mp, dp]啊，为啥要反过来?
         embedding_softmax_p.weight_split_dims_mapping.wt = [w_vd[1], w_vd[0]]
+        logging.info(f'embedding_softmax_p.weight_split_dims_mapping.wt: {embedding_softmax_p.weight_split_dims_mapping.wt}')
         if fdl.get_callable(embedding_softmax_p) != embedding_softmax.FullSoftmax:
             embedding_softmax_p.lookup_style = "matmul"
     else:

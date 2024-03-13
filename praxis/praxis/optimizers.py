@@ -582,6 +582,7 @@ def sharded_adam(
   helper = _ShardedAdamHelper(maybe_inf_to_nan=maybe_inf_to_nan)
 
   def init_fn(mdl_vars):
+    # lsp: 根据参数对m,v进行初始化为0，只用到了mdl_vars的shape
     slot_vars = jax.tree_map(helper.init_opt_state, mdl_vars)
     count = jnp.array(0, dtype=jnp.int32)
     return NestedMap(
@@ -590,6 +591,7 @@ def sharded_adam(
         v=jax.tree_map(lambda x: x.v, slot_vars))
 
   def init_partition_spec_fn(mdl_params):
+    # lsp:简单的采用mdl_params的shard方式
     slot_vars = jax.tree_map(helper.opt_state_sharding_spec, mdl_params)
     count = WeightHParams(
         shape=[], init=None, dtype=jnp.int32, collections=None)
@@ -600,6 +602,7 @@ def sharded_adam(
         v=jax.tree_map(lambda x: x.v, slot_vars))
 
   def update_fn(updates, state, params=None):
+    # updates: grad
     # Sanitize updates just in case.
     if weight_decay > 0:
       assert params is not None
@@ -631,7 +634,7 @@ def sharded_adam(
 
     updated_states = NestedMap(count=count + 1, m=m, v=v)
     return updates, updated_states
-
+  # dataclass, 把之后要用到的函数返回
   return ShardedGradientTransformation(
       init=init_fn,
       update=update_fn,
@@ -1173,7 +1176,7 @@ class Adam(BaseOptimizer):
     if self.sharded_adam:
       logging.info('Using sharded_adam.')
       return sharded_adam(
-          learning_rate_fn=lr,
+          learning_rate_fn=lr, # 学习率函数
           beta1=self.beta1,
           beta2=self.beta2,
           epsilon=self.epsilon,

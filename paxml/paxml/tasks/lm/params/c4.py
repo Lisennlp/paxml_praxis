@@ -397,7 +397,7 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
         transformer_layer_p.tr_atten_tpl.use_bias = getattr(self, 'QKV_BIAS', False)
         # post bias | mlp bias
         transformer_layer_p.tr_atten_tpl.o_bias = getattr(self, 'O_BIAS', False)
-        # lsp
+        # lsp: 设置优化器
         task_p = set_adam_and_learning_rate_schedule(cls=self, task_p=task_p)
         return task_p
 
@@ -2010,8 +2010,8 @@ class MyDatasets(base_input.BaseInput):
         if self.shuffle_buffer_size is not None:
             logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-        # padded_shapes = {key: self.seq_len for key in self.task_features}
-        padded_shapes = {key: 4097 for key in self.task_features}
+        padded_shapes = {key: self.seq_len for key in self.task_features}
+        # padded_shapes = {key: 4097 for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
             batch_size=np.prod(self.batch_size),

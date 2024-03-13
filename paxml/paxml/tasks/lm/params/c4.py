@@ -1731,18 +1731,18 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 16, 4]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    PERCORE_BATCH_SIZE = 16
+    ICI_MESH_SHAPE = [1, 16, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
-    MAX_SEQ_LEN = 2049
+    MAX_SEQ_LEN = 4097
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
     LEARNING_RATE = 1e-5
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
-    LR_LRED_WARMUP = 1000
-    LR_LRED_DECAY_START = 1001
-    LR_LRED_DECAY_END = 200000
+    LR_LRED_WARMUP = 500
+    LR_LRED_DECAY_START = 501
+    LR_LRED_DECAY_END = 10000
     LR_LRED_MIN_RATIO = 1.0
     LR_LRED_MAX = 1.0
     Z_LOSS_WEIGHT = 0.0
@@ -1765,19 +1765,19 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     FPROP_DTYPE = jnp.bfloat16
 
     CHECKPOINT_EVERY_N_STEPS = 200
-    EVAL_LOOP_NUM_BATCHES = 35
+    EVAL_LOOP_NUM_BATCHES = 50
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
     WANDB_PROJECT = "Qwen14B"
     LM_HEAD_NORM = False
 
-    QUERY_CHUNK_SIZE = 256
-    LM_HEAD_CHUNK_SIZE = 512
+    QUERY_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = None
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    DATA_REPEAT = {'train': 3, 'test': 10}
+    DATA_REPEAT = {'train': 5, 'test': 20}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
@@ -1793,8 +1793,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
     #             }
     DATA_PATH = {
-                'train': ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'],
-                'test':  ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord/'], 
+                'train': ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/'],
+                'test':  ['gs://jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/'], 
                 }
     DATA_FUNC = extract_sft_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled

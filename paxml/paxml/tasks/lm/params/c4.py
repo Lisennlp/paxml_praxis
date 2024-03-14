@@ -1777,7 +1777,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     RESET_FOR_EVAL = False
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    DATA_REPEAT = {'train': 5, 'test': 20}
+    DATA_REPEAT = {'train': 5, 'test': 40}
     SHUFFLE_SIZE = 200000
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02

@@ -1733,8 +1733,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    PERCORE_BATCH_SIZE = 16
+    ICI_MESH_SHAPE = [1, 16, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
     MAX_SEQ_LEN = 2049
     VOCAB_SIZE = 152064
@@ -1767,7 +1767,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     FPROP_DTYPE = jnp.bfloat16
 
     CHECKPOINT_EVERY_N_STEPS = 200
-    EVAL_LOOP_NUM_BATCHES = 50
+    EVAL_LOOP_NUM_BATCHES = 25
     EVAL_INTERVAL_STEPS = 100
     CHECKPOINT_MAX_TO_KEEP = 2
 
@@ -1795,8 +1795,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
     #             }
     DATA_PATH = {
-                'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len4k/'],
-                'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len4k/'], 
+                'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'],
+                'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'], 
                 }
     DATA_FUNC = extract_sft_datapath2
     # DATA_FUNC = extract_qwen_datapath_shuffled

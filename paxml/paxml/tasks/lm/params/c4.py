@@ -1731,8 +1731,8 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     MODEL_DIMS = 5120
     HIDDEN_DIMS = 13696
     NUM_HEADS = 40
-    PERCORE_BATCH_SIZE = 16
-    ICI_MESH_SHAPE = [1, 16, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]  # [1, 8, 4], bsz = 1 * 1 * 8 * 4=32， mesh_tf: 0.0686step/s
     # MAX_SEQ_LEN = 4097
     MAX_SEQ_LEN = 2049
     VOCAB_SIZE = 152064

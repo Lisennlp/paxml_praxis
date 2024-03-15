@@ -190,7 +190,7 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
     setattr(task, 'train_test_dataset', train_test_dataset)
     return train_test_dataset
 
-
+# sft with continue flag
 def extract_sft_datapath(task, mode):
     paths = [task.DATA_PATH[mode]] if isinstance(task.DATA_PATH[mode], str) else task.DATA_PATH[mode]
     total_files = []
@@ -201,6 +201,36 @@ def extract_sft_datapath(task, mode):
             total_files.extend(f)
     train = [f for f in total_files if 'train.' in f]
     test = [f for f in total_files if 'test.' in f]
+    logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')
+    train_test_dataset = {"test": test, "train": train}
+    setattr(task, 'train_test_dataset', train_test_dataset)
+    return train_test_dataset
+
+# sft without continue flag
+def extract_sft_datapath2(task, mode):
+    paths = [task.DATA_PATH[mode]] if isinstance(task.DATA_PATH[mode], str) else task.DATA_PATH[mode]
+    total_files = []
+    substrings = ['.tfrecord']
+    for path in paths:
+        files = read_bucket(path, substrings=substrings)
+        for step, f in files.items():
+            total_files.extend(f)
+    train = [f for f in total_files if 'train.' in f and 'continue' not in f]
+    test = [f for f in total_files if 'test.' in f and 'continue' not in f]
+
+    zh_files = []
+    for b in range(2000000, 2500000, 10000):
+        p = f'gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_1208_shuffled/zh_b{b}'
+        zh_files.append(p)
+    en_files = []
+    for b in range(0, 400000, 10000):
+        p = f'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_1208_shuffled/en_b{b}'
+        en_files.append(p)
+    random.shuffle(zh_files)
+    random.shuffle(en_files)
+    test = test + en_files[0] + zh_files[0]
+    train = train + en_files[1:] + zh_files[1:]
+
     logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')
     train_test_dataset = {"test": test, "train": train}
     setattr(task, 'train_test_dataset', train_test_dataset)

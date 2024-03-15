@@ -1798,7 +1798,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                 'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'],
                 'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'], 
                 }
-    DATA_FUNC = extract_sft_datapath2
+    DATA_FUNC = extract_sft_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208

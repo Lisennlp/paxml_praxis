@@ -38,11 +38,11 @@ random.seed(42)
 #         total_lines.extend(lines)
 
 # bucket
-zh_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/zh/'
-en_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/en/'
+# zh_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/zh/'
+# en_read_dir = 'gs://jax_llm_data/xiaomeng/sft_target/en/'
 
 client = storage.Client()
-bucket_name = 'ntpu_jax_llm_data'
+bucket_name = 'jax_llm_data_us-east5'
 pathes = []
 for lang in ['zh', 'en']:
     directory_path = f'xiaomeng/sft_target/{lang}/'
@@ -55,9 +55,9 @@ print(pathes)
 
 
 start = time.time()
-max_length = 4096
+max_length = 2049
 total_lines = []
-for path in pathes[:1]:
+for path in pathes:
     path = epath.Path(path)
     with path.open('r') as f:
         lines = f.readlines()
@@ -66,8 +66,8 @@ for path in pathes[:1]:
 random.shuffle(total_lines)
 
 print(f'Read data and shuffle take: {time.time() - start}s data length: {len(total_lines)}')
-train_path = 'gs://ntpu_jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/train.tfrecord'
-test_path = 'gs://ntpu_jax_llm_data/xiaomeng/sft_target/tfrecord_len4k/test.tfrecord'
+train_path = 'gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/train.summary.etc.tfrecord'
+test_path = 'gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/test.summary.etc.tfrecord'
 
 train_writer = tf.io.TFRecordWriter(train_path)
 test_writer = tf.io.TFRecordWriter(test_path)
@@ -81,7 +81,7 @@ for i, line in enumerate(total_lines):
     text = line['text']
     target = line['target']
     text_ids = tokenizer.encode(text) if text else []
-    text_ids = text_ids[: max_length - 1]
+    # text_ids = text_ids[: max_length - 1]
     labels = [0] * len(text_ids) 
     target_ids = tokenizer.encode(target)
     # <|im_start| <|im_end|>
@@ -89,11 +89,16 @@ for i, line in enumerate(total_lines):
         start_id = [151644]
         end_id = [151645]
     else:
+        # 去掉续写数据
+        continue
         start_id = []
         end_id = []
     input_ids =  text_ids + start_id + target_ids + end_id
     assert sum(labels) == 0
-    labels = labels + start_id + target_ids + end_id
+    # labels = labels + start_id + target_ids + end_id
+    # start_id不计算loss
+    labels = labels + [0] + target_ids + end_id
+
     assert len(input_ids) == len(labels)
     if len(input_ids) > max_length: 
         print(f'i: {i} len: {len(input_ids)}')

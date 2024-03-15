@@ -1798,7 +1798,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                 'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'],
                 'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'], 
                 }
-    DATA_FUNC = extract_sft_datapath
+    DATA_FUNC = extract_sft_datapath2
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208
@@ -2013,8 +2013,8 @@ class MyDatasets(base_input.BaseInput):
             logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
         padded_shapes = {key: self.seq_len for key in self.task_features}
-        # padded_shapes = {key: 4097 for key in self.task_features}
-        padding_values = {key: self.pad_id for key in self.task_features}
+        padded_shapes = {key: 4097 for key in self.task_features}
+        # padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
             batch_size=np.prod(self.batch_size),
             padded_shapes=padded_shapes,

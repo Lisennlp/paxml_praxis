@@ -228,7 +228,7 @@ def extract_sft_datapath2(task, mode):
         en_files.append(p)
     random.shuffle(zh_files)
     random.shuffle(en_files)
-    test = test + en_files[0] + zh_files[0]
+    test = test + en_files[0: 1] + zh_files[0: 1]
     train = train + en_files[1:] + zh_files[1:]
 
     logging.info(f'Train file: {train} len: {len(train)},  test file: {test} len: {len(test)}')

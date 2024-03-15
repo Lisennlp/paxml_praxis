@@ -53,7 +53,7 @@ from praxis import py_utils
 
 from paxml import checkpoint_paths
 
-from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208, extract_train_skip_step, extract_sft_datapath
+from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208, extract_train_skip_step, extract_sft_datapath,extract_sft_datapath2
 from praxis import aqt_utils
 
 
@@ -80,7 +80,7 @@ class DataParams():
     TRAINING_NUM_BATCHES_TO_SKIP = None
     TEST_RATIO = 0.02
     SHUFFLE = {"train": True, "test": False}
-    SHUFFLE_SIZE = 10000
+    SHUFFLE_SIZE = {"train": 100000, "test": 10000}
     MAX_SEQ_LEN = 2048
     # default
     KEY_MAP = {"inputs": None, "targets": "text"}
@@ -173,7 +173,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         else:
             logging.info(f"Load mesh id data......")
             shuffle_key = "train" if is_training else "test"
-            shuffle_buffer_size = self.SHUFFLE_SIZE if self.SHUFFLE[shuffle_key] else None
+            shuffle_buffer_size = self.SHUFFLE_SIZE[shuffle_key] if self.SHUFFLE[shuffle_key] else None
 
         print(f'is_training: {is_training}')
         DATA_PATH = self.DATA_FUNC(mode='train' if is_training else 'test')
@@ -1395,7 +1395,7 @@ class Llama7B(C4SpmdGpt37BRoPE):
     TASK_NAME = "Llama7B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
+    SHUFFLE_SIZE = {"train": 100000, "test": 10000}
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
@@ -1607,7 +1607,8 @@ class BC2Gpt13B(C4SpmdGpt37BRoPE):
     TASK_NAME = "BC2Gpt13B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 80000
+    SHUFFLE_SIZE = {"train": 100000, "test": 10000}
+
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
@@ -1706,7 +1707,8 @@ class Qwen7B(C4SpmdGpt37BRoPE):
     TASK_NAME = "Qwen7B"
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
-    SHUFFLE_SIZE = 10000
+    SHUFFLE_SIZE = {"train": 100000, "test": 10000}
+
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
     RESET_FOR_EVAL = False # when True, eval whole eval dataset
@@ -1778,7 +1780,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     TARGET_LOG_PPLX = -1
     SHUFFLE = {"train": True, "test": True}
     DATA_REPEAT = {'train': 5, 'test': 40}
-    SHUFFLE_SIZE = 200000
+    SHUFFLE_SIZE = {"train": 1300000, "test": 40000}
     TRAINING_SEED = 1234
     TEST_RATIO = 0.02
 
@@ -1796,7 +1798,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
                 'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len4k/'],
                 'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len4k/'], 
                 }
-    DATA_FUNC = extract_sft_datapath
+    DATA_FUNC = extract_sft_datapath2
     # DATA_FUNC = extract_qwen_datapath_shuffled
     # DATA_FUNC = extract_qwen_datapath2
     # DATA_FUNC = extract_qwen_datapath1208
@@ -1909,7 +1911,7 @@ class MyDatasets(base_input.BaseInput):
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 16 # 100  500 steps/file
+    iter_file_nums: int = 100 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False

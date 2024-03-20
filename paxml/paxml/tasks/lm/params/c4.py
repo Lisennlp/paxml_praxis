@@ -287,8 +287,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     elif LOAD_SEQIO_TEXT:
         logging.info(f"Load seqio text data......")
         DataFeature = seqio_input.LanguageModelFeatures
-        # mixture_name = "c4.train" if is_training else "c4.test"  # XD fix
-        mixture_name='c4_lm_v301_gpt'
+        mixture_name = "c4.train" if is_training else "c4.test"  # XD fix
+        # mixture_name='c4_lm_v301_gpt'
         name = "C4Train" if is_training else "C4Validation"
         split_name = "train" if is_training else "validation"
         task_feature_lengths = {"targets": self.MAX_SEQ_LEN}
@@ -706,6 +706,7 @@ def configure_gpt3_task(
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
 
+#================================================================================================
     if hasattr(cls, 'MGATE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
     if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
@@ -718,6 +719,7 @@ def configure_gpt3_task(
       stacked_p.moe_layers = cls.MOE_LAYERS
     if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
       stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
+#================================================================================================
 
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
@@ -2946,6 +2948,8 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
                 'train': 'gs://common_datasets_us-east5/', 
                 'test':  'gs://common_datasets_us-east5/', 
                 }
+  VOCAB_FILE = 'gs://common_datasets_us-east5/vocab/c4_en_301_5Mexp_spm.model'
+  VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):

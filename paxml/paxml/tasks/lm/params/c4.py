@@ -2934,14 +2934,18 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192 * 4
+  MAX_SEQ_LEN = 8192 // 4
   WINDOW_SIZE = [256, 4096]
   PERCORE_BATCH_SIZE = 1
-  QUERY_CHUNK_SIZE = 2048
+  QUERY_CHUNK_SIZE = 256
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 32, 1]
+  ICI_MESH_SHAPE = [1, 4, 1]
   DATA_FULL_SHARD = False
   # FFN_CHUKN_SIZE = 5504 // 2
+  DATA_PATH = {
+                'train': 'gs://common_datasets_us-east5/', 
+                'test':  'gs://common_datasets_us-east5/', 
+                }
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):

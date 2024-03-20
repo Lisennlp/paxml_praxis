@@ -709,6 +709,8 @@ def configure_gpt3_task(
 #================================================================================================
     if hasattr(cls, 'MGATE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
+    if hasattr(cls, 'DSM'):  # lsp
+      transformer_layer_p.tr_fflayer_tpl.dsm = cls.DSM
     if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
     if hasattr(cls, 'NUM_EXPERTS'):  # lsp
@@ -2936,7 +2938,7 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192 // 4
+  MAX_SEQ_LEN = 8192 // 2
   WINDOW_SIZE = [256, 4096]
   PERCORE_BATCH_SIZE = 1
   QUERY_CHUNK_SIZE = 256
@@ -2944,12 +2946,6 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   ICI_MESH_SHAPE = [1, 4, 1]
   DATA_FULL_SHARD = False
   # FFN_CHUKN_SIZE = 5504 // 2
-  DATA_PATH = {
-                'train': 'gs://common_datasets_us-east5/', 
-                'test':  'gs://common_datasets_us-east5/', 
-                }
-  VOCAB_FILE = 'gs://common_datasets_us-east5/vocab/c4_en_301_5Mexp_spm.model'
-  VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
@@ -3059,6 +3055,31 @@ class MgateTest(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
   MGATE = True
+
+@experiment_registry.register
+class DSMgateTest(PileDCSlimLlama7B2Kx4x512x1):
+  #MAX_SEQ_LEN = 8192 * 4 // 2
+  MAX_SEQ_LEN = 2048
+  WINDOW_SIZE = [256, 4096]
+  # WINDOW_SIZE = None
+  PERCORE_BATCH_SIZE = 1 #/ 4
+  QUERY_CHUNK_SIZE = 256
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 4, 1]
+  DATA_FULL_SHARD = False
+  FFN_CHUKN_SIZE = 5504 // 8
+  PRE_COMPUTE_ATTEN_MASK = False
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20
+  MGATE = True
+  DSM = True
+  DATA_PATH = {
+                'train': 'gs://common_datasets_us-east5/', 
+                'test':  'gs://common_datasets_us-east5/', 
+                }
+  VOCAB_FILE = 'gs://common_datasets_us-east5/vocab/c4_en_301_5Mexp_spm.model'
+  VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+
 
 @experiment_registry.register
 class MultiSliceTest(PileDCSlimLlama7B2Kx4x512x1):

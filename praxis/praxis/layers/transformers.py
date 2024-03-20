@@ -306,6 +306,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
   chunk_size: int = None
   output_layer_std: float = None
   mgate: bool = False
+  dsm: bool = False # DeepSeekMoe
 
   class WeightSharding(base_layer.BaseLayer.WeightSharding):
     """Represents how layer's learned parameters are partitioned across a mesh.
@@ -462,6 +463,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
         mgate_p.linear_tpl.params_init = WeightInit.Uniform(scale)
       self.create_child('mgate_layer', mgate_p)
 
+    logging.info(f'mgate: {self.mgate} dsm: {self.dsm}')
 
   def __call__(self,
                inputs: JTensor,
@@ -488,11 +490,22 @@ class TransformerFeedForward(base_layer.BaseLayer):
     if self.mgate:
         # bld x de -> ble
         gate_scores = self.mgate_layer(inputs)
+        # DeepSeekMoe mgate
+        if self.dsm:
+          # 将第0个专家固定
+          gate_scores = gate_scores.at[..., 0].set(jnp.finfo(jnp.float32).max)
+
         gate_scores = jax.nn.softmax(gate_scores.astype(jnp.float32), axis=-1)
+
+        if self.dsm:
+          # 将第0个专家分数设置为1
+          gate_scores = gate_scores.at[..., 0].set(1.0)
+
         # gate_scores *= self.n_chunks
         gate_scores = gate_scores.astype(self.fprop_dtype)
         
-        assert gate_scores.shape[-1] == self.n_chunks, (self.n_chunks, gate_scores.shape[-1])
+        # assert gate_scores.shape[-1] == self.n_chunks, (self.n_chunks, gate_scores.shape[-1])
+      
 
     if self.chunk_size is None:
       # Apply first FFN layer
@@ -522,6 +535,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
       # Apply second FFN layer
       outputs = self.ffn_layer2(activations)
+      
     else:
       outputs = None
       for i in range(self.n_chunks):
@@ -538,6 +552,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
         _outputs = self.ffn_layer2[i](activations)
 
         if self.mgate:
+          # ble -> bl1 -> bl
           # lsp: bl x bld
           _outputs = gate_scores[..., i: (i + 1)] * _outputs
 

@@ -493,7 +493,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
         # DeepSeekMoe mgate
         if self.dsm:
           # 将第0个专家固定
-          gate_scores = gate_scores.at[..., 0].set(jnp.finfo(jnp.float32).max)
+          gate_scores = gate_scores.at[..., 0].set(jnp.finfo(jnp.float32).min)
 
         gate_scores = jax.nn.softmax(gate_scores.astype(jnp.float32), axis=-1)
 

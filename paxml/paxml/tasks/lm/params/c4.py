@@ -1740,7 +1740,7 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     VOCAB_SIZE = 152064
 
     LAYERNORM_EPSILON = 1e-06
-    LEARNING_RATE = 1e-5
+    LEARNING_RATE = 1e-6
     LR_SCHEDULE = "linear_rampup_exponential_decay"  # constant_with_warmup
     LR_LRED_WARMUP = 200
     LR_LRED_DECAY_START = 201
@@ -1795,14 +1795,21 @@ class Qwen14B(C4SpmdGpt37BRoPE):
     #                       'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208']
     #             }
     DATA_PATH = {
-                'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'],
-                'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'], 
+                'train': ['gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_0321', 
+                          'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_0321'], 
+                'test':  ['gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_0321', 
+                          'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_0321']
                 }
-    DATA_FUNC = extract_sft_datapath
+    # DATA_PATH = {
+    #             'train': ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'],
+    #             'test':  ['gs://jax_llm_data_us-east5/xiaomeng/sft_target/tfrecord_len2k/'], 
+    #             }
+                # 
+    # DATA_FUNC = extract_sft_datapath
     # DATA_FUNC = extract_qwen_datapath_shuffled
-    # DATA_FUNC = extract_qwen_datapath2
+    # DATA_FUNC = extract_qwen_datapath
     # DATA_FUNC = extract_qwen_datapath1208
-    # DATA_FUNC = extract_qwen_datapath1208_shuffled
+    DATA_FUNC = extract_qwen_datapath1208_shuffled
     SAVE_ON_STEPS = list(range(1000, 100000, 1000)) + [11800]
     ONLY_EVAL = False
 

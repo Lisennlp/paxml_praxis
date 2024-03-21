@@ -220,11 +220,11 @@ def extract_sft_datapath2(task, mode):
 
     zh_files = []
     for b in range(2000000, 2500000, 10000):
-        p = f'gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_1208_shuffled/zh_b{b}'
+        p = f'gs://jax_llm_data_us-east5_us-east5/xiaomeng/zh_data_Qwen-14B_1208_shuffled/zh_b{b}'
         zh_files.append(p)
     en_files = []
     for b in range(0, 400000, 10000):
-        p = f'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_1208_shuffled/en_b{b}'
+        p = f'gs://jax_llm_data_us-east5_us-east5/xiaomeng/en_data_Qwen-14B_1208_shuffled/en_b{b}'
         en_files.append(p)
     random.shuffle(zh_files)
     random.shuffle(en_files)
@@ -261,9 +261,9 @@ def extract_zh_en_novel_datapath(task, mode):
 def extract_bc2_datapath1213(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    path = 'gs://jax_llm_data/xiaomeng/zh_data_Baichuan2-13B-Base_1213'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/zh_data_Baichuan2-13B-Base_1213'
     zh_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
-    path = 'gs://jax_llm_data/xiaomeng/en_data_Baichuan2-13B-Base_1213'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/en_data_Baichuan2-13B-Base_1213'
     en_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
     total_files = []
     for key in range(0, 10001, 10000):
@@ -292,7 +292,7 @@ def extract_bc2_datapath1213(task, mode):
 def extract_bc2_datapath1213_shuffled(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    path = f'gs://jax_llm_data/xiaomeng/zh_en_data_bc2_13b_1214_shuffled/'
+    path = f'gs://jax_llm_data_us-east5/xiaomeng/zh_en_data_bc2_13b_1214_shuffled/'
     zh_en_files = read_bucket(path, substrings=['zh_en_b'], split='_b')
     total_files = []
     for key in range(0, 10000000, 10000):
@@ -309,40 +309,16 @@ def extract_bc2_datapath1213_shuffled(task, mode):
     return train_test_dataset
 
 
-def extract_qwen_datapath_shuffled(task, mode):
-    if hasattr(task, 'train_test_dataset'):
-        return task.train_test_dataset
-    path = 'gs://jax_llm_data/xiaomeng/shuffled_zh_data'
-    zh_files = read_bucket(path, substrings=['tfrecord'], split='.b')
-
-    path = 'gs://jax_llm_data/xiaomeng/shuffled_en_data'
-    en_files = read_bucket(path, substrings=['tfrecord'], split='.b')
-    total_files = []
-    for key in range(0, 2000000, 10000):
-        zh_file = zh_files.get(key, None)
-        en_file = en_files.get(key, None)
-        if zh_file is None or en_file is None:
-            break
-        total_files.extend(zh_file)
-        total_files.extend(en_file)
-    test = total_files[ :10]
-    train = total_files[10: ]
-    logging.info(f'Train file: {len(train)},  test file: {len(test)}')
-    train_test_dataset = {"test": test, "train": train}
-    setattr(task, 'train_test_dataset', train_test_dataset)
-    return train_test_dataset
-
-
 def extract_qwen_datapath1208_shuffled(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    path = 'gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208_shuffled'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_1208_shuffled'
     zh_files = read_bucket(path, substrings=['_b'], split='_b')
 
-    path = 'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208_shuffled'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_1208_shuffled'
     en_files = read_bucket(path, substrings=['_b'], split='_b')
     total_files = []
-    for key in range(0, 10000, 10000):
+    for key in range(0, 1000000, 10000):
         zh_file = zh_files.get(key, None)
         en_file = en_files.get(key, None)
         if zh_file is not None:
@@ -360,9 +336,9 @@ def extract_qwen_datapath1208_shuffled(task, mode):
 def extract_qwen_datapath1208(task, mode):
     if hasattr(task, 'train_test_dataset'):
         return task.train_test_dataset
-    path = 'gs://jax_llm_data/xiaomeng/zh_data_Qwen-14B_1208'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/zh_data_Qwen-14B_1208'
     zh_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
-    path = 'gs://jax_llm_data/xiaomeng/en_data_Qwen-14B_1208'
+    path = 'gs://jax_llm_data_us-east5/xiaomeng/en_data_Qwen-14B_1208'
     en_files = read_bucket(path, substrings=['_R', '_F'], split='_b')
     total_files = []
     for key in range(10000, 20001, 10000):

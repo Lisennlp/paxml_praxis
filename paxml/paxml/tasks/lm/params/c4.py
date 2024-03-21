@@ -2964,22 +2964,6 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
 
-@experiment_registry.register
-class PileDCSlimLlama7B32Kx1x512x1Win256_4K_Test(PileDCSlimLlama7B2Kx4x512x1):
-  #MAX_SEQ_LEN = 8192 * 4 // 2
-  NUM_LAYERS=2
-  MAX_SEQ_LEN = 8192 * 2
-  WINDOW_SIZE = [256, 4096]
-  # WINDOW_SIZE = None
-  PERCORE_BATCH_SIZE = 0.25 #/ 4
-  QUERY_CHUNK_SIZE = 512
-  LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 2, 4]
-  DATA_FULL_SHARD = False
-  FFN_CHUKN_SIZE = 5504 // 8
-  PRE_COMPUTE_ATTEN_MASK = False
-  EVAL_INTERVAL_STEPS = 100
-  EVAL_LOOP_NUM_BATCHES = 20
 
 @experiment_registry.register
 class _TrainConfig2Kx2x512x1:
@@ -3015,6 +2999,31 @@ class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
   LEARNING_RATE = 3.2e-4
+
+
+@experiment_registry.register
+class RepeatLayerTest(PileDCSlimLlama7B2Kx4x512x1):
+  #MAX_SEQ_LEN = 8192 * 4 // 2
+  NUM_LAYERS=32
+#  NUM_HEADS = 32
+  MAX_SEQ_LEN = 8192 // 4
+  WINDOW_SIZE = [256, 4096] * (NUM_LAYERS // 2)
+  HIDDEN_DIMS = 11008
+  PERCORE_BATCH_SIZE = 8
+  QUERY_CHUNK_SIZE = 256
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 128, 1]
+  DATA_FULL_SHARD = True
+  # FFN_CHUKN_SIZE = 5504 // 8
+  DATA_PATH = {
+                'train': 'gs://common_datasets_us-east5/',
+                'test':  'gs://common_datasets_us-east5/',
+                }
+  VOCAB_FILE = 'gs://common_datasets_us-east5/vocab/c4_en_301_5Mexp_spm.model'
+  VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
+  # USE_REPEATED_LAYER = False
+  USE_STATIC_W = False
+
 
 @experiment_registry.register
 class MoeTest(PileDCSlimLlama7B2Kx4x512x1):

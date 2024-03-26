@@ -721,6 +721,8 @@ def configure_gpt3_task(
       stacked_p.moe_layers = cls.MOE_LAYERS
     if hasattr(cls, 'MOE_GATED_ACTIVATION'):  # lsp
       stacked_p.moe_gated_activation = cls.MOE_GATED_ACTIVATION
+    if hasattr(cls, 'REMAT'):  # lsp
+      stacked_p.remat = cls.REMAT
 #================================================================================================
 
     # XD
@@ -3005,15 +3007,17 @@ class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
 class RepeatLayerTest(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
   NUM_LAYERS=48
+  NUM_LAYERS_PER_BLOCK = 2
 #  NUM_HEADS = 32
   MAX_SEQ_LEN = 1 * 8192 // 4
-  WINDOW_SIZE = [256, 4096] * (NUM_LAYERS // 2)
-  # WINDOW_SIZE = [256, 4096]
+  # WINDOW_SIZE = [256, 4096] * (NUM_LAYERS_PER_BLOCK // 2)
+  # WINDOW_SIZE = [256, 4096] * (NUM_LAYERS // NUM_LAYERS_PER_BLOCK)
+  WINDOW_SIZE = [256, 4096]
   HIDDEN_DIMS = 11008 // 2
-  PERCORE_BATCH_SIZE = 16
+  PERCORE_BATCH_SIZE = 8
   QUERY_CHUNK_SIZE = 512
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 128, 1]
+  ICI_MESH_SHAPE = [1, 4, 1]
   DATA_FULL_SHARD = True
   # FFN_CHUKN_SIZE = 5504 // 8
   DATA_PATH = {
@@ -3022,8 +3026,10 @@ class RepeatLayerTest(PileDCSlimLlama7B2Kx4x512x1):
                 }
   VOCAB_FILE = 'gs://common_datasets_us-east5/vocab/c4_en_301_5Mexp_spm.model'
   VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-  USE_REPEATED_LAYER = False
+  USE_REPEATED_LAYER = True
   USE_STATIC_W = False
+  REMAT = True
+  # CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_EVERYTHING
 
 
 @experiment_registry.register

@@ -263,6 +263,7 @@ class Repeat(base_layer.BaseLayer):
         return layer_out, None
 
     # TODO(zhangqiaorjc): Use remat-scan?
+    # lsp: block维度上做remat，在block内部，如果包含了多个layer，需要设置remat进行设置
     rematted_body_fn = nn.remat(
         body_fn,
         prevent_cse=False,  # prevent_cse not required for scan.

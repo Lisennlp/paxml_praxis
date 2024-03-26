@@ -1896,10 +1896,13 @@ class StackedTransformer(base_layer.BaseLayer):
 
     fprop = _fprop
     if self.remat:
+      logging.info(f'[lsp]remat: {self.remat}')
       fprop = nn.remat(
           _fprop, policy=checkpoint_policy.custom_policy(self.checkpoint_policy)
       )
-    # num_layers为1
+    # 如果使用repeat，num_layers为1， x_times=层数。如果不使用repeat，num_layers为层数，x_times=1。
+    # repeat scan是在repeats.py里面实现, 仅仅是需要use_repeated_layer=True的时候调用，False的时候直接使用StackTransformer
+    # StackTransformerReapted调用Repeat类进行scan repeat
     for i in range(self.num_layers):
       x_in = x_out
       x_out = fprop(

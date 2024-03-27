@@ -4647,6 +4647,10 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
   SUMMARY_INTERVAL_STEPS = 5
   CHECKPOINT_EVERY_N_STEPS = 200
 
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLL(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 # v4:0.1403
+  NUM_LAYERS_PER_BLOCK = 4
 
 @experiment_registry.register
 class Pythia7BLSP(DataParams, C4SpmdGpt37BRoPE):
@@ -4737,8 +4741,8 @@ class PileEval(BaseEval):
     ACC_BATCH_MEAN = False
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/pile_test/', 
-                'test':  'gs://common_datasets/pythia_model_test/pile_test/', 
+                'train': 'gs://common_datasets_us-east5/pythia_model_test/pile_test/', 
+                'test':  'gs://common_datasets_us-east5/pythia_model_test/pile_test/', 
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
@@ -5018,6 +5022,17 @@ class PileDCLlama3B2Kx4x256x1DWDDLR00032FlanMiniEval(FlanMiniEval, PileDCLlama3B
     EVAL_LOOP_NUM_BATCHES = 320
     RESET_FOR_EVAL = False
     TASK_NAME = 'PileDCLlama3B2Kx4x256x1DWDDLR00032FlanMiniEvalWholeZeroTrue'
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLL):
+    # PileDCLlamaMediumNoQKNormR4v4
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLPileEval'
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 32
+
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None

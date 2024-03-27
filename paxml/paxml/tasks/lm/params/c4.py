@@ -3512,6 +3512,23 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
   QK_NORM = False # v4 0.370
 
+# gs://llm_projects_us-central2/log/PileDCLlamaMediumDWDDNoQKNormWindowLGLLv4/checkpoints/checkpoint_00013500
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLL(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 4
+
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGLLQW/checkpoints/checkpoint_00013500
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLLQW(PileDCLlamaMediumDWDDNoQKNormWindowLGLL): # mqy
+  SRC_DEPENDENT = False 
+
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGL6(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256,256,256,256,256,256] #LGL6 local:global 7:1 
+  NUM_LAYERS_PER_BLOCK = 8
+
 @experiment_registry.register
 class PileDCLlamaMediumDWNoQKNorm(PileDCLlamaMediumDWDDNoQKNorm):
   DYNAMIC_D_INIT = None  # v4 0.375
@@ -5032,6 +5049,39 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLPileEval(PileEval, P
     TASK_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLPileEval'
     ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLLPileEval(PileEval, PileDCLlamaMediumDWDDNoQKNormWindowLGLL):
+  # PileDCLlamaMediumNoQKNormR4v4  13500
+# gs://llm_projects_us-central2/log/PileDCLlamaMediumDWDDNoQKNormWindowLGLLv4/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumDWDDNoQKNormWindowLGLLPileEval'
+    ICI_MESH_SHAPE = [1, 4, 1]
+    PERCORE_BATCH_SIZE = 256
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLLQWPileEval(PileEval, PileDCLlamaMediumDWDDNoQKNormWindowLGLLQW):
+  # PileDCLlamaMediumNoQKNormR4v4
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGLLQW/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumDWDDNoQKNormWindowLGLLQWPileEval'
+    ICI_MESH_SHAPE = [1, 4, 1]
+    PERCORE_BATCH_SIZE = 256
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGL6PileEval(PileEval, PileDCLlamaMediumDWDDNoQKNormWindowLGL6):
+  # PileDCLlamaMediumNoQKNormR4v4
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    TASK_NAME = 'PileDCLlamaMediumDWDDNoQKNormWindowLGL6PileEval'
+    ICI_MESH_SHAPE = [1, 4, 1]
+    PERCORE_BATCH_SIZE = 256
 
 
 class MyDatasets(base_input.BaseInput):

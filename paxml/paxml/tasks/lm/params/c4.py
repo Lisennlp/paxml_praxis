@@ -5083,6 +5083,61 @@ class PileDCLlamaMediumDWDDNoQKNormWindowLGL6PileEval(PileEval, PileDCLlamaMediu
     ICI_MESH_SHAPE = [1, 4, 1]
     PERCORE_BATCH_SIZE = 256
 
+# gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6v4/checkpoints/checkpoint_00013000
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  WINDOW_SIZE = [256,None,256,256,256,256,256,256] #LGL6 local:global 7:1 # v4: 0.1335
+  NUM_LAYERS_PER_BLOCK = 8 
+
+# gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQWv4/checkpoints/checkpoint_00013000
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQW(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  SRC_DEPENDENT = False # LG query wise # v4
+
+# gs://llm_projects_us-central2/log/PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQWv4/checkpoints/checkpoint_00013000
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  SRC_DEPENDENT = False # query wise # v4:
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 # v4:0.1403
+  NUM_LAYERS_PER_BLOCK = 4
+
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6PileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6):
+  # PileDCLlamaMediumNoQKNormR4v4
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6'
+    TASK_NAME = CLASS_NAME + 'PileEval'
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQWPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQW):
+  # PileDCLlamaMediumNoQKNormR4v4
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQW'
+    TASK_NAME = CLASS_NAME + 'PileEval'
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQWPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW):
+  # PileDCLlamaMediumNoQKNormR4v4
+# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW'
+    TASK_NAME = CLASS_NAME + 'PileEval'
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None

@@ -178,3 +178,28 @@ def extract_train_skip_step(job_log_dir, step, only_eval=False):
         with back_meta_dict_path.open('w') as f1:
             json.dump(meta_dict, f1)
     return meta_dict
+
+
+def extract_v3p5_data_files(task, mode):
+    client = storage.Client()
+    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
+    path = task.DATA_PATH[mode].replace('gs://', '')
+    path_parts = path.split('/')
+    bucket_name = path_parts[0]
+    directory_path = '/'.join(path_parts[1:])
+    directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
+    logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
+    train_files, valid_files = {}, {}
+    for blob in client.list_blobs(bucket_name, prefix=directory_path):
+        path = f'gs://{os.path.join(bucket_name, blob.name)}'
+        if 'valid' in path:
+            valid_files.append(path)
+        else:
+            train_files.append(path)
+    train_files = sorted(train_files)
+    valid_files = sorted(valid_files)
+    train_test_dataset = {"test": valid_files, "train": train_files}
+    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+    logging.info(f'Train file: {train_files}')
+    logging.info(f'Valid file: {valid_files}')
+    return train_test_dataset

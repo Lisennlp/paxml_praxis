@@ -48,7 +48,7 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
-from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step # XD fix
+from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_v3p5_data_files
 
 WeightInit = base_layer.WeightInit
 NestedMap = py_utils.NestedMap
@@ -2938,11 +2938,12 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 300000, 10000))
 
+# lsp: v3.5 train class 
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   USE_STATIC_W = False
   MAX_SEQ_LEN = 4096
-  LEARNING_RATE = 3e-4
+  LEARNING_RATE = 3e-4 # InternLM2 all: 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: 3r-4
   LR_COS_WARMUP = 2000
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 200000  # 800B tokens
@@ -2951,7 +2952,28 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   PERCORE_BATCH_SIZE = 4
   ICI_MESH_SHAPE = [1, 256, 1]
   EMBEDDING_LOOKUP_STYLE = 'index'
-  SAVE_ON_STEPS = list(range(0, 300000, 10000))
+  SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps
+
+  EVAL_INTERVAL_STEPS = 100
+  EVAL_LOOP_NUM_BATCHES = 20 # RESET_FOR_EVAL=True无效
+  CHECKPOINT_EVERY_N_STEPS = 200  # 0.1 step / s，大约30多分钟
+  CHECKPOINT_MAX_TO_KEEP = 2
+  RESET_FOR_EVAL = True # 每次评测完整测试集, 因为，测试集 <100 batch
+
+  NUM_LAYERS=48
+  WINDOW_SIZE = [256, 4096, 256, 256]
+  LOAD_SEQIO_ID = False
+  LOAD_SEQIO_TEXT = False
+
+  SHUFFLE = {'train': True, 'test': False}
+  SHUFFLE_SIZE = 500000
+  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+  DATA_PATH = {
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_final',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_final',
+              }
+  DATA_FUNC = extract_v3p5_data_files
+  ZERO_LOSS = True
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
@@ -2980,6 +3002,7 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   PRE_COMPUTE_ATTEN_MASK = False
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
+  
 
 
 @experiment_registry.register

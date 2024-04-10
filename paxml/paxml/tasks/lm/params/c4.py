@@ -2939,6 +2939,21 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
   SAVE_ON_STEPS = list(range(0, 300000, 10000))
 
 @experiment_registry.register
+class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
+  USE_STATIC_W = False
+  MAX_SEQ_LEN = 4096
+  LEARNING_RATE = 3e-4
+  LR_COS_WARMUP = 2000
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 200000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.1
+
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 256, 1]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  SAVE_ON_STEPS = list(range(0, 300000, 10000))
+
+@experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   MAX_SEQ_LEN = 8192 // 2
   WINDOW_SIZE = [256, 4096]
@@ -5104,8 +5119,6 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW(PilePythia7B256x1
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6PileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6):
-  # PileDCLlamaMediumNoQKNormR4v4
-# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
     ZERO_LOSS = True
     EVAL_LOOP_NUM_BATCHES = 162
     RESET_FOR_EVAL = False
@@ -5116,8 +5129,6 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6PileEval(PileEval, P
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQWPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQW):
-  # PileDCLlamaMediumNoQKNormR4v4
-# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
     ZERO_LOSS = True
     EVAL_LOOP_NUM_BATCHES = 162
     RESET_FOR_EVAL = False
@@ -5128,8 +5139,6 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQWPileEval(PileEval, P
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQWPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW):
-  # PileDCLlamaMediumNoQKNormR4v4
-# gs://llm_projects/log/PileDCLlamaMediumDWDDNoQKNormWindowLGL6/checkpoints/checkpoint_00013500
     ZERO_LOSS = True
     EVAL_LOOP_NUM_BATCHES = 162
     RESET_FOR_EVAL = False

@@ -2942,15 +2942,15 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   USE_STATIC_W = False
-  MAX_SEQ_LEN = 4096
+  MAX_SEQ_LEN = 4097
   LEARNING_RATE = 3e-4 # InternLM2 all: 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: 3r-4
   LR_COS_WARMUP = 2000
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 200000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  PERCORE_BATCH_SIZE = 4
-  ICI_MESH_SHAPE = [1, 256, 1]
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 8, 1]
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps
 

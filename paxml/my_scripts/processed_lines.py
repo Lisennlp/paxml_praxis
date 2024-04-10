@@ -106,11 +106,11 @@ def process_data(args):
         line = orjson.loads(line)
         text = line['text']
         text_split = text.split('\n')
-        per = 1000
-        if len(text_split) > 50000:
+        per = 500
+        if len(text_split) > per:
             # 一次Tokenize很长的数据会很慢，需要split。
             for lnx in tqdm(range(0, len(text_split), per), desc=f'Rank-{rank}-sub-{i}'):
-                inp = text_split[lnx * per: (lnx + 1) * per]
+                inp = text_split[lnx: lnx + per]
                 inp = '\n'.join(inp)
                 qwen_tokenizer.partial_tokenize(inp, writer)
         else:

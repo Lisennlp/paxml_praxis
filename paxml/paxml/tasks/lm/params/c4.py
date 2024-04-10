@@ -352,6 +352,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             num_batches_to_skip=num_batches_to_skip,
             only_eval=getattr(self, 'ONLY_EVAL', False),
             zero_loss=getattr(self, 'ZERO_LOSS', True),
+            iter_file_nums=getattr(self, 'ITER_FILE_NUMS', 2),
         )
     return p
 
@@ -2943,7 +2944,7 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   USE_STATIC_W = False
   MAX_SEQ_LEN = 4097
-  LEARNING_RATE = 3e-4 # InternLM2 all: 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: 3r-4
+  LEARNING_RATE = 3e-4 # InternLM2 all: 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
   LR_COS_WARMUP = 2000
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 200000  # 800B tokens
@@ -2962,6 +2963,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
 
   NUM_LAYERS=48
   WINDOW_SIZE = [256, 4096, 256, 256]
+  NUM_LAYERS_PER_BLOCK = len(WINDOW_SIZE)
   LOAD_SEQIO_ID = False
   LOAD_SEQIO_TEXT = False
 
@@ -2974,6 +2976,12 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
               }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = None
+  DATA_FULL_SHARD = True
+  USE_REPEATED_LAYER=True
+  ITER_FILE_NUMS = 20
+
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
@@ -3003,7 +3011,6 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   EVAL_INTERVAL_STEPS = 100
   EVAL_LOOP_NUM_BATCHES = 20
   
-
 
 @experiment_registry.register
 class _TrainConfig2Kx2x512x1:

@@ -189,7 +189,7 @@ def extract_v3p5_data_files(task, mode):
     directory_path = '/'.join(path_parts[1:])
     directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
     logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
-    train_files, valid_files = {}, {}
+    train_files, valid_files = [], []
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
         path = f'gs://{os.path.join(bucket_name, blob.name)}'
         if 'valid' in path:

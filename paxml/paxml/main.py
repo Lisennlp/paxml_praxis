@@ -225,6 +225,7 @@ job_log_dir = None  # XD
 
 def get_tpu_type(exp_name):  # XD
   if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
+  elif 'v5p' in exp_name: return exp_name.replace('v5p', ''), 'v5p'
   elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
   else: return exp_name, 'v3'
 
@@ -271,7 +272,7 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
     global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH, tpu_type)
     global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR, tpu_type)
     global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR, tpu_type)
-  if tpu_type in ['v4', 'v5']:
+  if tpu_type in ['v4', 'v5', 'v5p']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:
       return adjust_config_by_tpu(experiment_class, tpu_type)
@@ -512,10 +513,13 @@ def _main(argv: Sequence[str]) -> None:
     _, tpu_type = get_tpu_type(FLAGS.exp)
     if tpu_type in global_cfg.tputype2zone:
       def append_zone(gs_path):
+        if 'llm_base_models' in  gs_path or  'jax_llm_data' in gs_path:
+            return gs_path
         for bucket_name in ['common_datasets', 'llm_projects']:
           if bucket_name in gs_path:
             return gs_path.replace(bucket_name,
               f'{bucket_name}_{global_cfg.tputype2zone[tpu_type]}')
+         
         assert False
       # global_cfg will be used in c4.py
       global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
@@ -524,6 +528,7 @@ def _main(argv: Sequence[str]) -> None:
       job_log_dir = epath.Path(append_zone(str(job_log_dir)))
 
     experiment_config = get_experiment(FLAGS.exp)()
+
   elif absl_flags.fdl_flags_supplied():
     cfg = absl_flags.create_buildable_from_flags(
         module=None, allow_imports=True)

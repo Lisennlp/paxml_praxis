@@ -710,6 +710,8 @@ def configure_gpt3_task(
 #================================================================================================
     if hasattr(cls, 'MGATE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
+      transformer_layer_p.tr_fflayer_tpl.mgate_dim = getattr(cls, 'MGATE_DIM', 16)
+
     if hasattr(cls, 'DSM'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.dsm = cls.DSM
     if hasattr(cls, 'FFN_CHUKN_SIZE'):  # lsp
@@ -2942,12 +2944,13 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 # lsp: v3.5 train class 
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
+  VOCAB_SIZE = 152064
   USE_STATIC_W = False
   MAX_SEQ_LEN = 4097
-  LEARNING_RATE = 3e-4 # InternLM2 all: 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+  LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
   LR_COS_WARMUP = 2000
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 200000  # 800B tokens
+  LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
   PERCORE_BATCH_SIZE = 1
@@ -2955,7 +2958,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps
 
-  EVAL_INTERVAL_STEPS = 100
+  EVAL_INTERVAL_STEPS = 1000
   EVAL_LOOP_NUM_BATCHES = 20 # RESET_FOR_EVAL=True无效
   CHECKPOINT_EVERY_N_STEPS = 200  # 0.1 step / s，大约30多分钟
   CHECKPOINT_MAX_TO_KEEP = 2
@@ -2981,7 +2984,9 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   DATA_FULL_SHARD = True
   USE_REPEATED_LAYER=True
   ITER_FILE_NUMS = 20
-
+  MGATE = True
+  MGATE_DIM = 44
+  HIDDEN_DIMS = 5632
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):

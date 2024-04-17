@@ -307,6 +307,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
   output_layer_std: float = None
   mgate: bool = False
   dsm: bool = False # DeepSeekMoe
+  mgate_dim: int = 16
 
   class WeightSharding(base_layer.BaseLayer.WeightSharding):
     """Represents how layer's learned parameters are partitioned across a mesh.
@@ -450,12 +451,13 @@ class TransformerFeedForward(base_layer.BaseLayer):
       self.create_child('residual_droppath', droppath_p)
 
     if self.mgate:
+      assert self.mgate_dim is not None
       mgate_p = self.fflayer_tpl.clone()
       mgate_p.name = 'mgate_layer'
       mgate_p.input_dims = self.input_dims
       mgate_p.has_bias = self.has_bias
       mgate_p.activation_tpl = activation
-      mgate_p.output_dims = self.n_chunks  # lsp: chunks数量即为专家的数目
+      mgate_p.output_dims = self.mgate_dim  # lsp: chunks数量即为专家的数目
       mgate_p.weight_split_dims_mapping.wt = wp.ffn0
       mgate_p.activation_split_dims_mapping.out = ap.ffn0
       if self.internal_gshard_variance_scaling_fan_in_init:

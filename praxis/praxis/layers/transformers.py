@@ -551,7 +551,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
         b, l, d = activations.shape
         # blem
         activations = activations.reshape(b, l, self.mgate_dim, d // self.mgate_dim)
-        gate_activations = torch.einsum('ble,blem->blem', gate_scores, activations)
+        gate_activations = jnp.einsum('ble,blem->blem', gate_scores, activations)
         outputs = self.ffn_layer2(gate_activations)
       else:
         # Apply second FFN layer

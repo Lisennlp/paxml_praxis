@@ -435,8 +435,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
       ffn2_p.linear_tpl.params_init = WeightInit.Gaussian(self.output_layer_std)
 
     if self.chunk_size is None: 
-      if self.mgate:
-        ffn2_p.linear_tpl.mgate_dim = self.mgate_dim
+      ffn2_p.linear_tpl.mgate = self.mgate
       self.create_child('ffn_layer2', ffn2_p)
     else: 
       self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)]) # XD
@@ -547,11 +546,19 @@ class TransformerFeedForward(base_layer.BaseLayer):
       # Apply RELU dropout
       activations = self.relu_dropout(activations)
 
-      # Apply second FFN layer
-      outputs = self.ffn_layer2(activations)
+       # ble
       if self.mgate:
-        # gate_scores: ble. outputs: bled
-        outputs = jnp.einsum('ble,bled->bld', gate_scores, outputs)
+        b, l, d = activations.shape
+        # blem
+        activations = activations.reshape(b, l, self.mgate_dim, d // self.mgate_dim)
+        gate_activations = torch.einsum('ble,blem->blem', gate_scores, activations)
+        outputs = self.ffn_layer2(gate_activations)
+      else:
+        # Apply second FFN layer
+        outputs = self.ffn_layer2(activations)
+      # if self.mgate:
+      #   # gate_scores: ble. outputs: bled
+      #   outputs = jnp.einsum('ble,bled->bld', gate_scores, outputs)
       
     else:
       outputs = None

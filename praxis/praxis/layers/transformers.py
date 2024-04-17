@@ -73,7 +73,7 @@ def _rel_cos(x, y):
   return cos_xy.mean()
 
 
-def _entroy(self, probs):
+def _entroy(probs):
   log_probs = jnp.log2(jnp.maximum(1.0e-30, probs))
   sum_plogp = - jnp.sum(log_probs * probs)
   return sum_plogp

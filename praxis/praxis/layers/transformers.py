@@ -73,6 +73,12 @@ def _rel_cos(x, y):
   return cos_xy.mean()
 
 
+def _entroy(self, probs):
+  log_probs = jnp.log2(jnp.maximum(1.0e-30, probs))
+  sum_plogp = - jnp.sum(log_probs * probs)
+  return sum_plogp
+
+
 def compute_attention_masks_for_fprop(
     inputs: JTensor,
     paddings: Optional[JTensor] = None,
@@ -471,6 +477,7 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
     logging.info(f'mgate: {self.mgate} dsm: {self.dsm}')
 
+
   def __call__(self,
                inputs: JTensor,
                paddings: Optional[JTensor] = None,
@@ -516,9 +523,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         # token选择专家的概率， -> (b*len) * expert, 越不均匀越好
         # 趋近于 1 越均匀, 越好
-        self.add_summary('expert_to_token_score', expert_to_token_score, verbosity=3)
+        self.add_summary('expert_to_token_score', _entroy(expert_to_token_score), verbosity=3)
         # 趋近于 0 越不均匀, 越好
-        self.add_summary('token_to_expert_score', gate_scores, verbosity=3)
+        self.add_summary('token_to_expert_score', _entroy(gate_scores), verbosity=3)
         
     if self.chunk_size is None:
       # Apply first FFN layer

@@ -433,8 +433,13 @@ class TransformerFeedForward(base_layer.BaseLayer):
       ffn2_p.linear_tpl.params_init = WeightInit.Uniform(scale)
     elif self.output_layer_std is not None:  # XD
       ffn2_p.linear_tpl.params_init = WeightInit.Gaussian(self.output_layer_std)
-    if self.chunk_size is None: self.create_child('ffn_layer2', ffn2_p)
-    else: self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)]) # XD
+
+    if self.chunk_size is None: 
+      if self.mgate:
+        ffn2_p.linear_tpl.mgate_dim = self.mgate_dim
+      self.create_child('ffn_layer2', ffn2_p)
+    else: 
+      self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)]) # XD
 
     # Create residual dropout layer
     residual_dropout_p = self.residual_dropout_tpl.clone()
@@ -505,10 +510,17 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
         # gate_scores *= self.n_chunks
         gate_scores = gate_scores.astype(self.fprop_dtype)
-        
-        # assert gate_scores.shape[-1] == self.n_chunks, (self.n_chunks, gate_scores.shape[-1])
-      
 
+        # token被专家选择的概率， -> b *  expert, 越均匀越好
+        expert_to_token_score = gate_scores.reshape(-1, self.mgate_dim).sum(0)  # BTE->E
+        expert_to_token_score = jax.nn.softmax(expert_to_token_score, axis=-1)
+
+        # token选择专家的概率， -> (b*len) * expert, 越不均匀越好
+        # 趋近于 1 越均匀, 越好
+        self.add_summary('expert_to_token_score', expert_to_token_score, verbosity=3)
+        # 趋近于 0 越不均匀, 越好
+        self.add_summaries('token_to_expert_score', gate_scores, verbosity=3)
+        
     if self.chunk_size is None:
       # Apply first FFN layer
       if self._is_ffn1_gated:
@@ -537,6 +549,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
       # Apply second FFN layer
       outputs = self.ffn_layer2(activations)
+      if self.mgate:
+        # gate_scores: ble. outputs: bled
+        outputs = jnp.einsum('ble,bled->bld', gate_scores, outputs)
       
     else:
       outputs = None

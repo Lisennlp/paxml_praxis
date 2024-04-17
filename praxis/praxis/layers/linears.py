@@ -25,6 +25,7 @@ from praxis import py_utils
 from praxis import pytypes
 from praxis.layers import activations
 from praxis.layers import base_ops
+from absl import logging
 
 NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
@@ -72,6 +73,7 @@ class Linear(base_layer.BaseLayer):
   output_dims: int = 0
   weight_init: Optional[WeightInit] = None
   einsum_tpl: LayerTpl = template_field(base_ops.EinsumOp)
+  mgate_dim: int = 1
 
   def setup(self) -> None:
     wp = self.weight_split_dims_mapping
@@ -95,14 +97,28 @@ class Linear(base_layer.BaseLayer):
     Returns:
       Projected inputs.
     """
+    logging.info(f'self.mgate_dim: {self.mgate_dim}')
+    if self.mgate_dim > 1:
+      b, l, intermediate_dim = inputs.shape
+      expert_dim = intermediate_dim // self.mgate_dim
+      model_dim = self.theta.w.shape[-1]
+      inputs = inputs.reshape(b, l, self.mgate_dim, expert_dim)
+      w = self.theta.w.reshape(self.mgate_dim, expert_dim,  model_dim)
+      eqn = 'blem,emd->bled'
+    else:
+      eqn = '...y,yz->...z'
+      w = self.theta.w
     ap = self.activation_split_dims_mapping
-    out = self.einsum('...y,yz->...z', inputs, self.theta.w)
-
+    out = self.einsum(eqn, inputs, w)
     # Adjust sharding annotation during decoding.
     # TODO(pax): This logic should likely be lifted somewhere else.
     ap_out = ap.out
     if ap_out is not None and len(ap_out) == 3 and out.ndim == 2:
       ap_out = [ap_out[0], ap_out[2]]
+    
+    if self.mgate_dim > 1:
+      ap_out = [ap_out[0], None, None, ap_out[2]]
+
     out = base_layer.maybe_shard(out, ap_out, self.mesh_axis_names)
     return out
 

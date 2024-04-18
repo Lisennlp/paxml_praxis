@@ -75,8 +75,8 @@ def _rel_cos(x, y):
 
 def _entroy(probs):
   log_probs = jnp.log2(jnp.maximum(1.0e-30, probs))
-  sum_plogp = - jnp.sum(log_probs * probs)
-  return sum_plogp
+  mean_sum_plogp = jnp.mean(- jnp.sum(log_probs * probs, axis=-1))
+  return mean_sum_plogp
 
 
 def compute_attention_masks_for_fprop(
@@ -518,13 +518,15 @@ class TransformerFeedForward(base_layer.BaseLayer):
         gate_scores = gate_scores.astype(self.fprop_dtype)
 
         # token被专家选择的概率， -> b *  expert, 越均匀越好
-        expert_to_token_score = gate_scores.reshape(-1, self.mgate_dim).sum(0)  # BTE->E
-        expert_to_token_score = jax.nn.softmax(expert_to_token_score, axis=-1)
+        # expert_to_token_score = gate_scores.reshape(-1, self.mgate_dim).sum(0)  # BTE->E
+        expert_to_token_score = gate_scores.mean(axis=(0,1))
+        sum_value = jnp.sum(expert_to_token_score, axis=-1)
+        expert_to_token_score = expert_to_token_score / (sum_value + 1e-6)
 
         # token选择专家的概率， -> (b*len) * expert, 越不均匀越好
-        # 趋近于 1 越均匀, 越好
+        # 趋近于 1 越均匀, 越好。即越大越好
         self.add_summary('expert_to_token_score', _entroy(expert_to_token_score), verbosity=3)
-        # 趋近于 0 越不均匀, 越好
+        # 趋近于 0 越不均匀, 越好，即越小越好
         self.add_summary('token_to_expert_score', _entroy(gate_scores), verbosity=3)
         
     if self.chunk_size is None:

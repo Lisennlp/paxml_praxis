@@ -23,6 +23,7 @@ from etils import epath
 from collections import defaultdict
 import smart_open
 import orjson
+import subprocess
 
 """
 多进程处理单个文件:
@@ -38,12 +39,15 @@ TPU_NAME=llm-jax-mqy-v4-32-16; ZONE=us-central2-b;B=3
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=$B --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
 """
 
+command = 'gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/'
+subprocess.run(command, stdout=subprocess.PIPE, shell=True)
 
-TOKENIZER_PATH = "Qwen/Qwen-14B"
+TOKENIZER_PATH = "/home/lishengping/tokenizer"
 MAX_LEN = 4097
 EOS_ID = [151643] # <|endoftext|>
 BOS_ID = [151646] #  <|extra_0|>
 
+EXTRA_TOKENS = '<repo_name><file_sep><translation_type><lang_zh><lang_zh-hant><lang_en><lang_ja><lang_ko><lang_pt><lang_es><lang_fr><lang_de><lang_ru><lang_th><lang_vi><lang_id><lang_ar><lang_it><lang_tr><lang_hi>'
 
 # def extract_files(bucket_name, directory_path):
 #     client = storage.Client()
@@ -73,6 +77,8 @@ class QwenTokenizer():
         self.tokenizer = AutoTokenizer.from_pretrained(
             TOKENIZER_PATH, use_fast=True, trust_remote_code=True
         )
+        assert len(self.tokenizer) == 151871, print(len(self.tokenizer))
+        assert len(self.tokenizer.encode(EXTRA_TOKENS)) == 20, print(len(self.tokenizer.encode(EXTRA_TOKENS)))
         self.next_ids = []
         self.partial_tokenize = partial(self.tokenize, max_len=MAX_LEN, bos_id=BOS_ID, eos_id=EOS_ID)
         self.count = 0

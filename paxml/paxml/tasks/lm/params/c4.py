@@ -2974,8 +2974,8 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   SHUFFLE_SIZE = 500000
   KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
   DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_final',
-              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_final',
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
               }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True

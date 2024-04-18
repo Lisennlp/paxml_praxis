@@ -23,24 +23,22 @@ from etils import epath
 from collections import defaultdict
 import smart_open
 import orjson
-import subprocess
 
 """
 多进程处理单个文件:
 # Usage:
-TPU_NAME=llm-jax-mqy-v4-32-16; ZONE=us-central2-b
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs" --project=ntpu-413714
+TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
-TPU_NAME=llm-jax-mqy-v4-32-16; ZONE=us-central2-b
+TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b
 SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
-TPU_NAME=llm-jax-mqy-v4-32-16; ZONE=us-central2-b;B=3
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=$B --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
+TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b;B=11
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=3 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
 """
 
-command = 'gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/'
-subprocess.run(command, stdout=subprocess.PIPE, shell=True)
 
 TOKENIZER_PATH = "/home/lishengping/tokenizer"
 MAX_LEN = 4097
@@ -183,7 +181,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_final/B{bucket:03}/F{file_index}'
+            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418/B{bucket:03}/F{file_index}'
         print(f'save_path: {save_path}')
         workers = 10
         counts = encode_file(path, save_path, workers=workers)

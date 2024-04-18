@@ -523,9 +523,9 @@ class TransformerFeedForward(base_layer.BaseLayer):
         expert_to_token_score = expert_to_token_score / (sum_value + 1e-6)
 
         # token选择专家的概率， -> (b*len) * expert, 越不均匀越好
-        # 趋近于 1 越均匀, 越好。即越大越好
+        # 即越大越好 max: 5.45
         self.add_summary('expert_to_token_score', _entroy(expert_to_token_score), verbosity=3)
-        # 趋近于 0 越不均匀, 越好，即越小越好
+        # 越小越好
         self.add_summary('token_to_expert_score', _entroy(gate_scores), verbosity=3)
         
     if self.chunk_size is None:

@@ -441,7 +441,6 @@ class TransformerFeedForward(base_layer.BaseLayer):
       ffn2_p.linear_tpl.params_init = WeightInit.Gaussian(self.output_layer_std)
 
     if self.chunk_size is None: 
-      ffn2_p.linear_tpl.mgate = self.mgate
       self.create_child('ffn_layer2', ffn2_p)
     else: 
       self.create_children('ffn_layer2', [ffn2_p.clone() for _ in range(self.n_chunks)]) # XD
@@ -557,18 +556,15 @@ class TransformerFeedForward(base_layer.BaseLayer):
 
        # ble
       if self.mgate:
-        b, l, d = activations.shape
+        B, T, F = activations.shape
         # blem
-        activations = activations.reshape(b, l, self.mgate_dim, d // self.mgate_dim)
-        gate_activations = jnp.einsum('ble,blem->blem', gate_scores, activations)
+        activations = activations.reshape(B, T, self.mgate_dim, F // self.mgate_dim)
+        gate_activations = jnp.einsum('BTE,BTEM->BTEM', gate_scores, activations)
+        gate_activations = gate_activations.reshape(B, T, F)
         outputs = self.ffn_layer2(gate_activations)
       else:
         # Apply second FFN layer
         outputs = self.ffn_layer2(activations)
-      # if self.mgate:
-      #   # gate_scores: ble. outputs: bled
-      #   outputs = jnp.einsum('ble,bled->bld', gate_scores, outputs)
-      
     else:
       outputs = None
       for i in range(self.n_chunks):

@@ -73,7 +73,6 @@ class Linear(base_layer.BaseLayer):
   output_dims: int = 0
   weight_init: Optional[WeightInit] = None
   einsum_tpl: LayerTpl = template_field(base_ops.EinsumOp)
-  mgate: bool = False
 
   def setup(self) -> None:
     wp = self.weight_split_dims_mapping
@@ -97,16 +96,8 @@ class Linear(base_layer.BaseLayer):
     Returns:
       Projected inputs.
     """
-    logging.info(f'linears.inputs: {inputs.shape}')
-    if self.mgate:
-      b, l, e, m = inputs.shape
-      w = self.theta.w.reshape(e, m,  self.theta.w.shape[-1])
-      eqn = 'blem,emd->bld'
-    else:
-      eqn = '...y,yz->...z'
-      w = self.theta.w
     ap = self.activation_split_dims_mapping
-    out = self.einsum(eqn, inputs, w)
+    out = self.einsum('...y,yz->...z', inputs, self.theta.w)
     # Adjust sharding annotation during decoding.
     # TODO(pax): This logic should likely be lifted somewhere else.
     ap_out = ap.out

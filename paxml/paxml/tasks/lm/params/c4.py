@@ -2953,7 +2953,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  PERCORE_BATCH_SIZE = 4
+  PERCORE_BATCH_SIZE = 2
   ICI_MESH_SHAPE = [1, 512, 1]
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps

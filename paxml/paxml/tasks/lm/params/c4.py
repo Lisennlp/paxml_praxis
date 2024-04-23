@@ -2978,8 +2978,8 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   #             'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
   #             }
   DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
-              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
+              'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+              'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
               }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True

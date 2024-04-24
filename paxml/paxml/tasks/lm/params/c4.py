@@ -2997,6 +2997,24 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   HIDDEN_DIMS = 5632
   # FFN_CHUKN_SIZE = HIDDEN_DIMS // MGATE_DIM
 
+
+# lsp: v3.5 train class 
+@experiment_registry.register
+class DataBreakTest(PileDCSlimLlama7B4Kx4x256x1):
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 16, 1]
+  NUM_LAYERS = 8
+  NUM_LAYERS_PER_BLOCK = 4
+
+
+# lsp: v3.5 train class 
+@experiment_registry.register
+class DataBreakTest2(PileDCSlimLlama7B4Kx4x256x1):
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 32, 1]
+  NUM_LAYERS = 8
+  NUM_LAYERS_PER_BLOCK = 4
+
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   MAX_SEQ_LEN = 8192 // 2

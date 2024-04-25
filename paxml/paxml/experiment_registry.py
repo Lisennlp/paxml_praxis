@@ -123,6 +123,7 @@ class _ExperimentRegistryHelper:
     cls._registry[canonical_key] = experiment_class
     cls._registry_tags[canonical_key] = list(tags or [])
     # Use print - absl.logging doesn't work since this happens before main.
+    
     print(
         'Registered experiment `%s`%s' %
         (canonical_key, ' (overwritten)' if preexisting else ''),

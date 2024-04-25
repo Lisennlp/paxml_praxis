@@ -2953,11 +2953,11 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  # PERCORE_BATCH_SIZE = 8
-  # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  # PERCORE_BATCH_SIZE = 2
+  # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps
@@ -2977,14 +2977,14 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   SHUFFLE = {'train': True, 'test': False}
   SHUFFLE_SIZE = 500000
   KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  # DATA_PATH = {
-  #             'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
-  #             'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
-  #             }
   DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
-              'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
               }
+  # DATA_PATH = {
+  #             'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+  #             'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+  #             }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True
   QUERY_CHUNK_SIZE = 512

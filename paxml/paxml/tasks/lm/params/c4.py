@@ -5283,7 +5283,7 @@ class MyDatasets(base_input.BaseInput):
         )
 
     def get_global_batch_size(self, train_input):
-        logging.info(f"train_input: {train_input} type: {type(train_input)}")
+        # logging.info(f"train_input: {train_input} type: {type(train_input)}")
         return self.batch_size * self.num_infeed_hosts
 
     def _parse_function(self, example_proto):

@@ -174,13 +174,14 @@ def train_and_evaluate(
   for line in base_hyperparams.nested_struct_to_text(
       train_input_p
   ).splitlines():  # pytype: disable=attribute-error
+    if 'path' in line: continue
     logging.info('  %s', line)
-  logging.info('task_p:')
+  # logging.info('task_p:')
   # for line in base_hyperparams.nested_struct_to_text(task_p).splitlines():  # pytype: disable=attribute-error  # XD
   #   logging.info('  %s', line)
 
   # Creates the task.
-  logging.info('[PAX STATUS]: Creating task')
+  # logging.info('[PAX STATUS]: Creating task')
   jax_task = instantiate(task_p)
 
   checkpoint_type = checkpoint_types.retrieve_checkpoint_type(

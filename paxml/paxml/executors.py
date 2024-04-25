@@ -141,9 +141,9 @@ class DefaultExecutor(base_executor.BaseExecutor):
         passed to checkpointer.get_model_states(). If set, the checkpointer will
         restore its states from checkpoint.
     """
-    logging.info(
-        '[PAX STATUS]: Instantiating train input pipeline (%s)', train_input_p
-    )
+    # logging.info(
+    #     '[PAX STATUS]: Instantiating train input pipeline (%s)', train_input_p
+    # )
     if not task.train.enable_input_checkpointing:
       _maybe_update_latest_model_step(train_input_p, step, task)
     if train_input_p.num_batches_to_skip is None and step is not None: # XD

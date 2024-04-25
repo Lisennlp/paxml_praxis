@@ -130,13 +130,13 @@ def compute_xent_loss_helper(
     # predicted_labels: bsz * len, weights: bsz * len
     predicted_labels = predictions.per_example_argmax.astype(labels.dtype)
     num_preds = predictions.total_weight
-    logging.info(f'predicted_labels: {predicted_labels.shape}')
-    logging.info(f'weights: {weights.shape}')
-    logging.info(f'num_preds: {num_preds.shape}')
+    # logging.info(f'predicted_labels: {predicted_labels.shape}')
+    # logging.info(f'weights: {weights.shape}')
+    # logging.info(f'num_preds: {num_preds.shape}')
     # mean_acc: constant
     mean_acc = jnp.sum((labels == predicted_labels) * weights) / jnp.maximum(num_preds, 1)
     metric_weight = jnp.array(num_preds, predictions.avg_xent.dtype)
-    logging.info(f'acc_batch_mean: {acc_batch_mean}')
+    # logging.info(f'acc_batch_mean: {acc_batch_mean}')
     # lsp: 在length维加和对的token数
     batch_weights = jnp.sum(weights, axis=-1)
     batch_weights = jnp.maximum(batch_weights, 1)
@@ -164,7 +164,7 @@ def compute_xent_loss_helper(
         batch_avg_xent=(predictions.batch_avg_xent, avg_xent_weight),
         batch_avg_acc=(batch_mean_acc, metric_weight),
     )
-    logging.info(f'metrics: {metrics}')
+    # logging.info(f'metrics: {metrics}')
     if report_strict_acc:
         num_acc = jnp.sum(weights, axis=-1, dtype=jnp.float32)
         ## mask out padding examples
@@ -523,7 +523,7 @@ class LanguageModel(base_model.BaseModel):
       )
     else:
       lm_var_pspecs = None
-    logging.info('decode_mesh_transpose: %s', decode_mesh_transpose)
+    # logging.info('decode_mesh_transpose: %s', decode_mesh_transpose)
 
     def extend_step_fn(mdl, ids, segment_pos):
       xent = mdl.extend_step(ids, segment_pos=segment_pos)

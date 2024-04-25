@@ -420,9 +420,9 @@ class Partitioner(metaclass=abc.ABCMeta):
       input_p.tf_data_service_address = None # (  XD: to run in notebook
       #     tf_data_service_lib.get_tf_data_service_address()
       # )
-      logging.info(
-          'input_p.tf_data_service_address: %s', input_p.tf_data_service_address
-      )
+      # logging.info(
+      #     'input_p.tf_data_service_address: %s', input_p.tf_data_service_address
+      # )
 
     return input_p
 
@@ -759,7 +759,7 @@ class PjitPartitioner(Partitioner):
     model = task.model
     # lsp
     self._mesh_names = model.mesh_axis_names if getattr(model, 'data_full_shard', True) else  model.mesh_axis_names[:2]
-    logging.info(f'data mesh names: {self._mesh_names}')
+    # logging.info(f'data mesh names: {self._mesh_names}')
     if device_mesh is None:
       logging.info('creating mesh with py_utils.create_device_mesh')
       # 创建Mesh，但是这个函数出来的是无序的类似于[1, 3, 4, 7, 0, 2, 6]，如果这个无序Mesh传入host_local_array_to_global_array会报错
@@ -773,7 +773,7 @@ class PjitPartitioner(Partitioner):
         device_mesh = np.array(jax.devices()).reshape(model.ici_mesh_shape)
     else:
       logging.info('Using provided mesh for PjitPartitioner')
-    logging.info('device_mesh: %s', device_mesh)
+    # logging.info('device_mesh: %s', device_mesh)
     self._global_mesh = jax.sharding.Mesh(device_mesh, model.mesh_axis_names)
 
     # Pjit'ed function to preprocess the prng key.
@@ -806,7 +806,7 @@ class PjitPartitioner(Partitioner):
 
   def check_input_spec(self, batch: NestedJTensor) -> None:
     """Check that the first input batch matches the given input spec."""
-    logging.info('Checking input spec [pjit partitioner]')
+    # logging.info('Checking input spec [pjit partitioner]')
 
     fn = lambda x: jax.ShapeDtypeStruct(shape=x.shape[1:], dtype=x.dtype)
     spec = jax.tree_map(fn, self.train_inputs_shape_dtype)
@@ -868,10 +868,10 @@ class PjitPartitioner(Partitioner):
     # lsp: 加载预训练参数和优化器
     else:
         pass
-    logging.info(
-        'partitioned train state shapes (global shape): %s',
-        jax.tree_map(lambda x: x.shape, partitioned_train_state),
-    )
+    # logging.info(
+    #     'partitioned train state shapes (global shape): %s',
+    #     jax.tree_map(lambda x: x.shape, partitioned_train_state),
+    # )
 
     # We do not fold in jax.process_index in contrast to the pmap version and
     # use a single global key instead to rely on pjit to split for different
@@ -950,7 +950,7 @@ class PjitPartitioner(Partitioner):
     input_partition_spec = trainer_lib.get_input_partition_specs(
         self._mesh_names, inputs_shape_dtype
     )
-    logging.info('step_fn inputs_partition_spec=%s', input_partition_spec)
+    # logging.info('step_fn inputs_partition_spec=%s', input_partition_spec)
     # Step function to be pjit-ed.
     wrapped_step_fn = self._get_step_fn(
         step_fn, is_eval, metadata, input_partition_spec
@@ -1046,8 +1046,8 @@ class PjitPartitioner(Partitioner):
       fn_out_partition_specs: NestedPartitionSpec,
       use_pspec_on_array_inputs: bool = False,
   ):
-    logging.info('step_fn fn_in_partition_specs=%s', fn_in_partition_specs)
-    logging.info('step_fn fn_out_partition_specs=%s', fn_out_partition_specs)
+    # logging.info('step_fn fn_in_partition_specs=%s', fn_in_partition_specs)
+    # logging.info('step_fn fn_out_partition_specs=%s', fn_out_partition_specs)
 
     extra_kwargs = dict(in_axis_resources=fn_in_partition_specs)
     if not use_pspec_on_array_inputs:
@@ -1248,7 +1248,7 @@ class AutoShardingPjitPartitioner(PjitPartitioner):
       raise NotImplementedError(
           'Per-device batch size < 1 not supported for auto sharding.'
       )
-    logging.info('Auto sharding is enabled in PAX.')
+    # logging.info('Auto sharding is enabled in PAX.')
     return global_shape_dtype
 
   @property
@@ -1294,15 +1294,15 @@ class AutoShardingPjitPartitioner(PjitPartitioner):
         fn_out_partition_specs,
         use_pspec_on_array_inputs=True)
 
-    logging.info(
-        (
-            'Lowering auto sharded function with input shapes:'
-            ' train_state_metadata=%s, prng_key=%s, inputs=%s'
-        ),
-        metadata.unpadded_global_shapes,
-        jax.tree_map(lambda x: x.shape, self._init_key),
-        jax.tree_map(lambda x: x.shape, inputs_shape_dtype),
-    )
+    # logging.info(
+    #     (
+    #         'Lowering auto sharded function with input shapes:'
+    #         ' train_state_metadata=%s, prng_key=%s, inputs=%s'
+    #     ),
+    #     metadata.unpadded_global_shapes,
+    #     jax.tree_map(lambda x: x.shape, self._init_key),
+    #     jax.tree_map(lambda x: x.shape, inputs_shape_dtype),
+    # )
     # NOTE(pax-dev): The following is currently incompatible with variable
     # uneven-sharding padding.
     (
@@ -1340,9 +1340,9 @@ class AutoShardingPjitPartitioner(PjitPartitioner):
     input_partition_spec = trainer_lib.get_input_partition_specs(
         self._mesh_names, self._auto_sharding_input_spec
     )
-    logging.info(
-        'Running auto sharding for %r', self._auto_sharding_info.step_fn
-    )
+    # logging.info(
+    #     'Running auto sharding for %r', self._auto_sharding_info.step_fn
+    # )
     wrapped_step_fn = self._get_step_fn(
         self._auto_sharding_info.step_fn,
         self._auto_sharding_info.is_eval,

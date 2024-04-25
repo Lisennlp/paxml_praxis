@@ -58,12 +58,12 @@ def setup_jax(
 
   if jax_enable_checks:
     jax.config.update('jax_enable_checks', True)
-    logging.info('jax_enable_checks has been enabled.')
+    # logging.info('jax_enable_checks has been enabled.')
 
   if jax_backend_target:
-    logging.info('Using JAX backend target %s', jax_backend_target)
+    # logging.info('Using JAX backend target %s', jax_backend_target)
     jax_xla_backend = 'None' if jax_xla_backend is None else jax_xla_backend
-    logging.info('Using JAX XLA backend %s', jax_xla_backend)
+    # logging.info('Using JAX XLA backend %s', jax_xla_backend)
 
   if should_initialize_jax_distributed:
     if jax_distributed_options:
@@ -75,8 +75,8 @@ def setup_jax(
     else:
       jax.distributed.initialize()
 
-  logging.info('JAX process: %d / %d', jax.process_index(), jax.process_count())
-  logging.info('JAX devices: %r', jax.devices())
-  logging.info('jax.device_count(): %d', jax.device_count())
-  logging.info('jax.local_device_count(): %d', jax.local_device_count())
-  logging.info('jax.process_count(): %d', jax.process_count())
+  # logging.info('JAX process: %d / %d', jax.process_index(), jax.process_count())
+  # logging.info('JAX devices: %r', jax.devices())
+  # logging.info('jax.device_count(): %d', jax.device_count())
+  # logging.info('jax.local_device_count(): %d', jax.local_device_count())
+  # logging.info('jax.process_count(): %d', jax.process_count())

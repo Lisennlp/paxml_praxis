@@ -188,7 +188,7 @@ def extract_v3p5_data_files(task, mode):
     bucket_name = path_parts[0]
     directory_path = '/'.join(path_parts[1:])
     directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
-    logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
+    # logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
     train_files, valid_files = [], []
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
         path = f'gs://{os.path.join(bucket_name, blob.name)}'
@@ -199,7 +199,7 @@ def extract_v3p5_data_files(task, mode):
     train_files = sorted(train_files)
     valid_files = sorted(valid_files)
     train_test_dataset = {"test": valid_files, "train": train_files}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    logging.info(f'Train file: {train_files}')
-    logging.info(f'Valid file: {valid_files}')
+    # logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+    # logging.info(f'Train file: {train_files}')
+    # logging.info(f'Valid file: {valid_files}')
     return train_test_dataset

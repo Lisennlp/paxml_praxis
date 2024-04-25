@@ -703,7 +703,7 @@ def create_device_mesh(
     device_mesh = mesh_utils.create_device_mesh(
         ici_mesh_shape, contiguous_submeshes=contiguous_submeshes
     )
-  logging.info('device_mesh: %s', device_mesh)
+  # logging.info('device_mesh: %s', device_mesh)
   return device_mesh
 
 

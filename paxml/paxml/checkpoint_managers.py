@@ -188,31 +188,31 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     self._use_digit_step_subdirectory = _has_digit_step_subdirectory(
         self._directory
     )
-    if self._directory.exists():
-      step = self.any_step()
-      if step is not None:
-        version = _get_checkpoint_version(
-            self._checkpoint_type,
-            self._directory,
-            step,
-            use_digit_step_subdirectory=self._use_digit_step_subdirectory,
-        )
-        logging.info(
-            'Found existing checkpoint with version: %s, step: %s',
-            version,
-            step,
-        )
-        if version != self._version:
-          logging.warning(
-              (
-                  'Found existing checkpoints with old version %s, compared to '
-                  'latest version %s. Use version of existing checkpoints for '
-                  'restoring and saving future checkpoints.'
-              ),
-              version,
-              self._version,
-          )
-          self._version = version
+    # if self._directory.exists():
+    #   step = self.any_step()
+    #   if step is not None:
+    #     version = _get_checkpoint_version(
+    #         self._checkpoint_type,
+    #         self._directory,
+    #         step,
+    #         use_digit_step_subdirectory=self._use_digit_step_subdirectory,
+    #     )
+    #     logging.info(
+    #         'Found existing checkpoint with version: %s, step: %s',
+    #         version,
+    #         step,
+    #     )
+    #     if version != self._version:
+    #       logging.warning(
+    #           (
+    #               'Found existing checkpoints with old version %s, compared to '
+    #               'latest version %s. Use version of existing checkpoints for '
+    #               'restoring and saving future checkpoints.'
+    #           ),
+    #           version,
+    #           self._version,
+    #       )
+    #       self._version = version
 
     super().__init__(directory, *args, **kwargs)
     # Set to 1 if not provided or set to 0.

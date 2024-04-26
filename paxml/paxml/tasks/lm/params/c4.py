@@ -5315,13 +5315,15 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
-        # 数据开始一定要先shard，不能先shuffle，因为如果先shuffle，shuffle取的数据可能会重复，只有建立在不同shard之后的数据才是不重复的
-        # 顺序: shard -> shuffle -> batch
-        ds = ds.shard(self.num_infeed_hosts, process_index) 
-        # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
-        ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
+
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
+
+        # 注意顺序: shuffle -> shard  -> batch
+        ds = ds.shard(self.num_infeed_hosts, process_index) 
+
+        ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
+        
         padded_shapes = {key: self.seq_len for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(

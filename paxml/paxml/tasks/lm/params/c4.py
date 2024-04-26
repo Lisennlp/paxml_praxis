@@ -2952,11 +2952,11 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  PERCORE_BATCH_SIZE = 8
-  ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+  # PERCORE_BATCH_SIZE = 8
+  # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
-  # PERCORE_BATCH_SIZE = 2
-  # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps
@@ -2976,14 +2976,14 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   SHUFFLE = {'train': True, 'test': False}
   SHUFFLE_SIZE = 500000
   KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
-              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
-              }
   # DATA_PATH = {
-  #             'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
-  #             'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+  #             'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
+  #             'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418',
   #             }
+  DATA_PATH = {
+              'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+              'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0418',
+              }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True
   QUERY_CHUNK_SIZE = 512
@@ -5315,8 +5315,9 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
-        # 在这里进行shard的话，不同的pod在相同的batch_size时，拿到的数据不一致
-        ds = ds.shard(self.num_infeed_hosts, process_index)
+        # 数据开始一定要先shard，不能先shuffle，因为如果先shuffle，shuffle取的数据可能会重复，只有建立在不同shard之后的数据才是不重复的
+        # 顺序: shard -> shuffle -> batch
+        ds = ds.shard(self.num_infeed_hosts, process_index) 
         # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
@@ -5329,9 +5330,6 @@ class MyDatasets(base_input.BaseInput):
             padding_values=padding_values,
             drop_remainder=True,
         )
-        # lsp: batch之后进行shard。如果不进行shuffle，在batch化之前shard也行
-        # ds = ds.shard(self.num_infeed_hosts, process_index)
-        # final: shard -> shuffle -> batch
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
         if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix

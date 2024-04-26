@@ -5315,15 +5315,12 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
-
+        # 在这里进行shard的话，不同的pod在相同的batch_size时，拿到的数据不一致
+        # ds = ds.shard(self.num_infeed_hosts, process_index)
+        # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
+        ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-
-        # 注意顺序: shuffle -> shard  -> batch
-        ds = ds.shard(self.num_infeed_hosts, process_index) 
-
-        ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
-        
         padded_shapes = {key: self.seq_len for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
@@ -5332,6 +5329,8 @@ class MyDatasets(base_input.BaseInput):
             padding_values=padding_values,
             drop_remainder=True,
         )
+        # lsp: batch之后进行shard。如果不进行shuffle，在batch化之前shard也行
+        ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
         if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix

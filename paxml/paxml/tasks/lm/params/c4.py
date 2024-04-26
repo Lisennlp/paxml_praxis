@@ -2959,7 +2959,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
-  SAVE_ON_STEPS = list(range(0, 1000000, 10000)) # 总数据大概约45万steps
+  SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps
 
   EVAL_INTERVAL_STEPS = 1000
   EVAL_LOOP_NUM_BATCHES = 20 # RESET_FOR_EVAL=True无效

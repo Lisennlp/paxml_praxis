@@ -588,16 +588,22 @@ def _create_checkpointer(
   """Creates a checkpoint manager."""
   logging.info('[PAX STATUS]: Creating checkpointer.')
   checkpoint_dir = _make_checkpoint_dir(job_log_dir)
+  logging.info(f'0000000')
   train_p = task_p.train
   max_to_keep = train_p.save_max_to_keep
   save_interval_steps = train_p.save_interval_steps
   keep_interval_timedelta = _parse_duration(train_p.save_keep_interval_duration)
+  logging.info(f'111111')
+
   restore_transformations = train_p.restore_transformations
 
   ocdbt_coordinator_server = checkpoints.reregister_type_handlers(
       tensorstore_metadata_key=train_p.tensorstore_metadata_key,
       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
   )
+
+  logging.info(f'22222')
+
   options = checkpoint_managers.CheckpointManagerOptions(
       save_on_steps=train_p.save_on_steps,  # XD
       max_to_keep=max_to_keep,
@@ -641,6 +647,8 @@ def _create_checkpointer(
     else:
       raise ValueError(f'Unsupported Orbax checkpoint type: {checkpoint_type}')
 
+  logging.info(f'33333')
+
   train_input_checkpointer = None
   if train_p.enable_input_checkpointing:
     if (
@@ -664,6 +672,8 @@ def _create_checkpointer(
       checkpoint_type=checkpoint_type,
       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
   )
+  logging.info(f'44444')
+
   # lsp
   checkpoint_manager.num_batches_to_skip = train_input_p.num_batches_to_skip
 

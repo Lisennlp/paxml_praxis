@@ -4853,8 +4853,8 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test3/', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test3/', 
+                'train': 'gs://common_datasets_us-east5/pythia_model_test/flan_test3/', 
+                'test':  'gs://common_datasets_us-east5/pythia_model_test/flan_test3/', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'

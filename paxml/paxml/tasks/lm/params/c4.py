@@ -753,7 +753,7 @@ def configure_gpt3_task(
     for name in ['input_activation_cls', 'use_input_bias', 'merge_dw_op',
         'use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
         'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
-        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
+        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', 'keep_static_w_in_call'# 'squeeze_gate_activation_cls', 
       ] + dynamic_w_attrs:
       NAME = name.upper()
       if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -5207,6 +5207,17 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQWPileEval(PileEval,
     TASK_NAME = CLASS_NAME + 'PileEval'
     ICI_MESH_SHAPE = [1, 16, 1]
     PERCORE_BATCH_SIZE = 64
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256Aligned'
+    TASK_NAME = CLASS_NAME + 'PileEval'
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+    KEEP_STATIC_W_IN_CALL = 0
 
 
 class MyDatasets(base_input.BaseInput):

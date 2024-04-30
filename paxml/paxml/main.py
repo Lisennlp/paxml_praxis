@@ -513,6 +513,7 @@ def _main(argv: Sequence[str]) -> None:
     _, tpu_type = get_tpu_type(FLAGS.exp)
     if tpu_type in global_cfg.tputype2zone:
       def append_zone(gs_path):
+        return gs_path # temp change
         if 'llm_base_models' in  gs_path or  'jax_llm_data' in gs_path:
             return gs_path
         for bucket_name in ['common_datasets', 'llm_projects']:

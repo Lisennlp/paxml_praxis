@@ -1230,8 +1230,12 @@ class CrossHeadProjection(base_layer.BaseLayer):
     self.add_summaries('inp', inputs)
     assert not self.absorb_residual
     ret = inputs
+    logging.info(f'self.use_static_w: {self.use_static_w}')
+    logging.info(f'self.squeeze_ratio: {self.squeeze_ratio}')
+
     if self.use_static_w:
       if self.squeeze_ratio is None:
+        logging.info(f'keep_static_w_in_call: {self.keep_static_w_in_call}')
         w = theta.w * self.keep_static_w_in_call + jnp.eye(self.num_heads_per_group) \
           if self.residual and self.absorb_residual else theta.w * self.keep_static_w_in_call
         _inputs = inputs

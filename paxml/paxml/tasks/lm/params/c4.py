@@ -5215,7 +5215,7 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia7
     RESET_FOR_EVAL = False
     CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256Aligned'
     TASK_NAME = CLASS_NAME + 'PileEval'
-    ICI_MESH_SHAPE = [1, 16, 1]
+    ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 64
     KEEP_STATIC_W_IN_CALL = 0
 

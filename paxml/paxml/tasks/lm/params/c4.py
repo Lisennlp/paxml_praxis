@@ -5220,18 +5220,18 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedFTPileEval(PileEval, PilePythi
     CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedFT'
     TASK_NAME = CLASS_NAME + 'PileEval'
     ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 64
+    PERCORE_BATCH_SIZE = 32
     KEEP_STATIC_W_IN_CALL = 0
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedFTFlanMiniEval(FlanMiniEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
-    ZERO_LOSS = True
+    ZERO_LOSS = False
     EVAL_LOOP_NUM_BATCHES = 320
     RESET_FOR_EVAL = False
     CLASS_NAME = 'PilePythia7B256x1DynWFFN16HD128Win256AlignedFT'
     TASK_NAME = CLASS_NAME + 'FlanMini'
     ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 64
+    PERCORE_BATCH_SIZE = 32
     KEEP_STATIC_W_IN_CALL = 0
 
 class MyDatasets(base_input.BaseInput):

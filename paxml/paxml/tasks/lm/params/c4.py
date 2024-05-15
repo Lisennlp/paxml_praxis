@@ -3033,19 +3033,24 @@ class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
   NUM_LAYERS=48
-  MAX_SEQ_LEN = 8192 * 4
-  WINDOW_SIZE = [256, 4096]
+  MAX_SEQ_LEN = 8192 // 4
+  WINDOW_SIZE = None
   # WINDOW_SIZE = None
-  PERCORE_BATCH_SIZE = 0.25 #/ 4
-  QUERY_CHUNK_SIZE = 512
+  PERCORE_BATCH_SIZE = 4 #/ 4
+  QUERY_CHUNK_SIZE = 128
   LM_HEAD_CHUNK_SIZE = 512
-  ICI_MESH_SHAPE = [1, 64, 4]
+  ICI_MESH_SHAPE = [1, 4, 1]
   DATA_FULL_SHARD = False
   FFN_CHUKN_SIZE = 5504 // 8
-  PRE_COMPUTE_ATTEN_MASK = False
-  EVAL_INTERVAL_STEPS = 100
-  EVAL_LOOP_NUM_BATCHES = 20
-  
+  PRE_COMPUTE_ATTEN_MASK = True
+  # EVAL_INTERVAL_STEPS = 100
+  # EVAL_LOOP_NUM_BATCHES = 20
+  DATA_PATH = {
+                'train': 'gs://common_datasets_us-east5/',
+                'test':  'gs://common_datasets_us-east5/',
+                }
+  USE_STATIC_W = True
+
 
 @experiment_registry.register
 class _TrainConfig2Kx2x512x1:
@@ -5233,6 +5238,19 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedFTFlanMiniEval(FlanMiniEval, P
     ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 32
     KEEP_STATIC_W_IN_CALL = 0
+
+@experiment_registry.register
+class PileDCSlimLlama7B4Kx4x256x1FromTrainEval(FlanMiniEval, PileDCSlimLlama7B4Kx4x256x1):
+    ICI_MESH_SHAPE = [1, 32, 1]
+    PERCORE_BATCH_SIZE = 64
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 80
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'PileDCSlimLlama7B4Kx4x256x1'
+    TASK_NAME = CLASS_NAME + 'FromTrainEval'
+    DATA_PATH = {'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/',
+                'test': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/'}
+    
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None

@@ -1880,6 +1880,19 @@ class Qwen14BEval(BaseEval, Qwen14B):
     TRAINING_NUM_BATCHES_TO_SKIP = 9000
 
 @experiment_registry.register
+class Qwen14BFromTrainEval(BaseEval, Qwen14B):
+    ICI_MESH_SHAPE = [1, 64, 1]
+    PERCORE_BATCH_SIZE = 4
+    ZERO_LOSS = True
+    EVAL_LOOP_NUM_BATCHES = 640
+    RESET_FOR_EVAL = False
+    CLASS_NAME = 'Qwen14B'
+    TASK_NAME = CLASS_NAME + 'FromTrainEval'
+    DATA_PATH = {'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/',
+                'test': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/'}
+
+
+@experiment_registry.register
 class BC2Gpt13BEval(BaseEval, BC2Gpt13B):
     TRAINING_NUM_BATCHES_TO_SKIP = None
     ICI_MESH_SHAPE = [1, 8, 1]

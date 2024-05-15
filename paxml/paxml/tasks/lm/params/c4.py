@@ -1882,9 +1882,9 @@ class Qwen14BEval(BaseEval, Qwen14B):
 @experiment_registry.register
 class Qwen14BFromTrainEval(BaseEval, Qwen14B):
     ICI_MESH_SHAPE = [1, 64, 1]
-    PERCORE_BATCH_SIZE = 4
+    PERCORE_BATCH_SIZE = 8
     ZERO_LOSS = True
-    EVAL_LOOP_NUM_BATCHES = 640
+    EVAL_LOOP_NUM_BATCHES = 320
     RESET_FOR_EVAL = False
     CLASS_NAME = 'Qwen14B'
     TASK_NAME = CLASS_NAME + 'FromTrainEval'

@@ -41,6 +41,9 @@ except:
     subprocess.run(command, stdout=subprocess.PIPE, shell=True)
     import torch
 
+
+# pip install accelerate tiktoken transformers_stream_generator
+
 TrainState = train_states.TrainState
 CheckpointType = checkpoints.CheckpointType
 Checkpointer = checkpoints.Checkpointer
@@ -77,9 +80,9 @@ dim = params["dim"]
 intermediate_size = params["intermediate_size"]
 head_dim = dim // n_heads
 save_opt = False
+vocab_size = params["vocab_size"]
 
-
-model = AutoModelForCausalLM.from_pretrained(f"Qwen/Qwen-{model_size}", device_map="auto", trust_remote_code=True).eval()
+model = AutoModelForCausalLM.from_pretrained('~/hf/', device_map="auto", trust_remote_code=True).eval()
 # pip install tiktoken
 # tokenizer = AutoTokenizer.from_pretrained(f"Qwen/Qwen-{model_size}", trust_remote_code=True)
 
@@ -235,7 +238,7 @@ with jax.default_device(jax.devices("cpu")[0]):
                 except:
                     layer_index = 0
                 values.append([layer_index, glod_values])
-                print(f"match_res: {match_res}|| {len(values)}")
+                # print(f"match_res: {match_res}|| {len(values)}")
                 
         values = sorted(values, key=lambda x: x[0])
         if len(values) > 1:

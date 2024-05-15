@@ -284,6 +284,8 @@ flags.DEFINE_string("server_addr", None, help="server ip addr")
 flags.DEFINE_integer("num_hosts", None, help="num of hosts")
 flags.DEFINE_integer("host_idx", None, help="index of current host")
 
+flags.DEFINE_integer("eval_model_step", None, help="eval step moel")
+
 # Flags --jax_backend_target, --jax_xla_backend, --jax_enable_checks are
 # available through JAX.
 
@@ -579,11 +581,17 @@ def _main(argv: Sequence[str]) -> None:
     # 没有，应该是todo
     experiment_config.validate()
     logging.info(f"FLAGS.enable_checkpoint_saving: {FLAGS.enable_checkpoint_saving}")
-    run(
-        experiment_config=experiment_config,
-        enable_checkpoint_saving=FLAGS.enable_checkpoint_saving,
-    )
 
+    if FLAGS.eval_model_step is not None:
+        assert FLAGS.eval_on_test
+
+    assert experiment_config.ONLY_EVAL
+    setattr(experiment_config, 'TRAINING_NUM_BATCHES_TO_SKIP', int(FLAGS.eval_model_step))
+    logging.info(f"Change experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
+    run(experiment_config=experiment_config,
+      enable_checkpoint_saving=FLAGS.enable_checkpoint_saving)
+      
+    
 
 _TASK_HANDLE_RE = re.compile(r"(?:logs\.)?(\d+)\.(.*)\.([^.]+)\.\d+")
 

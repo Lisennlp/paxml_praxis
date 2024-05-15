@@ -53,7 +53,15 @@ from praxis import py_utils
 
 from paxml import checkpoint_paths
 
-from paxml.utils import tfids_registry, c4_registry, extract_pythia_datapath, extract_qwen_datapath, extract_bc2_datapath1213_shuffled, extract_qwen_datapath1208, extract_train_skip_step, extract_sft_datapath,extract_sft_datapath2
+from paxml.utils import tfids_registry,  \
+                        c4_registry,  \
+                        extract_pythia_datapath, \
+                        extract_qwen_datapath, \
+                        extract_bc2_datapath1213_shuffled, \
+                        extract_qwen_datapath1208, \
+                        extract_train_skip_step, \
+                        extract_sft_datapath,extract_sft_datapath2,\
+                        extract_qwen_datapath1208_shuffled
 from praxis import aqt_utils
 
 
@@ -1851,6 +1859,8 @@ class Qwen7BEval(BaseEval, Qwen7B):
                         'gs://jax_llm_data/xiaomeng/processed_zh_data_qwen14B_KeepChapter1117']
             }
     DATA_FUNC = extract_qwen_datapath
+    QUERY_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = None
 
 
 @experiment_registry.register
@@ -1881,7 +1891,7 @@ class Qwen14BEval(BaseEval, Qwen14B):
 
 @experiment_registry.register
 class Qwen14BFromTrainEval(BaseEval, Qwen14B):
-    ICI_MESH_SHAPE = [1, 64, 1]
+    ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 8
     ZERO_LOSS = True
     EVAL_LOOP_NUM_BATCHES = 320
@@ -1890,6 +1900,10 @@ class Qwen14BFromTrainEval(BaseEval, Qwen14B):
     TASK_NAME = CLASS_NAME + 'FromTrainEval'
     DATA_PATH = {'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/',
                 'test': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/val_from_train/'}
+    DATA_FUNC = extract_pythia_datapath
+    SHUFFLE = {"train": False, "test": False}
+    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
+
 
 
 @experiment_registry.register
@@ -2005,11 +2019,13 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         logging.info(f'process index {jax.process_index()} load input_ids: {model_needed_inputs.ids}')
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
-        if "labels" in data:
-            # lsp: 第一次打印数据
-            if self.label_flag == 0:
-                logging.info(f'=================data:\n{data}')
+
+        # lsp: 第一次打印数据
+        if self.label_flag == 0:
+            logging.info(f'=================data:\n{data}')
             self.label_flag = 1
+
+        if "labels" in data:
             weights = data["labels"] > 0
         else:
             weights = data["input_ids"] >= 0

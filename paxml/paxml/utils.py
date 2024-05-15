@@ -176,8 +176,12 @@ def extract_datapath(task, mode, substrings=None, remove_steps=None, keep_steps=
         files = read_bucket(path, substrings=substrings)
         newfiles = {}
         for step, file in files.items():
-            if step in keep_steps and step not in remove_steps:
-                newfiles[step] = file
+            if keep_steps is None:
+               if step not in remove_steps:
+                    newfiles[step] = file
+            else:
+                if step in keep_steps and step not in remove_steps:
+                    newfiles[step] = file
         files = [f for _, fs in newfiles.items() for f in fs]
         # 英文bookstart数据较多，去掉一部分
         if 'en_data' in path:

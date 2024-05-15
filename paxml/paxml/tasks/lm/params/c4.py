@@ -5242,9 +5242,9 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedFTFlanMiniEval(FlanMiniEval, P
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1FromTrainEval(FlanMiniEval, PileDCSlimLlama7B4Kx4x256x1):
     ICI_MESH_SHAPE = [1, 64, 1]
-    PERCORE_BATCH_SIZE = 32
+    PERCORE_BATCH_SIZE = 4
     ZERO_LOSS = True
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 640
     RESET_FOR_EVAL = False
     CLASS_NAME = 'PileDCSlimLlama7B4Kx4x256x1'
     TASK_NAME = CLASS_NAME + 'FromTrainEval'

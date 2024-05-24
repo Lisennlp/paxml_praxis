@@ -27,16 +27,16 @@ import orjson
 """
 多进程处理单个文件:
 # Usage:
-TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b
+TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
-TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b
+TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
 SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
-TPU_NAME=llm-jax-mqy-v4-32-62; ZONE=us-central2-b;B=11
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=3 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
+TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b;B=19
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=4 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,8,10" --project=ntpu-413714
 """
 
 
@@ -100,6 +100,21 @@ class QwenTokenizer():
                 save_ids = []
         return total_ids
  
+def  check_text_length(line):
+    # 0524 add filter， 有些乱码数据很长一段
+    text = line['text']
+    words = text.split()
+    char_count = line['meta']['char_count']
+    if char_count < 2:
+        return False
+    # 计算单词的平常长度
+    word_mean_len = char_count / len(words)
+    if word_mean_len > 50000:
+        print(f'\n\nError line name: {line["meta"]}\n\n')
+        return False
+    else:
+        return True
+
 def process_data(args):
     save_path, cur_rank_lines, rank, workers = args
     save_path = os.path.join(save_path, f'{rank:03}')
@@ -110,6 +125,8 @@ def process_data(args):
         line = orjson.loads(line)
         text = line['text']
         text_split = text.split('\n')
+        if not check_text_length(line):
+            continue
         per = 500
         if len(text_split) > per:
             # 一次Tokenize很长的数据会很慢，需要split。
@@ -181,7 +198,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0418/B{bucket:03}/F{file_index}'
+            save_path = f'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0424/B{bucket:03}/F{file_index}'
         print(f'save_path: {save_path}')
         workers = 10
         counts = encode_file(path, save_path, workers=workers)

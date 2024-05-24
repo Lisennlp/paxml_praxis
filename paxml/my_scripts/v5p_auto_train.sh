@@ -31,7 +31,7 @@ do
             gcloud compute tpus tpu-vm ssh ${TPU_NAME} --zone=$ZONE --project $PROJECT_ID --worker=all --command="bash install_0812.sh ${ZONE:0:-2} 2>&1 | tee install.log"
         fi
         if $TRAIN;then
-            gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models_us-east5/v5p_256/7B/$EXP 2>&1 --enable_checkpoint_saving=True --eval_on_test=True | tee train.log" --project=$PROJECT_ID
+            gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="killall main.py;sudo lsof -w /dev/accel0 |cut -c 9-14|awk 'NR>1 {print $1}'| xargs sudo kill -9; sudo rm -f /tmp/libtpu_lockfile;sudo chmod +777 -R /tmp/tpu_logs/; /home/lishengping/miniconda3/bin/python /home/lishengping/projects/paxml/paxml/main.py --exp=tasks.lm.params.c4.$EXP --job_log_dir=gs://llm_base_models_us-east5/v5p_256/7B/$EXP  2>&1 --enable_checkpoint_saving=True --eval_on_test=True  > train.log 2>&1 &" --project=$PROJECT_ID
         fi
     elif [ "$tpu_status" == "CREATING" ];then
         FLAG=1

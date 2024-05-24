@@ -2956,18 +2956,18 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  # PERCORE_BATCH_SIZE = 8
-  # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 256, 1] # v5p 0.104 steps/s
 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  # PERCORE_BATCH_SIZE = 2
+  # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps
 
   EVAL_INTERVAL_STEPS = 1000
   EVAL_LOOP_NUM_BATCHES = 20 # RESET_FOR_EVAL=True无效
-  CHECKPOINT_EVERY_N_STEPS = 100  # 0.1 step / s，大约30多分钟
+  CHECKPOINT_EVERY_N_STEPS = 200  # 0.1 step / s，大约30多分钟
   CHECKPOINT_MAX_TO_KEEP = 2
   RESET_FOR_EVAL = True # 每次评测完整测试集, 因为，测试集 <100 batch
 

@@ -2990,7 +2990,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
               # }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True
-  QUERY_CHUNK_SIZE = 256
+  QUERY_CHUNK_SIZE = 128
   LM_HEAD_CHUNK_SIZE = None
   DATA_FULL_SHARD = True
   USE_REPEATED_LAYER=True

@@ -2967,7 +2967,7 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
 
   EVAL_INTERVAL_STEPS = 1000
   EVAL_LOOP_NUM_BATCHES = 20 # RESET_FOR_EVAL=True无效
-  CHECKPOINT_EVERY_N_STEPS = 100  # 0.1 step / s，大约30多分钟
+  CHECKPOINT_EVERY_N_STEPS = 200  # 0.1 step / s，大约30多分钟
   CHECKPOINT_MAX_TO_KEEP = 2
   RESET_FOR_EVAL = True # 每次评测完整测试集, 因为，测试集 <100 batch
 
@@ -3001,7 +3001,6 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   # FFN_CHUKN_SIZE = HIDDEN_DIMS // MGATE_DIM
 
 
-# lsp: v3.5 train class 
 @experiment_registry.register
 class DataBreakTest(PileDCSlimLlama7B4Kx4x256x1):
   PERCORE_BATCH_SIZE = 2
@@ -3010,7 +3009,6 @@ class DataBreakTest(PileDCSlimLlama7B4Kx4x256x1):
   NUM_LAYERS_PER_BLOCK = 4
 
 
-# lsp: v3.5 train class 
 @experiment_registry.register
 class DataBreakTest2(PileDCSlimLlama7B4Kx4x256x1):
   PERCORE_BATCH_SIZE = 1

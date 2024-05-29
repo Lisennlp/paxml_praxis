@@ -3001,6 +3001,18 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   # FFN_CHUKN_SIZE = HIDDEN_DIMS // MGATE_DIM
 
 
+# lsp: v3.5 quick down lr to train 1/10 data 
+@experiment_registry.register
+class PileDCSlimLlama7B4Kx4x256x1QuickDownLr(PileDCSlimLlama7B4Kx4x256x1):
+  LEARNING_RATE = 1.5633e-4  # continue train step lr
+  LR_COS_WARMUP = 230000
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 253000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.0
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+
+
 @experiment_registry.register
 class DataBreakTest(PileDCSlimLlama7B4Kx4x256x1):
   PERCORE_BATCH_SIZE = 2

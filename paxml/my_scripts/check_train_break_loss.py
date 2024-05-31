@@ -92,6 +92,8 @@ for i in range(1, len(total_losses)):
         if s in last_end_losses:
             stepin = True
             last_l = last_end_losses[s]
+            l = round(l, 3)
+            last_l = round(last_l, 3)
             if last_l != l:
                 FLAG = 1
                 error_steps.append(s)

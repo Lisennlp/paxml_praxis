@@ -2956,11 +2956,11 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  PERCORE_BATCH_SIZE = 8
-  ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+  # PERCORE_BATCH_SIZE = 8
+  # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
-  # PERCORE_BATCH_SIZE = 2
-  # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps
@@ -3004,13 +3004,49 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1QuickDownLr(PileDCSlimLlama7B4Kx4x256x1):
-  LEARNING_RATE = 1.5633e-4  # continue train step lr
-  LR_COS_WARMUP = 230000
+  LR_COS_WARMUP = 238000
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 253000  # 800B tokens
+  LEARNING_RATE = 1.4856e-4  # continue train step lr
+  LR_COS_DECAY_END = 260000  # 800B tokens
   LR_COS_MIN_RATIO = 0.0
   PERCORE_BATCH_SIZE = 8
   ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+
+
+# lsp: v3.5 quick down lr to train 1/10 data 
+@experiment_registry.register
+class PileDCSlimLlama7B4Kx4x256x1QuickDownLrTest(PileDCSlimLlama7B4Kx4x256x1):
+  LEARNING_RATE = 2.877e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+  # LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+  LR_COS_WARMUP = 6200
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 8000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.0
+
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 8, 1] #
+
+  SHUFFLE_SIZE = 5000
+
+  # LR_SCHEDULE = 'linear_rampup_exponential_decay'
+  # LR_LRED_WARMUP = 238000
+  # LR_LRED_DECAY_START = LR_LRED_WARMUP + 1
+  # LR_LRED_DECAY_END = 260000
+  # LR_LRED_MIN_RATIO = 0.0
+  # LR_LRED_MAX = 1.0
+
+  # LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+  # LR_COS_WARMUP = 2000
+  # LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  # LR_COS_DECAY_END = 440000  # 800B tokens
+  # LR_COS_MIN_RATIO = 0.1
+
+  CHECKPOINT_EVERY_N_STEPS = 200  # 0.1 step / s，大约30多分钟
+  CHECKPOINT_MAX_TO_KEEP = 20
+
+  NUM_LAYERS=1
+  WINDOW_SIZE = [256]
+  NUM_LAYERS_PER_BLOCK = len(WINDOW_SIZE)
 
 
 @experiment_registry.register

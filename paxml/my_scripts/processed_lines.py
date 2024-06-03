@@ -27,18 +27,32 @@ import orjson
 """
 多进程处理单个文件:
 # Usage:
-TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
+TPU_NAME=llm-jax-v4-512-11; ZONE=us-central2-b
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
-TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
+TPU_NAME=llm-jax-v4-512-11; ZONE=us-central2-b
 SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
-TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b;B=19
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=4 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,8,10" --project=ntpu-413714
+TPU_NAME=llm-jax-v4-512-11; ZONE=us-central2-b;B=19
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=3 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,9,10" --project=ntpu-413714
 """
 
+"""
+多进程处理单个文件:
+# Usage:
+TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
+
+TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a
+SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
+gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
+
+TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a;B=19
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=1 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
+"""
 
 TOKENIZER_PATH = "/home/lishengping/tokenizer"
 MAX_LEN = 4097
@@ -78,11 +92,17 @@ class QwenTokenizer():
         assert len(self.tokenizer) == 151871, print(len(self.tokenizer))
         assert len(self.tokenizer.encode(EXTRA_TOKENS)) == 20, print(len(self.tokenizer.encode(EXTRA_TOKENS)))
         self.next_ids = []
-        self.partial_tokenize = partial(self.tokenize, max_len=MAX_LEN, bos_id=BOS_ID, eos_id=EOS_ID)
+        self.partial_tokenize = partial(self.tokenize, max_len=MAX_LEN, bos_id=BOS_ID)
         self.count = 0
     
-    def tokenize(self, text, writer, max_len=2048, bos_id:list=[], eos_id:list=[]):
-        input_ids = self.tokenizer.encode(text) + eos_id
+    def tokenize(self, text, writer, max_len=2048, bos_id:list=[]):
+        try:
+            input_ids = self.tokenizer.encode(text)
+        except:
+            import pickle
+            pickle.dump(text, open(f'error_{self.count}.pkl', 'wb'))
+            print(f'error======')
+            return []
         if bos_id:
             max_len -= 1
         self.next_ids += input_ids #  加上上个step保留的id
@@ -100,12 +120,12 @@ class QwenTokenizer():
                 save_ids = []
         return total_ids
  
-def  check_text_length(line):
+def check_text_length(line):
     # 0524 add filter， 有些乱码数据很长一段
     text = line['text']
     words = text.split()
     char_count = line['meta']['char_count']
-    if char_count < 2:
+    if char_count < 2 or len(words) < 2:
         return False
     # 计算单词的平常长度
     word_mean_len = char_count / len(words)
@@ -132,10 +152,11 @@ def process_data(args):
             # 一次Tokenize很长的数据会很慢，需要split。
             for lnx in tqdm(range(0, len(text_split), per), desc=f'Rank-{rank}-sub-{i}'):
                 inp = text_split[lnx: lnx + per]
-                inp = '\n'.join(inp)
+                inp = '\n'.join(inp) + '\n' # lsp
                 qwen_tokenizer.partial_tokenize(inp, writer)
         else:
             qwen_tokenizer.partial_tokenize(text, writer)
+        qwen_tokenizer.next_ids += EOS_ID
 
     writer.close()
     return qwen_tokenizer.count
@@ -180,7 +201,7 @@ if __name__ == "__main__":
     type_ = 'train'
     if type_ == 'valid':
         pathes = ['gs://jax_llm_data_us-east5/xiaomeng/v3.5/jsonl/valid_concat.jsonl']
-        save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfrecord_test/valid_concat.tfrecord'
+        save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527/valid_concat.tfrecord'
         print(f'save_path: {save_path}')
     else:
         bucketes = [bucket]
@@ -198,7 +219,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0424/B{bucket:03}/F{file_index}'
+            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527/B{bucket:03}/F{file_index}'
         print(f'save_path: {save_path}')
         workers = 10
         counts = encode_file(path, save_path, workers=workers)

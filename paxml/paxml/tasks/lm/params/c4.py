@@ -2959,8 +2959,8 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   # PERCORE_BATCH_SIZE = 8
   # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  PERCORE_BATCH_SIZE = 1
+  ICI_MESH_SHAPE = [1, 1024, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps

@@ -76,7 +76,7 @@ class QwenTokenizer():
         self.count = 0
     
     def tokenize(self, text, writer, max_len=2048, bos_id:list=[], eos_id:list=[]):
-        input_ids = self.tokenizer.encode(text) + eos_id
+        input_ids = self.tokenizer.encode(text)
         if bos_id:
             max_len -= 1
         self.next_ids += input_ids #  加上上个step保留的id
@@ -109,10 +109,12 @@ def process_data(args):
             # 一次Tokenize很长的数据会很慢，需要split。
             for lnx in tqdm(range(0, len(text_split), per), desc=f'Rank-{rank}-sub-{i}'):
                 inp = text_split[lnx: lnx + per]
-                inp = '\n'.join(inp)
+                inp = '\n'.join(inp) + '\n'
                 qwen_tokenizer.partial_tokenize(inp, writer)
         else:
             qwen_tokenizer.partial_tokenize(text, writer)
+
+        qwen_tokenizer.next_ids += EOS_ID
 
     writer.close()
     return qwen_tokenizer.count
@@ -169,8 +171,7 @@ if __name__ == "__main__":
         for bucket in bucketes:
             for index in range(9, 10, 1):
                 # p = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/jsonl/2nd-shuffled-data_bucket-{bucket}-{index:03}-of-010.jsonl.zst'
-                p = f'/mnt/nvme2/kf/temp_data/combined_data_validexcluded/2nd-shuffled-data_bucket-{bucket}-{index:03}-of-010.jsonl.zst'
-
+                p = f'2nd-shuffled-data_bucket-{bucket}-{index:03}-of-010.jsonl.zst'
                 pathes.append(p)
 
     select_files = pathes[file_start: file_end]
@@ -181,7 +182,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/novel_from_train/B{bucket:03}.F{file_index}.val'
+            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/val_from_train/B{bucket:03}.F{file_index}.val.tfrecord'
         print(f'save_path: {save_path}')
         workers = 1
         counts = encode_file(path, save_path, workers=workers)

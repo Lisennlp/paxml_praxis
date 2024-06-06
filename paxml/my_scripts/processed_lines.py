@@ -51,7 +51,7 @@ SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/proce
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
 TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a;B=19
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=1 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=0 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
 """
 
 TOKENIZER_PATH = "/home/lishengping/tokenizer"

@@ -2956,11 +2956,11 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   LR_COS_DECAY_END = 440000  # 800B tokens
   LR_COS_MIN_RATIO = 0.1
 
-  # PERCORE_BATCH_SIZE = 8
-  # ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
-  PERCORE_BATCH_SIZE = 2
-  ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
+  # PERCORE_BATCH_SIZE = 2
+  # ICI_MESH_SHAPE = [1, 512, 1]  # v4-512, 0.093 steps/s
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   SAVE_ON_STEPS = list(range(0, 1000000, 2000)) # 总数据大概约45万steps
@@ -2980,14 +2980,14 @@ class PileDCSlimLlama7B4Kx4x256x1(DataParams, PythiaInit, DCSlimLlama7B):
   SHUFFLE = {'train': True, 'test': False}
   SHUFFLE_SIZE = 500000
   KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  # DATA_PATH = {
-  #             'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527',
-  #             'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527',
-  #             }
   DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
-              'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527',
               }
+  # DATA_PATH = {
+  #             'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
+  #             'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
+  #             }
   DATA_FUNC = extract_v3p5_data_files
   ZERO_LOSS = True
   QUERY_CHUNK_SIZE = 256
@@ -3013,6 +3013,15 @@ class PileDCSlimLlama7B4Kx4x256x1QuickDownLr(PileDCSlimLlama7B4Kx4x256x1):
   ICI_MESH_SHAPE = [1, 128, 1] # v5p 0.104 steps/s
 
 
+@experiment_registry.register
+class PileDCSlimLlama7B4Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
+    NUM_LAYERS=4
+    MAX_SEQ_LEN = 257
+    SHUFFLE_SIZE = None
+    SHUFFLE = {'train': False, 'test': False}
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
+    
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1QuickDownLrTest(PileDCSlimLlama7B4Kx4x256x1):
@@ -3090,7 +3099,7 @@ class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   FFN_CHUKN_SIZE = 5504 // 8
   PRE_COMPUTE_ATTEN_MASK = True
   # EVAL_INTERVAL_STEPS = 100
-  # EVAL_LOOP_NUM_BATCHES = 20
+  # EVAL_LOOP_NUM_BATCHES = 20 
   DATA_PATH = {
                 'train': 'gs://common_datasets_us-east5/',
                 'test':  'gs://common_datasets_us-east5/',

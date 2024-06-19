@@ -782,7 +782,7 @@ class TransformerLm(base_layer.BaseLayer):
       # ======================================32k long context max window size set==================================================
       eos_num = (inputs[0] == 151643).sum() 
       # lsp: 条件判断的两个函数的返回值必须具有相同的shape 和 dtype. 如果检测到多个eos，则说明是short text，则设置窗口为4k，否则为32k
-      max_window_size = jax.lax.cond(eos_num > 1, lambda x: 4096, lambda x: 32000, operand=None)
+      max_window_size = jax.lax.cond(eos_num > 0, lambda x: 4096, lambda x: 32000, operand=None)
       self.add_summary('[lsp]max_window_size', max_window_size, verbosity=3)  # XD
     else:
       max_window_size = None

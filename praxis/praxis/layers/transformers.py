@@ -88,7 +88,7 @@ def compute_attention_masks_for_fprop(
     cross_paddings: Optional[JTensor] = None,
     cross_segment_mask: Optional[JTensor] = None,
     fold_padding_with_segment_mask: Optional[bool] = False,
-    # window_size: Optional[Sequence[int]] = (),  # XD
+    max_window_size: Optional[int] = None,  # lsp
 ) -> Tuple[JTensor, Union[JTensor, None]]:
   """Computes attention mask from paddings, segment masks etc for fprop.
 
@@ -115,7 +115,7 @@ def compute_attention_masks_for_fprop(
       attention of shape [1|B, 1, 1|T, S]. This will be None if cross_inputs
       are None.
   """
-  if fold_padding_with_segment_mask:
+  if fold_padding_with_segment_mask:  # true
     # In this case a separate padding mask is not needed, it is assumed
     # folded with segment mask.
     assert segment_mask is not None
@@ -131,13 +131,13 @@ def compute_attention_masks_for_fprop(
       attention_mask = jnp.minimum(attention_mask, segment_mask)
 
   # Causal mask of shape [1, 1, T, T]
-  if causal_attention:
+  if causal_attention: # lsp: True
     causal_mask = attentions.causal_mask(inputs)
     attention_mask = jnp.minimum(attention_mask, causal_mask)
 
   # Compute cross attention mask if applicable
   cross_attention_mask = None
-  if cross_inputs is not None:
+  if cross_inputs is not None: # lsp False
     assert cross_paddings is not None
 
     # Compute paddings
@@ -148,6 +148,18 @@ def compute_attention_masks_for_fprop(
     if cross_segment_mask is not None:
       cross_attention_mask = jnp.minimum(cross_attention_mask,
                                          cross_segment_mask)
+
+  # lsp: 在这做一个基于32k或者4k的attention mask，之后如果遇到小的windows，再做一次。
+  t = attention_mask.shape[1]
+  if max_window_size is None:
+    max_window_size = t
+  logging.info(f'max_window_size33: {max_window_size}')
+  large_negative_number = py_utils.get_large_negative_number(attention_mask.dtype)
+  col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
+  row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
+  window_mask = (col_idx + max_window_size <= row_idx).astype(attention_mask.dtype) * large_negative_number
+  attention_mask = jnp.minimum(attention_mask, window_mask)
+
   return attention_mask, cross_attention_mask
 
 
@@ -1857,7 +1869,9 @@ class StackedTransformer(base_layer.BaseLayer):
                cross_inputs: Optional[JTensor] = None,
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
-               segment_pos: Optional[JTensor] = None) -> JTensor:
+               segment_pos: Optional[JTensor] = None,
+               max_window_size: Optional[int] = None,  # lsp
+               ) -> JTensor:
     """Stacked Transformer layer.
 
     Args:
@@ -1895,6 +1909,7 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_paddings,
           cross_segment_mask,
           fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
+          max_window_size=max_window_size,
       )
     else:
       attention_mask = None
@@ -2123,7 +2138,9 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
                cross_inputs: Optional[JTensor] = None,
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
-               segment_pos: Optional[JTensor] = None) -> JTensor:
+               segment_pos: Optional[JTensor] = None,
+               max_window_size: Optional[int] = None,  # lsp
+               ) -> JTensor:
     """Stacked Transformer layer.
 
     Args:
@@ -2143,8 +2160,11 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
     """
 
     # TODO(zhangqiaorjc): Use positional args until nn.scan supports kwargs.
+    logging.info(f'max_window_size444a: {max_window_size}')
+    logging.info(f'max_window_size444aTrueorFalse: {max_window_size is None}')
+
     out = self.repeat_layer(inputs, paddings, segment_mask, cross_inputs,
-                            cross_paddings, cross_segment_mask, segment_pos)
+                            cross_paddings, cross_segment_mask, segment_pos, max_window_size)
 
     return out
 

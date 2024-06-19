@@ -49,6 +49,7 @@ import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
 from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_v3p5_data_files
+import random
 
 WeightInit = base_layer.WeightInit
 NestedMap = py_utils.NestedMap
@@ -666,6 +667,11 @@ def configure_gpt3_task(
     model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
+
+  # lsp    
+  if hasattr(cls, 'SET_MASK_BY_COND'):  # lsp
+    logging.info(f'SET_MASK_BY_COND: {cls.SET_MASK_BY_COND}')
+    model_p.lm_tpl.set_mask_by_cond = cls.SET_MASK_BY_COND
 
   for prefix in (['early_'] if getattr(cls, 'NUM_EARLY_LAYERS', 0) else []) + ['']:  # XD
     # stacked_p = model_p.lm_tpl.stacked_transformer_tpl
@@ -3016,11 +3022,12 @@ class PileDCSlimLlama7B4Kx4x256x1QuickDownLr(PileDCSlimLlama7B4Kx4x256x1):
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
     NUM_LAYERS=4
-    MAX_SEQ_LEN = 257
+    MAX_SEQ_LEN = 1025
     SHUFFLE_SIZE = None
     SHUFFLE = {'train': False, 'test': False}
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 8, 1]
+    SET_MASK_BY_COND = True
     
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

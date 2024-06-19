@@ -33,6 +33,8 @@ from praxis.layers import embedding_softmax
 from praxis.layers import multi_query_attention
 from praxis.layers import normalizations
 from praxis.layers import transformers
+from absl import logging
+
 
 NestedMap = py_utils.NestedMap
 JTensor = pytypes.JTensor
@@ -296,6 +298,7 @@ class TransformerLm(base_layer.BaseLayer):
   skip_compute_loss: bool = False
   skip_aux_loss: bool = False
   record_activations_in_xent_output: bool = False
+  set_mask_by_cond: bool = False
 
   @classmethod
   def set_sharding_params_v1(
@@ -774,6 +777,16 @@ class TransformerLm(base_layer.BaseLayer):
       segment_pos = jnp.tile(
           jnp.arange(seq_length, dtype=jnp.int32)[None, :], [batch, 1]
       )
+    logging.info(f'set_mask_by_cond: {self.set_mask_by_cond}')
+    if self.set_mask_by_cond:
+      # ======================================32k long context max window size set==================================================
+      eos_num = (inputs[0] == 151643).sum() 
+      # lsp: 条件判断的两个函数的返回值必须具有相同的shape 和 dtype. 如果检测到多个eos，则说明是short text，则设置窗口为4k，否则为32k
+      max_window_size = jax.lax.cond(eos_num > 1, lambda x: 4096, lambda x: 32000, operand=None)
+      self.add_summary('[lsp]max_window_size', max_window_size, verbosity=3)  # XD
+    else:
+      max_window_size = None
+      # ============================================================================================================================
 
     inputs = self._prepare_input(
         inputs, paddings, segment_pos=segment_pos, **input_kwargs
@@ -808,7 +821,7 @@ class TransformerLm(base_layer.BaseLayer):
       inputs = self.early_transformer(
         inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos)
     output = self.transformer(
-        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos
+        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, max_window_size=max_window_size
     )
 
     # Final layer norm

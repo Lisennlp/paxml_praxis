@@ -254,7 +254,8 @@ class LanguageModel(base_model.BaseModel):
     labels = NestedMap(class_ids=input_batch.labels, class_weights=weights)
 
     extra_input_kwargs = {}
-    if self.lm_tpl.packed_input:
+    if self.lm_tpl.packed_input: # true
+      logging.info(f'packed_input: {self.lm_tpl.packed_input}')
       extra_input_kwargs = {
           'segment_ids': input_batch.segment_ids,
           'segment_pos': input_batch.segment_pos,

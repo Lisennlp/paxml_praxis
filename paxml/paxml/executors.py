@@ -444,6 +444,7 @@ def _train_and_evaluate_common(
   num_params = sum(np.prod(p.shape) for p in jax.tree_leaves(partitioned_train_state.mdl_vars))
   logging.info(f'Total params size: {num_params}')
 
+  count = 0
   while True:
     logging.log_first_n(INFO, '[PAX STATUS]: Beginning step `%d`.', 5, step_i)
     save_or_pass = checkpointer.save_if_needed(
@@ -482,6 +483,10 @@ def _train_and_evaluate_common(
     # While the eval ones below are post-model weight updates, hence the step
     # counter is incremented in between.
     step_i = program_output.new_train_step
+
+    if count < 10:
+      logging.info(f'step: {step_i} loss: {program_output.loss}')
+    count += 1
 
     eval_metrics: Optional[tuning_lib.EvalMetrics] = None
     # Run eval at regular step interval.

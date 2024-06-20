@@ -48,7 +48,7 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
-from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_v3p5_data_files
+from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_v3p5_data_files, extract_v3p5_longdata_files
 import random
 
 WeightInit = base_layer.WeightInit
@@ -3028,7 +3028,35 @@ class PileDCSlimLlama7B4Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 8, 1]
     SET_MASK_BY_COND = True
+    DATA_PATH = {
+              'train': 'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
+              'test':  'gs://jax_llm_data_us-central2/xiaomeng/v3.5/tfids0527',
+              }
+    DATA_FUNC = extract_v3p5_data_files
     
+
+@experiment_registry.register
+class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
+    NUM_LAYERS=48
+    MAX_SEQ_LEN = 32769
+    LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+    # LR_COS_WARMUP = 2000
+    # LR_COS_DECAY_START = LR_COS_WARMUP + 1
+    # LR_COS_DECAY_END = 440000  # 100B tokens
+    # LR_COS_MIN_RATIO = 0.1
+    SHUFFLE_SIZE = 50000
+    SHUFFLE = {'train': True, 'test': False}
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 4, 1]
+    WINDOW_SIZE = [256, 32768, 256, 256]
+    SET_MASK_BY_COND = True
+    DATA_PATH = {
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0619',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0619',
+              }
+    DATA_FUNC = extract_v3p5_longdata_files
+    QUERY_CHUNK_SIZE = 512  # 2048: 0.0365step/s
+
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register
 class PileDCSlimLlama7B4Kx4x256x1QuickDownLrTest(PileDCSlimLlama7B4Kx4x256x1):

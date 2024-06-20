@@ -890,7 +890,7 @@ class PositionalEmbedding(base_layer.BaseLayer):
   """
 
   min_timescale: int = 1
-  max_timescale: int = 10_000
+  max_timescale: int = 500_000 # lsp
   embedding_dims: int = 0
 
   def __call__(
@@ -1068,6 +1068,7 @@ class RotaryPositionalEmbedding(PositionalEmbedding):
   """
 
   cast_as_fprop_dtype: bool = True
+  rotary_base_scale: float = 1.0
 
   def setup(self) -> None:
     if self.embedding_dims % 2:
@@ -1111,7 +1112,7 @@ class RotaryPositionalEmbedding(PositionalEmbedding):
     fraction = 2 * jnp.arange(0, half_embedding_dim) / self.embedding_dims
     timescale = (
         self.min_timescale
-        * (self.max_timescale / self.min_timescale) ** fraction
+        * (self.rotary_base_scale * self.max_timescale / self.min_timescale) ** fraction
     )
     if position is None:
       seq_length = inputs.shape[1]

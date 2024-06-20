@@ -2182,6 +2182,7 @@ class DotProductAttention(base_layer.BaseLayer):
   # TODO(pax-dev): merge use_rotary_position_emb and rotary_position_emb_tpl
   # by initializing rotary_position_emb_tpl = None.
   use_rotary_position_emb: bool = False
+  rotary_base_scale: float = 1.0
   pythia_rotary: bool = False
   rotary_position_emb_tpl: Optional[LayerTpl] = template_field(
       embedding_softmax.RotaryPositionalEmbedding
@@ -2245,6 +2246,8 @@ class DotProductAttention(base_layer.BaseLayer):
     pos_emb_p = layer_tpl.clone()
     pos_emb_p.embedding_dims = dim_per_head
     pos_emb_p.cast_as_fprop_dtype = self.cast_rotary_position_emb
+    pos_emb_p.rotary_base_scale = self.rotary_base_scale
+
     self.create_child(name, pos_emb_p)  # XD: 'rotary_position_emb' -> name
 
   def setup(self) -> None:

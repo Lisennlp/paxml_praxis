@@ -712,6 +712,9 @@ def configure_gpt3_task(
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
 
+    if hasattr(cls, 'ROTARY_BASE_SCALE'):  # lsp
+      transformer_layer_p.tr_atten_tpl.rotary_base_scale = cls.ROTARY_BASE_SCALE
+
 #================================================================================================
     if hasattr(cls, 'MGATE'):  # lsp
       transformer_layer_p.tr_fflayer_tpl.mgate = cls.MGATE
@@ -3056,6 +3059,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
               }
     DATA_FUNC = extract_v3p5_longdata_files
     QUERY_CHUNK_SIZE = 512  # 2048: 0.0365step/s
+    ROTARY_BASE_SCALE = 50.0
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

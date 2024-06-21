@@ -3049,8 +3049,8 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     # LR_COS_MIN_RATIO = 0.1
     SHUFFLE_SIZE = 250000
     SHUFFLE = {'train': True, 'test': False}
-    PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 256, 1]
+    PERCORE_BATCH_SIZE = 2
+    ICI_MESH_SHAPE = [1, 128, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     SET_MASK_BY_COND = True
     DATA_PATH = {
@@ -5480,7 +5480,7 @@ class MyDatasets(base_input.BaseInput):
       
     def yield_data(self, fname):
       ds = self._load_file_dataset(fname)
-      ds = long_ds.as_numpy_iterator()
+      ds = ds.as_numpy_iterator()
       for d in ds:
         yield d
 
@@ -5498,13 +5498,13 @@ class MyDatasets(base_input.BaseInput):
             long_fnames = [f for f in fname if '.long' in f]
             short_fnames = [f for f in fname if '.short' in f]
 
-            long_ds = yield_data(long_fnames)
-            short_ds = yield_data(short_fnames)
+            long_ds = self.yield_data(long_fnames)
+            short_ds = self.yield_data(short_fnames)
 
             while True:  # 直到数据迭代完
-                yield long_ds
-                yield short_ds
-                yield long_ds
+                yield next(long_ds)
+                yield next(short_ds)
+                yield next(long_ds)
                 self.step_in_file += 1
                 
             self.meta_dict["file_in_data"] += 1

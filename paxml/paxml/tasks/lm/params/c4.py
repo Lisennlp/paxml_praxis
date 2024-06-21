@@ -3047,10 +3047,10 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     # LR_COS_DECAY_START = LR_COS_WARMUP + 1
     # LR_COS_DECAY_END = 440000  # 100B tokens
     # LR_COS_MIN_RATIO = 0.1
-    SHUFFLE_SIZE = 50000
+    SHUFFLE_SIZE = 250000
     SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 4, 1]
+    ICI_MESH_SHAPE = [1, 256, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     SET_MASK_BY_COND = True
     DATA_PATH = {

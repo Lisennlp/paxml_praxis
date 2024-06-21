@@ -5446,6 +5446,10 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
+    # def multi_load_file_dataset(self, fname):
+    #     long_fnames = [f for f in fname if '.long' in f]
+    #     long_ds = self._load_file_dataset()
+
     def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
@@ -5472,6 +5476,12 @@ class MyDatasets(base_input.BaseInput):
         ds = ds.prefetch(tf.data.AUTOTUNE)
         if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix
         return ds
+      
+    def yield_data(self, fname):
+      ds = self._load_file_dataset(fname)
+      ds = long_ds.as_numpy_iterator()
+      for d in ds:
+        yield d
 
     def load_tfrecord_dataset(self, fnames):
         tf.random.set_seed(self.train_seed)
@@ -5483,12 +5493,19 @@ class MyDatasets(base_input.BaseInput):
         for n in range(file_in_data, N, 1):
             fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
             self.meta_dict["cur_files"] = fname
-            ds = self._load_file_dataset(fname)
-            ds = ds.as_numpy_iterator()
-            for batch in ds:
-                # self.meta_dict["step_in_file"] += 1  # XD fix
+
+            long_fnames = [f for f in fname if '.long' in f]
+            short_fnames = [f for f in fname if '.short' in f]
+
+            long_ds = yield_data(long_fnames)
+            short_ds = yield_data(short_fnames)
+
+            while True:  # 直到数据迭代完
+                yield long_ds
+                yield short_ds
+                yield long_ds
                 self.step_in_file += 1
-                yield batch
+                
             self.meta_dict["file_in_data"] += 1
             # self.meta_dict["step_in_file"] = 0  # XD fix
             self.step_in_file = 0

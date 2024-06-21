@@ -3060,6 +3060,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     DATA_FUNC = extract_v3p5_longdata_files
     QUERY_CHUNK_SIZE = 512  # 2048: 0.0365step/s
     ROTARY_BASE_SCALE = 50.0
+    ITER_FILE_NUMS = 2000
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

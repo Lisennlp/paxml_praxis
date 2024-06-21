@@ -35,7 +35,7 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/h
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
 TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
-SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
+SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/4k_32k_processed.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
 TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b;B=19
@@ -50,7 +50,7 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/h
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
 TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a
-SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
+SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/4k_32k_processed.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
 TPU_NAME=llm-jax-v5p-256-10; ZONE=us-east5-a;B=19

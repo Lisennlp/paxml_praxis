@@ -149,16 +149,16 @@ def compute_attention_masks_for_fprop(
       cross_attention_mask = jnp.minimum(cross_attention_mask,
                                          cross_segment_mask)
 
+
   # lsp: 在这做一个基于32k或者4k的attention mask，之后如果遇到小的windows，再做一次。
-  t = attention_mask.shape[1]
-  if max_window_size is None:
-    max_window_size = t
-  logging.info(f'max_window_size33: {max_window_size}')
-  large_negative_number = py_utils.get_large_negative_number(attention_mask.dtype)
-  col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
-  row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
-  window_mask = (col_idx + max_window_size <= row_idx).astype(attention_mask.dtype) * large_negative_number
-  attention_mask = jnp.minimum(attention_mask, window_mask)
+  if max_window_size is not None:
+    t = attention_mask.shape[1]
+    logging.info(f'max_window_size33: {max_window_size}')
+    large_negative_number = py_utils.get_large_negative_number(attention_mask.dtype)
+    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
+    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
+    window_mask = (col_idx + max_window_size <= row_idx).astype(attention_mask.dtype) * large_negative_number
+    attention_mask = jnp.minimum(attention_mask, window_mask)
 
   return attention_mask, cross_attention_mask
 

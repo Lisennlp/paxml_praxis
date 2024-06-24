@@ -879,13 +879,14 @@ class BaseEvalProgram(Program):
     per_example_scores = []
 
     step_num = 0
+    logging.info(f'_eval_num_steps: {self._eval_num_steps}')
     # self._eval_num_steps < 0 indicates running until input out of range.
     while self._eval_num_steps < 0 or step_num < self._eval_num_steps:
       try:
         eval_inputs = self.eval_input.get_next_padded()
       except (tf.errors.OutOfRangeError, StopIteration):
-        if self._eval_num_steps > 0:
-          raise
+        # if self._eval_num_steps > 0:
+        #   raise
         logging.info('Data exhausted (%s) after %d steps', self._name, step_num)
         self.eval_input.reset()
         break

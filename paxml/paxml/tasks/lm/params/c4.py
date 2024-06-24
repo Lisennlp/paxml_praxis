@@ -3058,9 +3058,9 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
               'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0619',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 2, 2048: 0.0365step/s   512: 0.044 step/s
+    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
-    ITER_FILE_NUMS = 2000
+    ITER_FILE_NUMS = 4000
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

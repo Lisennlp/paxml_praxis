@@ -3040,27 +3040,29 @@ class PileDCSlimLlama7B4Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
-    NUM_LAYERS=48
+    NUM_LAYERS=4
     MAX_SEQ_LEN = 32769
     LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
     # LR_COS_WARMUP = 2000
     # LR_COS_DECAY_START = LR_COS_WARMUP + 1
     # LR_COS_DECAY_END = 440000  # 100B tokens
     # LR_COS_MIN_RATIO = 0.1
-    SHUFFLE_SIZE = 250000
+    SHUFFLE_SIZE = 50000
     SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 128, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     SET_MASK_BY_COND = True
     DATA_PATH = {
-              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0619',
-              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0619',
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
+    QUERY_CHUNK_SIZE = 4096  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
     ITER_FILE_NUMS = 4000
+    CHECKPOINT_EVERY_N_STEPS = 100
+    EVAL_INTERVAL_STEPS = 200
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register
@@ -5451,7 +5453,7 @@ class MyDatasets(base_input.BaseInput):
     #     long_fnames = [f for f in fname if '.long' in f]
     #     long_ds = self._load_file_dataset()
 
-    def _load_file_dataset(self, fname):
+    def _load_file_dataset(self, fname, step_in_file):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
@@ -5475,11 +5477,11 @@ class MyDatasets(base_input.BaseInput):
         # ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
-        if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix
+        if step_in_file: ds = ds.skip(step_in_file)  # XD fix
         return ds
       
-    def yield_data(self, fname):
-      ds = self._load_file_dataset(fname)
+    def yield_data(self, fname, step_in_file):
+      ds = self._load_file_dataset(fname, step_in_file)
       ds = ds.as_numpy_iterator()
       for d in ds:
         yield d
@@ -5498,12 +5500,22 @@ class MyDatasets(base_input.BaseInput):
             long_fnames = [f for f in fname if '.long' in f]
             short_fnames = [f for f in fname if '.short' in f]
 
-            long_ds = self.yield_data(long_fnames)
-            short_ds = self.yield_data(short_fnames)
+            a_per3 = self.step_in_file // 3
+            b_per3 = self.step_in_file % 3
+            long_b = 1 if b_per3 > 0 else 0
+            short_b = 1 if b_per3 == 2 else 0
+
+            long_skip = a_per3 * 2 + long_b
+            short_skip = a_per3 * 1 + short_b
+
+            long_ds = self.yield_data(long_fnames, long_skip)
+            short_ds = self.yield_data(short_fnames, short_skip)
 
             while True:  # 直到数据迭代完
                 yield next(long_ds)
+                self.step_in_file += 1
                 yield next(short_ds)
+                self.step_in_file += 1
                 yield next(long_ds)
                 self.step_in_file += 1
                 

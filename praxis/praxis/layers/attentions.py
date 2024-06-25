@@ -2794,7 +2794,6 @@ class DotProductAttention(base_layer.BaseLayer):
         #     atten_mask = atten_mask.at[eos_sum > 0, :, :offset].set(large_negative_number) # 因为eos_sum > 0的shape不固定，因此在经过编译后，不能这么写。
         #     atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
         # logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
-
             atten_masks = []
             for i in range(b):
               v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0

@@ -281,7 +281,7 @@ class TransformerLm(base_layer.BaseLayer):
   model_dims: int = 0
   stacked_transformer_tpl: LayerTpl = template_field(
       transformers.StackedTransformer
-  )
+  )  # StackedTransformerRepeat
   early_stacked_transformer_tpl: LayerTpl = None  # XD
   softmax_tpl: LayerTpl = template_field(
       embedding_softmax.SharedEmbeddingSoftmax
@@ -780,12 +780,11 @@ class TransformerLm(base_layer.BaseLayer):
     logging.info(f'set_mask_by_cond: {self.set_mask_by_cond}')
     if self.set_mask_by_cond:
       # ======================================32k long context max window size set==================================================
-      eos_num = (inputs[0] == 151643).sum() 
-      # lsp: 条件判断的两个函数的返回值必须具有相同的shape 和 dtype. 如果检测到多个eos，则说明是short text，则设置窗口为4k，否则为32k
-      max_window_size = jax.lax.cond(eos_num > 0, lambda x: 4096, lambda x: 32768, operand=None)
-      self.add_summary('[lsp]max_window_size', max_window_size, verbosity=3)  # XD
+      eos_num = (inputs == 151643).sum(0) 
+      eos_cond = jnp.where(eos_num > 0, 1, 0)
+      self.add_summary('[lsp]eos_cond_mean', eos_cond.mean(), verbosity=3)  # XD
     else:
-      max_window_size = None
+      eos_cond = None
       # ============================================================================================================================
 
     inputs = self._prepare_input(
@@ -821,8 +820,8 @@ class TransformerLm(base_layer.BaseLayer):
       inputs = self.early_transformer(
         inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos)
     output = self.transformer(
-        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, max_window_size=max_window_size
-    )
+        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, eos_cond=eos_cond
+    )  # StackedTransformerRepeated
 
     # Final layer norm
     if self.final_ln_tpl is not None:

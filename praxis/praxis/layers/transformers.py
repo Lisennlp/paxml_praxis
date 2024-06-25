@@ -88,7 +88,6 @@ def compute_attention_masks_for_fprop(
     cross_paddings: Optional[JTensor] = None,
     cross_segment_mask: Optional[JTensor] = None,
     fold_padding_with_segment_mask: Optional[bool] = False,
-    max_window_size: Optional[int] = None,  # lsp
 ) -> Tuple[JTensor, Union[JTensor, None]]:
   """Computes attention mask from paddings, segment masks etc for fprop.
 
@@ -148,17 +147,6 @@ def compute_attention_masks_for_fprop(
     if cross_segment_mask is not None:
       cross_attention_mask = jnp.minimum(cross_attention_mask,
                                          cross_segment_mask)
-
-
-  # lsp: 在这做一个基于32k或者4k的attention mask，之后如果遇到小的windows，再做一次。
-  if max_window_size is not None:
-    t = attention_mask.shape[1]
-    logging.info(f'max_window_size33: {max_window_size}')
-    large_negative_number = py_utils.get_large_negative_number(attention_mask.dtype)
-    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
-    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
-    window_mask = (col_idx + max_window_size <= row_idx).astype(attention_mask.dtype) * large_negative_number
-    attention_mask = jnp.minimum(attention_mask, window_mask)
 
   return attention_mask, cross_attention_mask
 
@@ -1415,7 +1403,9 @@ class Transformer(base_layer.BaseLayer):
       cross_inputs: Optional[JTensor] = None,
       cross_attention_mask: Optional[JTensor] = None,
       segment_pos: Optional[JTensor] = None,
-      segment_ids: Optional[JTensor] = None) -> Tuple[JTensor, JTensor]:
+      segment_ids: Optional[JTensor] = None,
+      eos_cond: Optional[JTensor] = None,
+    ) -> Tuple[JTensor, JTensor]:  # gpt类模型没有传，为none
     """Transformer decoder layer.
 
     Args:
@@ -1463,7 +1453,8 @@ class Transformer(base_layer.BaseLayer):
         inputs_normalized,
         atten_mask=attention_mask,
         query_segment_pos=segment_pos,
-        key_segment_pos=segment_pos)
+        key_segment_pos=segment_pos,
+        eos_cond=eos_cond,) # lsp
     atten_probs = NestedMap(self_atten=self_atten_probs)
 
     self.add_summary('attention_output_rms', _rms(atten_output), verbosity=4)
@@ -1870,7 +1861,7 @@ class StackedTransformer(base_layer.BaseLayer):
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
                segment_pos: Optional[JTensor] = None,
-               max_window_size: Optional[int] = None,  # lsp
+               eos_cond: Optional[JTensor] = None,
                ) -> JTensor:
     """Stacked Transformer layer.
 
@@ -1909,7 +1900,6 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_paddings,
           cross_segment_mask,
           fold_padding_with_segment_mask=self.fold_padding_with_segment_mask,
-          max_window_size=max_window_size,
       )
     else:
       attention_mask = None
@@ -1927,6 +1917,7 @@ class StackedTransformer(base_layer.BaseLayer):
         cross_inputs,
         cross_attention_mask,
         segment_pos,
+        eos_cond,
     ):
       x_out, _ = transformer(
           x_in,
@@ -1935,6 +1926,7 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_inputs,
           cross_attention_mask,
           segment_pos=segment_pos,
+          eos_cond=eos_cond,
       )
       return x_out
 
@@ -1957,6 +1949,7 @@ class StackedTransformer(base_layer.BaseLayer):
           cross_inputs,
           cross_attention_mask,
           segment_pos,
+          eos_cond,
       )
       x_out = checkpoint_name(x_out, 'transformer_layer_out')
     return x_out
@@ -2139,7 +2132,7 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
                cross_paddings: Optional[JTensor] = None,
                cross_segment_mask: Optional[JTensor] = None,
                segment_pos: Optional[JTensor] = None,
-               max_window_size: Optional[int] = None,  # lsp
+               eos_cond: Optional[JTensor] = None,
                ) -> JTensor:
     """Stacked Transformer layer.
 
@@ -2160,11 +2153,8 @@ class StackedTransformerRepeated(base_layer.BaseLayer):
     """
 
     # TODO(zhangqiaorjc): Use positional args until nn.scan supports kwargs.
-    logging.info(f'max_window_size444a: {max_window_size}')
-    logging.info(f'max_window_size444aTrueorFalse: {max_window_size is None}')
-
     out = self.repeat_layer(inputs, paddings, segment_mask, cross_inputs,
-                            cross_paddings, cross_segment_mask, segment_pos, max_window_size)
+                            cross_paddings, cross_segment_mask, segment_pos, eos_cond)
 
     return out
 

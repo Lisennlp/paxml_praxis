@@ -3052,7 +3052,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     SHUFFLE_SIZE = 50000
     SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 8, 1]
+    ICI_MESH_SHAPE = [1, 4, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     SET_MASK_BY_COND = True
     DATA_PATH = {
@@ -3060,7 +3060,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
               'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
+    QUERY_CHUNK_SIZE = 2048  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
     ITER_FILE_NUMS = 4000
     CHECKPOINT_EVERY_N_STEPS = 100
@@ -5362,54 +5362,46 @@ class MyDatasets(base_input.BaseInput):
     batch_size: int = 8
     seq_len: int = 2048
     repeat: int = 1
-    train_seed: int = 9876
+    train_seed: int = 1234
     task_features: Optional[dict] = None
     shuffle_buffer_size: Optional[int] = None
     pad_id: int = 0
     drop_remainder: bool = True
-    iter_file_nums: int = 2 # 100  500 steps/file
+    iter_file_nums: int = 100 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
     only_eval: bool = False
-    zero_loss: bool = True
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
 
         if not self.meta_dict or self.only_eval:
-            self.meta_dict = {}
-            self.init_meta()
+            self.meta_dict = {
+                "seed": self.train_seed,
+                "cur_files": [],
+                "file_in_data": 0,
+                "step_in_file": 0,
+                "iter_file_nums": self.iter_file_nums,
+                "checkpoint_step": None,
+            }
+            self.step_in_file = 0  # XD fix
         else:
             if self.meta_dict["file_in_data"] != 0:
                 assert self.meta_dict["iter_file_nums"] == self.iter_file_nums, print(
                     f'iter_file_nums in meta_dict is not equal to cur args. => {self.meta_dict["iter_file_nums"]}≠'
                     f" {self.iter_file_nums}"
                 )
-            self.step_in_file = self.meta_dict.get('step_in_file')  # XD fix
+            self.step_in_file = self.meta_dict['step_in_file']  # XD fix
         logging.info(f'meta_dict: {self.meta_dict}')
         self.train_seed = self.meta_dict['seed']
         self.dataset = self.load_tfrecord_dataset(fnames=self.path)
         self._peek = None
         self._state_before_peek = None
-
-    def init_meta(self):
-        self.meta_dict = {
-                "seed": self.train_seed,
-                "cur_files": self.meta_dict.get('cur_files', []),
-                "file_in_data": 0,
-                "step_in_file": 0,
-                "iter_file_nums": self.iter_file_nums,
-                "checkpoint_step": self.meta_dict.get('checkpoint_step', None),
-            }
-        self.step_in_file = 0
+        self.label_flag = 0
 
  #   def peek_padded(self):
   #      return self.get_next_padded()
-
-    def reset(self):
-        self.init_meta()
-        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def get_next_padded(self):
         if self._peek is not None:
@@ -5427,7 +5419,7 @@ class MyDatasets(base_input.BaseInput):
         )
 
     def get_global_batch_size(self, train_input):
-        # logging.info(f"train_input: {train_input} type: {type(train_input)}")
+        logging.info(f"train_input: {train_input} type: {type(train_input)}")
         return self.batch_size * self.num_infeed_hosts
 
     def _parse_function(self, example_proto):
@@ -5437,16 +5429,28 @@ class MyDatasets(base_input.BaseInput):
             t = example[name]
             if t.dtype == tf.int64:
                 t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)[ :self.seq_len]
+            example[name] = tf.sparse.to_dense(t, default_value=0)
         return example
+
+    def reset(self) -> None:
+        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
 
     def convert(self, data):
         seq_len = self.seq_len
         model_needed_inputs = NestedMap()
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
+        logging.info(f'process index {jax.process_index()} load input_ids: {model_needed_inputs.ids}')
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
-        key = 'labels' if "labels" in data else 'input_ids'
-        weights = data[key] >= 0 if self.zero_loss else data[key] > 0
+
+        # lsp: 第一次打印数据
+        if self.label_flag == 0:
+            logging.info(f'=================data:\n{data}')
+            self.label_flag = 1
+
+        if "labels" in data:
+            weights = data["labels"] > 0
+        else:
+            weights = data["input_ids"] >= 0
         model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)
@@ -5454,22 +5458,19 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
         return model_needed_inputs
 
-    # def multi_load_file_dataset(self, fname):
-    #     long_fnames = [f for f in fname if '.long' in f]
-    #     long_ds = self._load_file_dataset()
-
-    def _load_file_dataset(self, fname, step_in_file):
+    def _load_file_dataset(self, fname):
         tf.random.set_seed(self.train_seed)
         ds = tf.data.Dataset.from_tensor_slices(fname)
         ds = ds.apply(tf.data.TFRecordDataset)
         # shard host data
         process_index = jax.process_index()
-        # 在这里进行shard的话，不同的pod在相同的batch_size时，拿到的数据不一致
-        ds = ds.shard(self.num_infeed_hosts, process_index)
         # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
+        # ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
         if self.shuffle_buffer_size is not None:
+            logging.info(f'[lsp]shuffle_buffer_size: {self.shuffle_buffer_size}')
             ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
+        # padded_shapes = {key: self.seq_len for key in self.task_features}
         padded_shapes = {key: self.seq_len for key in self.task_features}
         padding_values = {key: self.pad_id for key in self.task_features}
         ds = ds.padded_batch(
@@ -5478,18 +5479,10 @@ class MyDatasets(base_input.BaseInput):
             padding_values=padding_values,
             drop_remainder=True,
         )
-        # lsp: batch之后进行shard。如果不进行shuffle，在batch化之前shard也行
-        # ds = ds.shard(self.num_infeed_hosts, process_index)
         ds = ds.map(self.convert)
         ds = ds.prefetch(tf.data.AUTOTUNE)
-        if step_in_file: ds = ds.skip(step_in_file)  # XD fix
+        if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix
         return ds
-      
-    def yield_data(self, fname, step_in_file):
-      ds = self._load_file_dataset(fname, step_in_file)
-      ds = ds.as_numpy_iterator()
-      for d in ds:
-        yield d
 
     def load_tfrecord_dataset(self, fnames):
         tf.random.set_seed(self.train_seed)
@@ -5501,29 +5494,12 @@ class MyDatasets(base_input.BaseInput):
         for n in range(file_in_data, N, 1):
             fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
             self.meta_dict["cur_files"] = fname
-
-            long_fnames = [f for f in fname if '.long' in f]
-            short_fnames = [f for f in fname if '.short' in f]
-
-            a_per3 = self.step_in_file // 3
-            b_per3 = self.step_in_file % 3
-            long_b = 1 if b_per3 > 0 else 0
-            short_b = 1 if b_per3 == 2 else 0
-
-            long_skip = a_per3 * 2 + long_b
-            short_skip = a_per3 * 1 + short_b
-
-            long_ds = self.yield_data(long_fnames, long_skip)
-            short_ds = self.yield_data(short_fnames, short_skip)
-
-            while True:  # 直到数据迭代完
-                yield next(long_ds)
+            ds = self._load_file_dataset(fname)
+            ds = ds.as_numpy_iterator()
+            for batch in ds:
+                # self.meta_dict["step_in_file"] += 1  # XD fix
                 self.step_in_file += 1
-                yield next(short_ds)
-                self.step_in_file += 1
-                yield next(long_ds)
-                self.step_in_file += 1
-                
+                yield batch
             self.meta_dict["file_in_data"] += 1
             # self.meta_dict["step_in_file"] = 0  # XD fix
             self.step_in_file = 0

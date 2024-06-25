@@ -2700,6 +2700,7 @@ class DotProductAttention(base_layer.BaseLayer):
       relative_bias: Optional[JTensor] = None,
       query_vec: Optional[JTensor] = None,  # XD
       key_vec: Optional[JTensor] = None,  # XD
+      eos_cond: Optional[JTensor] = None,  # XD
   ) -> Tuple[JTensor, JTensor]:
     """Main attention function.
 
@@ -2977,6 +2978,7 @@ class DotProductAttention(base_layer.BaseLayer):
       atten_mask: JTensor,
       query_segment_pos: Optional[JTensor] = None,
       key_segment_pos: Optional[JTensor] = None,
+      eos_cond: Optional[JTensor] = None,
   ) -> Tuple[JTensor, JTensor]:
     """Computes the value vector given the current query output.
 
@@ -3083,7 +3085,7 @@ class DotProductAttention(base_layer.BaseLayer):
 
     encoded, atten_probs = self._dot_atten(
         query_proj, key_proj, value_proj, atten_mask, relative_bias,
-        query_vec=query_vec, key_vec=key_vec,  # xd
+        query_vec=query_vec, key_vec=key_vec,  eos_cond=eos_cond, # xd
     )
     if self.o_gate_activation_cls:  # XD
       o_gate_proj = self.o_gate(query_vec)

@@ -236,8 +236,8 @@ class Repeat(base_layer.BaseLayer):
   ) -> Any:
     """Similar to __call__, but allows a custom way to create a layer method."""
 
-    def body_fn(sub, layer_in):
-      fn = method_factory(sub)
+    def body_fn(sub, layer_in): # layer in应该是词向量，其余的参数不参与scan
+      fn = method_factory(sub) # 基于sub name获取sub模块
       if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
         layer_in, idx = layer_in
         per_layer_kw = jax.tree_map(lambda x: x[idx], per_layer_kwargs or {})
@@ -272,7 +272,7 @@ class Repeat(base_layer.BaseLayer):
 
     scan_fn = nn.scan(
         rematted_body_fn,
-        variable_axes=SCAN_VARIABLE_AXES,
+        variable_axes=SCAN_VARIABLE_AXES, # 变量scan的轴
         split_rngs={PARAMS: self.is_initializing(), RANDOM: True},
         length=self.x_times,
         metadata_params={
@@ -335,6 +335,7 @@ class Repeat(base_layer.BaseLayer):
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Add scan index.
       scan_inputs = (scan_inputs, jnp.zeros((), jnp.int32))
+    # lsp: scan 输入和输出
     layer_out, intermediates = mapped_scan_fn(self.sublayer, scan_inputs)
     if per_layer_kwargs is not None or reversed_per_layer_kwargs is not None:
       # Remove scan index.

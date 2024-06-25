@@ -3052,9 +3052,9 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     # SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 128, 1]
-    # WINDOW_SIZE = [256, 32768, 256, 256]
-    NUM_LAYERS_PER_BLOCK = 2
-    WINDOW_SIZE = [256, 32768]
+    WINDOW_SIZE = [256, 32768, 256, 256]
+    # NUM_LAYERS_PER_BLOCK = 
+    # WINDOW_SIZE = [256, 32768]
     SET_MASK_BY_COND = True
     DATA_PATH = {
               'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',

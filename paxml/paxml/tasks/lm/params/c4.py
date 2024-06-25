@@ -3041,7 +3041,9 @@ class PileDCSlimLlama7B4Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     NUM_LAYERS=4
-    MAX_SEQ_LEN = 32769
+    # MAX_SEQ_LEN = 32769 // 8
+    MAX_SEQ_LEN = 4097
+
     LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
     # LR_COS_WARMUP = 2000
     # LR_COS_DECAY_START = LR_COS_WARMUP + 1
@@ -3050,7 +3052,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     SHUFFLE_SIZE = 50000
     SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 128, 1]
+    ICI_MESH_SHAPE = [1, 8, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     SET_MASK_BY_COND = True
     DATA_PATH = {
@@ -3058,11 +3060,14 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
               'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 4096  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
+    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
     ITER_FILE_NUMS = 4000
     CHECKPOINT_EVERY_N_STEPS = 100
-    EVAL_INTERVAL_STEPS = 200
+    EVAL_INTERVAL_STEPS = 100
+    EVAL_LOOP_NUM_BATCHES = 34  # RESET_FOR_EVAL=True无效
+    RESET_FOR_EVAL = False # 每次评测完整测试集, 因为，测试集 <100 batch
+
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

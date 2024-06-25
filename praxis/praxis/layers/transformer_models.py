@@ -780,11 +780,12 @@ class TransformerLm(base_layer.BaseLayer):
     logging.info(f'set_mask_by_cond: {self.set_mask_by_cond}')
     if self.set_mask_by_cond:
       # ======================================32k long context max window size set==================================================
-      eos_num = (inputs == 151643).sum(0) 
-      eos_cond = jnp.where(eos_num > 0, 1, 0)
-      self.add_summary('[lsp]eos_cond_mean', eos_cond.mean(), verbosity=3)  # XD
+      eos_sum = (inputs == 151643).sum(1) 
+      eos_sum = jnp.where(eos_sum > 0, 1, 0) # batch
+      logging.info(f'eos_sum: {eos_sum.shape}')
+      self.add_summary('[lsp]eos_sum_mean', eos_sum.mean(), verbosity=3)  # XD
     else:
-      eos_cond = None
+      eos_sum = None
       # ============================================================================================================================
 
     inputs = self._prepare_input(
@@ -820,7 +821,7 @@ class TransformerLm(base_layer.BaseLayer):
       inputs = self.early_transformer(
         inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos)
     output = self.transformer(
-        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, eos_cond=eos_cond
+        inputs, paddings, segment_mask=segment_mask, segment_pos=segment_pos, eos_sum=eos_sum
     )  # StackedTransformerRepeated
 
     # Final layer norm

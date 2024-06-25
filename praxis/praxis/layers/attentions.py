@@ -211,7 +211,7 @@ def convert_paddings_to_mask(
 #   return m[jnp.newaxis, jnp.newaxis, ...]
 
 # lsp
-def _compute_slide_atten_mask(w, window_size, length: int, dtype: jnp.dtype = jnp.bfloat16) -> JTensor:
+def _compute_slide_atten_mask(w, window_size, length: int, dtype: jnp.dtype = jnp.bfloat16, squeeze: bool = False) -> JTensor:
   """
   w: query chunk size
   window_size: window size
@@ -242,7 +242,10 @@ def _compute_slide_atten_mask(w, window_size, length: int, dtype: jnp.dtype = jn
   # m = m * large_negative_number or as follow:
   m = jnp.where((m > 0.5), large_negative_number, m)
   # bnts
-  return m[jnp.newaxis, jnp.newaxis, ...]
+  if squeeze:
+    return m
+  else:
+    return m[jnp.newaxis, jnp.newaxis, ...]
 
 
 def shift_1d(inputs: JTensor, offset: int, axis: int):
@@ -2700,7 +2703,7 @@ class DotProductAttention(base_layer.BaseLayer):
       relative_bias: Optional[JTensor] = None,
       query_vec: Optional[JTensor] = None,  # XD
       key_vec: Optional[JTensor] = None,  # XD
-      eos_cond: Optional[JTensor] = None,  # XD
+      eos_sum: Optional[JTensor] = None,  # XD
   ) -> Tuple[JTensor, JTensor]:
     """Main attention function.
 
@@ -2719,6 +2722,7 @@ class DotProductAttention(base_layer.BaseLayer):
       encoded: JTensor of shape [B, T, N, H].
       atten_probs: JTensor of shape [B, N, T, S].
     """
+    logging.info(f'eos_sum11: {eos_sum.shape}')  # (batch, )
     query = self._shard_blnh(query)
     if self.num_kv_heads == 1:
       key = self._shard_blh(key)
@@ -2763,18 +2767,42 @@ class DotProductAttention(base_layer.BaseLayer):
           pre_proj_dw_args = self.dyn_w_pre_proj(query_vec, key_vec)
         if hasattr(self, 'dyn_w_post_proj'):
           post_proj_dw_args = self.dyn_w_post_proj(query_vec, key_vec)
-
+      
+      large_negative_number = py_utils.get_large_negative_number(query.dtype)
       if self.window_size is not None and atten_mask is not None:  # adapted from limited_context_mask
         logging.info('Add slide atten mask on atten mask with window size......')
-        large_negative_number = py_utils.get_large_negative_number(atten_mask.dtype)
         col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
         row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
       elif atten_mask is None and not self.pre_compute_atten_mask:
         logging.info(f'Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is {self.pre_compute_atten_mask}......')
-      # lsp: 不同window size的mask矩阵有点不同，其实如果每层的window size相同，这个mask可以提前计算好传进来.
-        atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+      # lsp: 不同window size的mask矩阵有点不同
+        if eos_sum is None:
+          logging.info(f'eos_sum is None')
+          atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+        else:
+          logging.info(f'eos_sum is not None')
+          if self.window_size == 256:
+            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+          else:
+            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+            offset = 1 - 4096 - self.query_chunk_size
+            # atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
+            # atten_mask = jax.lax.broadcast(atten_mask, (b, )) # bts
+            # 注意，写死了
+        #     atten_mask = atten_mask.at[eos_sum > 0, :, :offset].set(large_negative_number) # 因为eos_sum > 0的shape不固定，因此在经过编译后，不能这么写。
+        #     atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
+        # logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
+
+            atten_masks = []
+            for i in range(b):
+              v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0
+              _atten_mask = atten_mask.at[..., :offset].set(v)
+              atten_masks.append(_atten_mask)
+            atten_mask = jnp.concatenate(atten_masks, axis=0)
+        logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
+
       else:
         pass
         # raise ValueError(f'Paramers set error, please check pre_compute_atten_mask and atten_mask is None or not......')
@@ -2978,7 +3006,7 @@ class DotProductAttention(base_layer.BaseLayer):
       atten_mask: JTensor,
       query_segment_pos: Optional[JTensor] = None,
       key_segment_pos: Optional[JTensor] = None,
-      eos_cond: Optional[JTensor] = None,
+      eos_sum: Optional[JTensor] = None,
   ) -> Tuple[JTensor, JTensor]:
     """Computes the value vector given the current query output.
 
@@ -3085,7 +3113,7 @@ class DotProductAttention(base_layer.BaseLayer):
 
     encoded, atten_probs = self._dot_atten(
         query_proj, key_proj, value_proj, atten_mask, relative_bias,
-        query_vec=query_vec, key_vec=key_vec,  eos_cond=eos_cond, # xd
+        query_vec=query_vec, key_vec=key_vec,  eos_sum=eos_sum, # xd
     )
     if self.o_gate_activation_cls:  # XD
       o_gate_proj = self.o_gate(query_vec)

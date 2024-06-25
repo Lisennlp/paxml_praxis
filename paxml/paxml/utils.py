@@ -205,33 +205,6 @@ def extract_v3p5_data_files(task, mode):
     return train_test_dataset
 
 
-def extract_v3p5_longdata_files(task, mode):
-    random.seed(9876)
-    client = storage.Client()
-    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-    path = task.DATA_PATH[mode].replace('gs://', '')
-    path_parts = path.split('/')
-    bucket_name = path_parts[0]
-    directory_path = '/'.join(path_parts[1:])
-    directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
-    # logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
-    train_files, valid_files = [], []
-    for blob in client.list_blobs(bucket_name, prefix=directory_path):
-        path = f'gs://{os.path.join(bucket_name, blob.name)}'
-        if 'valid' in path:
-            valid_files.append(path)
-        else:
-            train_files.append(path)
-    random.shuffle(train_files)
-    # train_files = sorted(train_files)
-    valid_files = sorted(valid_files)
-    train_test_dataset = {"test": valid_files, "train": train_files}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    # logging.info(f'Train file: {train_files}')
-    # logging.info(f'Valid file: {valid_files}')
-    return train_test_dataset
-
-
 # def extract_v3p5_longdata_files(task, mode):
 #     random.seed(9876)
 #     client = storage.Client()
@@ -243,25 +216,55 @@ def extract_v3p5_longdata_files(task, mode):
 #     directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
 #     # logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
 #     train_files, valid_files = [], []
-#     train_long_files, train_short_files = [], []
-#     # valid_long_files, valid_short_files = [], []
 #     for blob in client.list_blobs(bucket_name, prefix=directory_path):
 #         path = f'gs://{os.path.join(bucket_name, blob.name)}'
 #         if 'valid' in path:
 #             valid_files.append(path)
 #         else:
-#             if '.long' in path:
-#                 train_long_files.append(path)
-#             else:
-#                 train_short_files.append(path)
-#     # file size short：long = 2: 1, 为了保证short的token: long = 3: 7, 因此 short 取 (1 / 2) * (3 / 7) = 3 / 14 ≈ 1 / 5
-#     # k = len(train_short_files) // 1
-#     # selected_short_files = random.sample(train_short_files, k=k)
-#     train_files = selected_short_files + train_long_files
+#             train_files.append(path)
 #     random.shuffle(train_files)
+#     # train_files = sorted(train_files)
 #     valid_files = sorted(valid_files)
-
-#     logging.info(f'valid files num: {len(valid_files)} train files num: {len(train_files)}')
-
 #     train_test_dataset = {"test": valid_files, "train": train_files}
+#     logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
+#     # logging.info(f'Train file: {train_files}')
+#     # logging.info(f'Valid file: {valid_files}')
 #     return train_test_dataset
+
+
+def extract_v3p5_longdata_files(task, mode):
+    # random.seed(9876)
+    client = storage.Client()
+    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
+    path = task.DATA_PATH[mode].replace('gs://', '')
+    path_parts = path.split('/')
+    bucket_name = path_parts[0]
+    directory_path = '/'.join(path_parts[1:])
+    directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
+    # logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
+    train_files, valid_files = [], []
+    train_long_files, train_short_files = [], []
+    # valid_long_files, valid_short_files = [], []
+    for blob in client.list_blobs(bucket_name, prefix=directory_path):
+        path = f'gs://{os.path.join(bucket_name, blob.name)}'
+        if 'valid' in path:
+            valid_files.append(path)
+        else:
+            if '.long' in path:
+                train_long_files.append(path)
+            else:
+                train_short_files.append(path)
+    # file size short：long = 1.5: 1, 为了保证short的token: long = 3: 7, 因此 short 取 (1 / 1.5) * (3 / 7) = 2 / 7
+    # k = len(train_short_files) // 1
+    short_k = min(3 * len(train_long_files) // 14, len(train_short_files))
+    selected_short_files = random.sample(train_short_files, k=short_k)
+    train_files = selected_short_files + train_long_files
+    # train_files = selected_short_files
+    logging.info(f'selected_short_files: {len(selected_short_files)} train_long_files: {len(train_long_files)}')
+    random.shuffle(train_files)
+    valid_files = sorted(valid_files)
+    logging.info(f'valid files: {valid_files} train files num: {train_files}')
+    logging.info(f'valid files num: {len(valid_files)} train files num: {len(train_files)}')
+
+    train_test_dataset = {"test": valid_files, "train": train_files}
+    return train_test_dataset

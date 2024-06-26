@@ -784,6 +784,8 @@ class TransformerLm(base_layer.BaseLayer):
       eos_sum = jnp.where(eos_sum > 0, 1, 0) # batch
       logging.info(f'eos_sum: {eos_sum.shape}')
       self.add_summary('[lsp]eos_sum_mean', eos_sum.mean(), verbosity=3)  # XD
+      self.add_summary('[lsp]eos_sum', eos_sum.sum(), verbosity=3)  # XD
+
     else:
       eos_sum = None
       # ============================================================================================================================

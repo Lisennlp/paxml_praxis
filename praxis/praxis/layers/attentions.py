@@ -2722,6 +2722,12 @@ class DotProductAttention(base_layer.BaseLayer):
       encoded: JTensor of shape [B, T, N, H].
       atten_probs: JTensor of shape [B, N, T, S].
     """
+
+    def update_mask(v, atten_mask):
+        offset = 1 - 4096 - self.query_chunk_size
+        atten_mask = atten_mask.at[..., :offset].set(v)
+        return atten_mask
+
     logging.info(f'eos_sum11: {eos_sum.shape}')  # (batch, )
     query = self._shard_blnh(query)
     if self.num_kv_heads == 1:
@@ -2786,20 +2792,27 @@ class DotProductAttention(base_layer.BaseLayer):
           if self.window_size == 256:
             atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
           else:
-            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
-            offset = 1 - 4096 - self.query_chunk_size
-            # atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
-            # atten_mask = jax.lax.broadcast(atten_mask, (b, )) # bts
+            # offset = 1 - 4096 - self.query_chunk_size
+            ap = self.activation_split_dims_mapping
+            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
+            atten_mask = jax.lax.broadcast(atten_mask, (b, )) # b x qchunk x s
+            shard = [ap.blnh[0], None, None]
+            # atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
             # 注意，写死了
         #     atten_mask = atten_mask.at[eos_sum > 0, :, :offset].set(large_negative_number) # 因为eos_sum > 0的shape不固定，因此在经过编译后，不能这么写。
         #     atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
         # logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
-            atten_masks = []
-            for i in range(b):
-              v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0
-              _atten_mask = atten_mask.at[..., :offset].set(v)
-              atten_masks.append(_atten_mask)
-            atten_mask = jnp.concatenate(atten_masks, axis=0)
+            # eos_sum = jnp.array([1, 0, 1, 0])
+            eos_sum_mask = large_negative_number * eos_sum
+            atten_mask = jax.vmap(update_mask, in_axes=0, out_axes=0)(eos_sum_mask, atten_mask)
+            atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
+            atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
+            # atten_masks = []
+            # for i in range(b):
+            #   v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0
+            #   _atten_mask = atten_mask.at[..., :offset].set(v)
+            #   atten_masks.append(_atten_mask)
+            # atten_mask = jnp.concatenate(atten_masks, axis=0)
         logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
 
       else:

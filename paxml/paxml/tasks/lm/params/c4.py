@@ -3024,7 +3024,7 @@ class PileDCSlimLlama7B4Kx4x256x1QuickDownLr(PileDCSlimLlama7B4Kx4x256x1):
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
-    NUM_LAYERS=4
+    NUM_LAYERS=48
     # MAX_SEQ_LEN = 32769 // 8
     MAX_SEQ_LEN = 32769
     LEARNING_RATE = 3e-4 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
@@ -3032,10 +3032,10 @@ class PileDCSlimLlama7B32Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
     # LR_COS_DECAY_START = LR_COS_WARMUP + 1
     # LR_COS_DECAY_END = 440000  # 100B tokens
     # LR_COS_MIN_RATIO = 0.1
-    # SHUFFLE_SIZE = 1000
+    SHUFFLE_SIZE = 100000
     # SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
-    ICI_MESH_SHAPE = [1, 4, 1]
+    ICI_MESH_SHAPE = [1, 16, 1]
     WINDOW_SIZE = [256, 32768, 256, 256]
     # NUM_LAYERS_PER_BLOCK = 
     # WINDOW_SIZE = [256, 32768]
@@ -3045,7 +3045,7 @@ class PileDCSlimLlama7B32Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
               'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
+    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: exceed hbm    512: 0.040  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
     # ITER_FILE_NUMS = 4000
     CHECKPOINT_EVERY_N_STEPS = 100
@@ -3053,7 +3053,7 @@ class PileDCSlimLlama7B32Kx4x256x1Mini(PileDCSlimLlama7B4Kx4x256x1):
     EVAL_LOOP_NUM_BATCHES = 34  # RESET_FOR_EVAL=True无效
     RESET_FOR_EVAL = False # 每次评测完整测试集, 因为，测试集 <100 batch
     PRE_COMPUTE_ATTEN_MASK = False
-    LM_HEAD_CHUNK_SIZE = 1024
+    LM_HEAD_CHUNK_SIZE = 512
     
 
 @experiment_registry.register
@@ -3066,18 +3066,20 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     # LR_COS_DECAY_START = LR_COS_WARMUP + 1
     # LR_COS_DECAY_END = 440000  # 100B tokens
     # LR_COS_MIN_RATIO = 0.1
-    SHUFFLE_SIZE = 500000
+    SHUFFLE_SIZE = 100000
     # SHUFFLE = {'train': True, 'test': False}
     PERCORE_BATCH_SIZE = 1
     ICI_MESH_SHAPE = [1, 128, 1]
-    WINDOW_SIZE = [256, 32769, 256, 256]
+    WINDOW_SIZE = [256, 32768, 256, 256]
+    # NUM_LAYERS_PER_BLOCK = 
+    # WINDOW_SIZE = [256, 32768]
     SET_MASK_BY_COND = True
     DATA_PATH = {
               'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids_4k_32k_0622',
               }
     DATA_FUNC = extract_v3p5_longdata_files
-    QUERY_CHUNK_SIZE = 2048  # v5p-8 per: 1, 2048: 0.0365step/s   512: 0.044  # v5p-256 per: 1,  512: 0.0434
+    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: exceed hbm    512: 0.040  # v5p-256 per: 1,  512: 0.0434
     ROTARY_BASE_SCALE = 50.0
     # ITER_FILE_NUMS = 4000
     CHECKPOINT_EVERY_N_STEPS = 100
@@ -3085,7 +3087,7 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     EVAL_LOOP_NUM_BATCHES = 34  # RESET_FOR_EVAL=True无效
     RESET_FOR_EVAL = False # 每次评测完整测试集, 因为，测试集 <100 batch
     PRE_COMPUTE_ATTEN_MASK = False
-    LM_HEAD_CHUNK_SIZE = 2048
+    LM_HEAD_CHUNK_SIZE = 512
 
 
 # lsp: v3.5 quick down lr to train 1/10 data 

@@ -2669,7 +2669,25 @@ class DotProductAttention(base_layer.BaseLayer):
     #   atten_mask = jnp.transpose(atten_mask, (0, 2, 3, 1))  # XD: BNTS->BTSN
     logits = self._cap_logits(logits)
     logits = logits.astype(jnp.float32)
-    padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
+
+    # if self.window_size > 256:
+    #   # ==================================================
+    #   mask_chunk = 8
+    #   b, n, t, s = logits.shape
+    #   atten_mask = atten_mask.reshape(1, 1, t, mask_chunk, -1)
+    #   logits = logits.reshape(b, n, t, mask_chunk, -1)
+    #   padded_logits = []
+    #   for i in range(mask_chunk):
+    #     _atten_mask = atten_mask[:, :, :, i]
+    #     _logits = logits[:, :, :, i]
+    #     _padded_logits = py_utils.apply_mask_to_logits(_logits, _atten_mask)
+    #     padded_logits.append(_padded_logits[:,:,:, jnp.newaxis])
+    #   padded_logits = jnp.concatenate(padded_logits, axis=3)
+    #   padded_logits = padded_logits.reshape(b, n, t, s)
+    # # ==================================================
+    # else:
+    #   padded_logits = py_utils.apply_mask_to_logits(logits, atten_mask)
+    padded_logits = logits
     if self.attention_extra_logit is None:
       # XD: -1 -> -2; key -> value: key may have already been turned to fp32 by float32_logits
       probs = jax.nn.softmax(padded_logits, axis=logits_exp.index('S'))#.astype(value.dtype)
@@ -2683,7 +2701,22 @@ class DotProductAttention(base_layer.BaseLayer):
     if getattr(self, 'post_proj', None) is not None:
       # mask probs similar to py_utils.apply_mask_to_logits
       min_value = py_utils.get_large_negative_number(probs.dtype)
-      probs = jnp.where((atten_mask >= min_value * 0.5), probs, 0.)
+      
+      # if self.window_size > 256:
+      #   # ==================================================
+      #     probs = probs.reshape(b, n, t, mask_chunk, -1)
+      #     new_probs = []
+      #     for i in range(mask_chunk):
+      #       _atten_mask = atten_mask[:, :, :, i]
+      #       _probs = probs[:, :, :, i]
+      #       _probs = jnp.where((_atten_mask >= min_value * 0.5), _probs, 0.)
+      #       new_probs.append(_probs[:,:,:, jnp.newaxis])
+      #     new_probs = jnp.concatenate(new_probs, axis=3)
+      #     new_probs = new_probs.reshape(b, n, t, s)
+      #     probs = new_probs
+      #   # ==================================================
+      # else:
+      #   probs = jnp.where((atten_mask >= min_value * 0.5), probs, 0.)
 
     probs = self.atten_dropout(probs)
     # if self.transpose_logits: probs = jnp.transpose(probs, (0, 3, 1, 2)) # XD: BTSN -> BNTS
@@ -2782,38 +2815,47 @@ class DotProductAttention(base_layer.BaseLayer):
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
       elif atten_mask is None and not self.pre_compute_atten_mask:
+        # atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+
         logging.info(f'Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is {self.pre_compute_atten_mask}......')
       # lsp: 不同window size的mask矩阵有点不同
-        if eos_sum is None:
-          logging.info(f'eos_sum is None')
-          atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
-        else:
-          logging.info(f'eos_sum is not None')
-          if self.window_size == 256:
-            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
-          else:
-            # offset = 1 - 4096 - self.query_chunk_size
-            ap = self.activation_split_dims_mapping
-            atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
-            atten_mask = jax.lax.broadcast(atten_mask, (b, )) # b x qchunk x s
-            shard = [ap.blnh[0], None, None]
-            # atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
-            # 注意，写死了
-        #     atten_mask = atten_mask.at[eos_sum > 0, :, :offset].set(large_negative_number) # 因为eos_sum > 0的shape不固定，因此在经过编译后，不能这么写。
+        # if eos_sum is None:
+        #   logging.info(f'eos_sum is None')
+        #   atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+        # else:
+        #   logging.info(f'eos_sum is not None')
+        #   if self.window_size == 256:
+        #     atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+        #   else:
+        #     # offset = 1 - 4096 - self.query_chunk_size
+        #     chunk = 4
+        #     per_chunk_b = b // chunk
+        #     eos_sum = eos_sum.reshape(chunk, -1)
+        #     ap = self.activation_split_dims_mapping
+        #     atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
+        #     shard = [ap.blnh[0], None, None]
+        #     # atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
+        # #     atten_mask = atten_mask.at[eos_sum > 0, :, :offset].set(large_negative_number) # 因为eos_sum > 0的shape不固定，因此在经过编译后，不能这么写。
+        # #     atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
+        # # logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
+        #     # eos_sum = jnp.array([1, 0, 1, 0])
+        #     atten_masks = []
+        #     for i in range(chunk):
+        #       _atten_mask = jax.lax.broadcast(atten_mask, (per_chunk_b, )) # b x qchunk x s
+        #       eos_sum_mask = large_negative_number * eos_sum[i]
+        #       _atten_mask = jax.vmap(update_mask, in_axes=0, out_axes=0)(eos_sum_mask, _atten_mask)
+        #       atten_masks.append(_atten_mask)
+
+        #     atten_mask = jnp.concatenate(atten_masks, axis=0)
+        #     atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
         #     atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
+        #     # atten_masks = []
+        #     # for i in range(b):
+        #     #   v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0
+        #     #   _atten_mask = atten_mask.at[..., :offset].set(v)
+        #     #   atten_masks.append(_atten_mask)
+        #     # atten_mask = jnp.concatenate(atten_masks, axis=0)
         # logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
-            # eos_sum = jnp.array([1, 0, 1, 0])
-            eos_sum_mask = large_negative_number * eos_sum
-            atten_mask = jax.vmap(update_mask, in_axes=0, out_axes=0)(eos_sum_mask, atten_mask)
-            atten_mask = base_layer.maybe_shard(atten_mask, shard, self.mesh_axis_names)
-            atten_mask = atten_mask[:, jnp.newaxis, ...] # bnts
-            # atten_masks = []
-            # for i in range(b):
-            #   v = large_negative_number * eos_sum[i]  # short赋值负无穷，long赋值0
-            #   _atten_mask = atten_mask.at[..., :offset].set(v)
-            #   atten_masks.append(_atten_mask)
-            # atten_mask = jnp.concatenate(atten_masks, axis=0)
-        logging.info(f'atten_mask: {atten_mask.shape} self.window_size: {self.window_size}')
 
       else:
         pass
@@ -2830,11 +2872,12 @@ class DotProductAttention(base_layer.BaseLayer):
         _query = query[:, start : stop]
         _key, _value = key[:, kv_start : stop], value[:, kv_start : stop]
         # lsp
-        if self.pre_compute_atten_mask:
-          _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
-            if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
-        else:
-          _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
+        # if self.pre_compute_atten_mask:
+        #   _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
+        #     if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
+        # else:
+        #   _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
+        _atten_mask = None
 
         def slice_dw(qw1, qw2, kw1, kw2, qdd, kdd):
           return (qw1[:, start : stop] if qw1 is not None else None,

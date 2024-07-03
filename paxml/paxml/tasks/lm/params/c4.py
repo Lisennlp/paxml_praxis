@@ -3090,6 +3090,37 @@ class PileDCSlimLlama7B32Kx4x256x1(PileDCSlimLlama7B4Kx4x256x1):
     PRE_COMPUTE_ATTEN_MASK = False
     LM_HEAD_CHUNK_SIZE = 512
 
+@experiment_registry.register
+class PileDCSlimLlama7B32Kx4x256x1Align(PileDCSlimLlama7B4Kx4x256x1):
+    MODEL_DIMS = 1024
+    HIDDEN_DIMS = 2816
+    NUM_HEADS = 16
+    NUM_LAYERS=24
+    MAX_SEQ_LEN = 2049
+    LEARNING_RATE = 0.0 # InternLM2 all: cosine 3e-4， yi-6B: 3e-4, yi-34B: 1.5e-4， baichuan2-7B: 2e-4。 baichuan2-14B: 1.5e-4。 qwen all: a cosine 3e-4
+    SHUFFLE_SIZE = None
+    PERCORE_BATCH_SIZE = 1
+    ICI_MESH_SHAPE = [1, 8, 1]
+    WINDOW_SIZE = [256, None]
+    NUM_LAYERS_PER_BLOCK = len(WINDOW_SIZE)
+    SET_MASK_BY_COND = False
+    DATA_PATH = {
+              'train': 'gs://jax_llm_data_us-east5/xiaomeng/v3.5/same_1000',
+              'test':  'gs://jax_llm_data_us-east5/xiaomeng/v3.5/same_1000',
+              }
+    DATA_FUNC = extract_v3p5_longdata_files
+    # query chunk 不能为None，为None就没有dc？
+    QUERY_CHUNK_SIZE = 512  # v5p-8 per: 1, 2048: exceed hbm    512: 0.036  # v5p-256 per: 1,  512: 0.0434
+    ROTARY_BASE_SCALE = 1.0
+    CHECKPOINT_EVERY_N_STEPS = 200
+    EVAL_INTERVAL_STEPS = 100000
+    EVAL_LOOP_NUM_BATCHES = 34  # RESET_FOR_EVAL=True无效
+    RESET_FOR_EVAL = False # 每次评测完整测试集, 因为，测试集 <100 batch
+    PRE_COMPUTE_ATTEN_MASK = True
+    LM_HEAD_CHUNK_SIZE = None
+    MGATE = False
+    DYNAMIC_W_HIDDEN_DIM = 64  # 
+    DYNAMIC_SQUEEZE_RATIO = 8
 
 # lsp: v3.5 quick down lr to train 1/10 data 
 @experiment_registry.register

@@ -890,7 +890,7 @@ class PositionalEmbedding(base_layer.BaseLayer):
   """
 
   min_timescale: int = 1
-  max_timescale: int = 500_000 # lsp
+  max_timescale: int = 10_000 # lsp
   embedding_dims: int = 0
 
   def __call__(

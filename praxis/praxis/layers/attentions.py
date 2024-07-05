@@ -2760,8 +2760,8 @@ class DotProductAttention(base_layer.BaseLayer):
         offset = 1 - 4096 - self.query_chunk_size
         atten_mask = atten_mask.at[..., :offset].set(v)
         return atten_mask
-
-    logging.info(f'eos_sum11: {eos_sum.shape}')  # (batch, )
+    if eos_sum is not None:
+      logging.info(f'eos_sum11: {eos_sum.shape}')  # (batch, )
     query = self._shard_blnh(query)
     if self.num_kv_heads == 1:
       key = self._shard_blh(key)

@@ -278,7 +278,6 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       train_input_pipeline: Optional[base_input.BaseInput] = None,
       return_opt: bool = True, # lsp
   ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
-
     logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
     if not return_opt:
         if self._step_to_restore is None:
@@ -291,6 +290,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         padded_global_shapes = metadata.padded_global_shapes
         unpadded_global_shapes = metadata.unpadded_global_shapes
         partition_specs = metadata.partition_specs
+        logging.info(f"metadata unpadded_global_shapes: \n\n{unpadded_global_shapes}\n\n")
+
     
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:

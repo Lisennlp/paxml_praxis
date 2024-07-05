@@ -233,7 +233,7 @@ def extract_v3p5_data_files(task, mode):
 
 
 def extract_v3p5_longdata_files(task, mode):
-    # random.seed(9876)
+    random.seed(9876)
     client = storage.Client()
     #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
     path = task.DATA_PATH[mode].replace('gs://', '')

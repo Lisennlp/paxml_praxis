@@ -2815,8 +2815,7 @@ class DotProductAttention(base_layer.BaseLayer):
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
       elif atten_mask is None and not self.pre_compute_atten_mask:
-        # atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
-
+        atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
         logging.info(f'Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is {self.pre_compute_atten_mask}......')
       # lsp: 不同window size的mask矩阵有点不同
         # if eos_sum is None:
@@ -2872,12 +2871,11 @@ class DotProductAttention(base_layer.BaseLayer):
         _query = query[:, start : stop]
         _key, _value = key[:, kv_start : stop], value[:, kv_start : stop]
         # lsp
-        # if self.pre_compute_atten_mask:
-        #   _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
-        #     if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
-        # else:
-        #   _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
-        _atten_mask = None
+        if self.pre_compute_atten_mask:
+          _atten_mask = atten_mask[:, :, start : stop, kv_start : stop] \
+            if not self.transpose_logits else atten_mask[:, start : stop, kv_start : stop, :] # [:, start : stop, :, kv_start : stop]
+        else:
+          _atten_mask = atten_mask[..., -_key.shape[1]:] if not self.transpose_logits else  atten_mask[:, :, -_key.shape[1]:]
 
         def slice_dw(qw1, qw2, kw1, kw2, qdd, kdd):
           return (qw1[:, start : stop] if qw1 is not None else None,

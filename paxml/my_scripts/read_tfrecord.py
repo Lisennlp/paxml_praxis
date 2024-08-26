@@ -46,7 +46,7 @@ ds = ds.apply(tf.data.TFRecordDataset)
 ds = ds.shard(num_infeed_hosts, 0)
 ds = ds.map(_parse_function, num_parallel_calls=tf.data.AUTOTUNE)
 if shuffle_buffer_size is not None:
-    ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
+    ds = ds.shuffle(buffer_size=shuffle_buffer_size)
 padded_shapes = {key: seq_len for key in task_features}
 padding_values = {key: pad_id for key in task_features}
 ds = ds.padded_batch(

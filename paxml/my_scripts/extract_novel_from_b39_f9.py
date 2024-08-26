@@ -30,7 +30,7 @@ from xopen import xopen
 多进程处理单个文件:
 # Usage:
 TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson xopen" --project=ntpu-413714
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
 TPU_NAME=llm-jax-v4-512-10; ZONE=us-central2-b
@@ -44,7 +44,7 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=0 --command="kill
 
 
 TOKENIZER_PATH = "/home/lishengping/tokenizer"
-MAX_LEN = 4097
+MAX_LEN = 65536 + 1
 EOS_ID = [151643] # <|endoftext|>
 BOS_ID = [151646] #  <|extra_0|>
 
@@ -182,7 +182,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/val_from_train/B{bucket:03}.F{file_index}.val.tfrecord'
+            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/val_from_train/B{bucket:03}.F{file_index}.val.64k.tfrecord'
         print(f'save_path: {save_path}')
         workers = 1
         counts = encode_file(path, save_path, workers=workers)

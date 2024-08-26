@@ -27,6 +27,8 @@ import orjson
 from bs4 import BeautifulSoup
 import re
 
+
+## 将所有数据进行拼接，连续的32k文本作为long数据，不完整的32k作为short数据
 """
 多进程处理单个文件:
 # Usage:

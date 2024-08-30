@@ -2815,15 +2815,16 @@ class DotProductAttention(base_layer.BaseLayer):
         window_mask = (col_idx + self.window_size <= row_idx).astype(atten_mask.dtype) * large_negative_number
         atten_mask = jnp.minimum(atten_mask, window_mask)
       elif atten_mask is None and not self.pre_compute_atten_mask:
-        # atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
         logging.info(f'Compute slide atten mask now , Becase atten_mask is None and  pre_compute_atten_mask is {self.pre_compute_atten_mask}......')
-
-        attn_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
-        attn_mask = jax.lax.broadcast(attn_mask, (b, )) # b x qchunk x s
-        eos_sum_mask = large_negative_number * eos_sum
-        attn_mask = jax.vmap(update_mask, in_axes=0, out_axes=0)(eos_sum_mask, attn_mask)
-        # attn_mask = nn.with_logical_constraint(attn_mask, ('activation_batch', 'activation_length', None),)
-        atten_mask = attn_mask[:, jnp.newaxis, ...] # bts -> bnts
+        if eos_sum is None:
+          atten_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype)
+        else:
+          attn_mask = _compute_slide_atten_mask(self.query_chunk_size, self.window_size, t, query.dtype, squeeze=True)
+          attn_mask = jax.lax.broadcast(attn_mask, (b, )) # b x qchunk x s
+          eos_sum_mask = large_negative_number * eos_sum
+          attn_mask = jax.vmap(update_mask, in_axes=0, out_axes=0)(eos_sum_mask, attn_mask)
+          # attn_mask = nn.with_logical_constraint(attn_mask, ('activation_batch', 'activation_length', None),)
+          atten_mask = attn_mask[:, jnp.newaxis, ...] # bts -> bnts
 
       # lsp: 不同window size的mask矩阵有点不同
         # if eos_sum is None:

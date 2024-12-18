@@ -43,16 +43,16 @@ gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=3 --command="kill
 """
 多进程处理单个文件:
 # Usage:
-TPU_NAME=llm-jax-v6e-256-10; ZONE=europe-west4-a
+TPU_NAME=llm-jax-mqy-v5p-16-49-paxml; ZONE=us-east5-a
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="/home/lishengping/miniconda3/bin/pip install tiktoken smart_open[gcs] gcsfs orjson" --project=ntpu-413714
 gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=all --command="sudo rm -r /home/lishengping/tokenizer;gsutil cp -r gs://llm_base_models_us-east5/qwen/tokenizer /home/lishengping/" --project=ntpu-413714
 
-TPU_NAME=llm-jax-v6e-256-10; ZONE=europe-west4-a
+TPU_NAME=llm-jax-mqy-v5p-16-48-paxml; ZONE=us-east5-a
 SCRIPT=/Users/lishengping/codes/jax_projects/paxml_praxis/paxml/my_scripts/processed_lines.py
 gcloud compute tpus tpu-vm scp $SCRIPT $TPU_NAME:/home/lishengping/processed.py  --zone=$ZONE  --worker=all  --project=ntpu-413714
 
-TPU_NAME=llm-jax-v6e-256-10; ZONE=europe-west4-a;B=4
-gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=B-4 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
+TPU_NAME=llm-jax-mqy-v5p-16-49-paxml; ZONE=us-east5-a;B=3
+gcloud compute tpus tpu-vm ssh $TPU_NAME --zone=$ZONE --worker=1 --command="killall processed.py;/home/lishengping/miniconda3/bin/python processed.py $B,0,10" --project=ntpu-413714
 """
 
 
@@ -65,8 +65,6 @@ EOS_ID = [151643] # <|endoftext|>
 BOS_ID = [151646] #  <|extra_0|>
 
 EXTRA_TOKENS = '<repo_name><file_sep><translation_type><lang_zh><lang_zh-hant><lang_en><lang_ja><lang_ko><lang_pt><lang_es><lang_fr><lang_de><lang_ru><lang_th><lang_vi><lang_id><lang_ar><lang_it><lang_tr><lang_hi>'
-
-remove_data = {'the-stack-v2-train-full-ids': [251197170, 1002024153]}
 
 
 def _int64_feature(value):
@@ -81,30 +79,6 @@ def write_to_tfrecord(writer, input_ids):
     writer.write(example.SerializeToString())
 
 
-
-def compute_word_len(text):
-    char_count = len(text)
-    if not char_count:
-        return 10000
-    words = text.split()
-    english_chars = re.findall(r'[a-zA-Z]', text)
-    en_char_len = len(english_chars)
-    en_ratio = en_char_len / char_count
-    if en_ratio < 0.5: 
-        return 1
-    word_len = en_char_len / len(words)
-    return word_len
-
-
-def _write_error_message(text, rank, save_path, dataset_name):
-    os.makedirs('error_data_train', exist_ok=True)
-    writer = open(f'error_data_train/{rank}.json', 'a+')
-    error_mes = {'rank': rank, 'save_path': save_path, 'text500': text[:500], 'dataset_name': dataset_name}
-    print(f'error_mes: {error_mes}')
-    error_mes = json.dumps(error_mes, ensure_ascii=False)
-    writer.write(f'{error_mes}\n')
-
-
 class QwenTokenizer():
     def __init__(self, tokenizer_path):
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -115,30 +89,15 @@ class QwenTokenizer():
         self.next_ids = []
         self.partial_tokenize = partial(self.tokenize, max_len=MAX_LEN, bos_id=BOS_ID)
         self.count = 0
-
-    def _encode(self, text):
+    
+    def tokenize(self, text, writer, max_len=2048, bos_id:list=[]):
         try:
             input_ids = self.tokenizer.encode(text)
         except:
+            import pickle
             pickle.dump(text, open(f'error_{self.count}.pkl', 'wb'))
             print(f'error======')
-            input_ids = []
-        return input_ids
-
-    def _decode(self, save_ids, rank, save_path, dataset_name):
-        try:
-            text = self.tokenizer.decode(save_ids)
-        except:
-            text = ''
-        word_len = compute_word_len(text)
-        if word_len > 30:
-            _write_error_message(text, rank, save_path, dataset_name)
-            return False
-        else:
-            return True
-
-    def tokenize(self, text, writer, rank, save_path, dataset_name, max_len=2048, bos_id:list=[]):
-        input_ids = self._encode(text)
+            return []
         if bos_id:
             max_len -= 1
         self.next_ids += input_ids #  加上上个step保留的id
@@ -147,10 +106,6 @@ class QwenTokenizer():
             save_ids = self.next_ids[: max_len]
             if len(save_ids) == max_len:
                 save_ids = bos_id + save_ids
-                r = self._decode(save_ids, rank, save_path, dataset_name)
-                if not r:
-                    self.next_ids = []
-                    break 
                 write_to_tfrecord(writer, save_ids)
                 self.count += 1
                 total_ids.append(save_ids)
@@ -176,6 +131,70 @@ def is_chinese(string):
  
     return False
 
+remove_data = {'the-stack-v2-train-full-ids': [251197170, 1002024153]}
+data_mean_len_dict = {'the-stack-v2-train-full-ids': 50}
+
+
+def compute_word_len(text, char_count):
+    if not text:
+        return 0, 0
+    words = text.split()
+    if len(words) < 10:
+        return 0, 0
+    english_chars = re.findall(r'[a-zA-Z]', text)
+    en_char_len = len(english_chars)
+    en_ratio = en_char_len / char_count
+    if en_ratio < 0.5: 
+        return -1, en_ratio
+    word_len = en_char_len / len(words)
+    return word_len, en_ratio
+    
+def check_text_length(save_path, line, rank, i):
+    dataset_name = line['meta']['dataset_name']
+    text = line['text']
+    char_count = line['meta']['char_count']
+
+    if dataset_name == 'the-stack-v2-train-full-ids':
+        if char_count in remove_data[dataset_name]:
+            _write_error_message(200)
+            print('=============================================\n\n')
+            return False
+        # else:
+        #     return True
+
+    if char_count < 10:
+        return False
+    fir_segment_text = text[:10000]
+    if len(fir_segment_text) < 10000:
+        sec_segment_text = ''
+    else:
+        sec_segment_text = text[-10000:]
+    fir_word_len, fir_en_ratio = compute_word_len(fir_segment_text, char_count)
+    sec_word_len, sec_en_ratio = compute_word_len(sec_segment_text, char_count)
+    if fir_word_len == -1 or sec_word_len == -1:
+        return True
+    div = 2 if sec_word_len else 1
+    word_len = (fir_word_len + sec_word_len) / div
+    en_ratio = (fir_en_ratio + sec_en_ratio) / div
+
+    if word_len == 0:
+        return False
+
+    def _write_error_message(word_mean_len):
+        print(f'fir_word_len: {fir_word_len} sec_word_len: {sec_word_len}')
+        os.makedirs('error_data', exist_ok=True)
+        writer = open(f'error_data/{rank}.json', 'a+')
+        error_mes = {'dataset_name': dataset_name, 'en_ratio': en_ratio, 'save_path': save_path, 'char_count': char_count, 'word_mean_len': word_mean_len, 'text200': text[:500]}
+        print(f'error_mes: {error_mes}')
+        error_mes = json.dumps(error_mes, ensure_ascii=False)
+        writer.write(f'{error_mes}\n')
+
+    thesold = data_mean_len_dict.get(dataset_name, 30)
+    if word_len > thesold:
+        _write_error_message(word_len)
+        return False
+
+
 def process_data(args):
     save_path, cur_rank_lines, rank, workers = args
     save_path = os.path.join(save_path, f'{rank:03}')
@@ -185,31 +204,18 @@ def process_data(args):
         line = cur_rank_lines[i]
         line = orjson.loads(line)
         text = line['text']
-        dataset_name = line['meta']['dataset_name']
-
-        if dataset_name in remove_data:
-            char_count = line['meta']['char_count']
-            try:
-                if char_count in remove_data[dataset_name]:
-                    temp = {'dataset_name': dataset_name, 'char_count': char_count, 'text': text[:50000]}
-                    pickle.dumps(temp, open('too_long.pkl', 'wb'))
-                    continue
-            except:
-                continue
-        
         text_split = text.split('\n')
-        # if not check_text_length(save_path, line, rank, i):
-        #     continue
+        if not check_text_length(save_path, line, rank, i):
+            continue
         per = 250
         if len(text_split) > per:
             # 一次Tokenize很长的数据会很慢，需要split。
             for lnx in tqdm(range(0, len(text_split), per), desc=f'Rank-{rank}-sub-{i}'):
                 inp = text_split[lnx: lnx + per]
                 inp = '\n'.join(inp) + '\n' # lsp
-                qwen_tokenizer.partial_tokenize(inp, writer, rank, save_path, dataset_name)
-                
+                qwen_tokenizer.partial_tokenize(inp, writer)
         else:
-            qwen_tokenizer.partial_tokenize(text, writer, rank, save_path, dataset_name)
+            qwen_tokenizer.partial_tokenize(text, writer)
         qwen_tokenizer.next_ids += EOS_ID
 
     writer.close()
@@ -255,7 +261,7 @@ if __name__ == "__main__":
     type_ = 'train'
     if type_ == 'valid':
         pathes = ['gs://jax_llm_data_us-east5/xiaomeng/v3.5/jsonl/valid_concat.jsonl']
-        save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids1124/valid_concat.tfrecord'
+        save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids0527/valid_concat.tfrecord'
         print(f'save_path: {save_path}')
     else:
         bucketes = [bucket]
@@ -273,7 +279,7 @@ if __name__ == "__main__":
             name = os.path.basename(path)
             bucket = int(name.split('-')[3])
             file_index = name.split('-')[4]
-            save_path = f'gs://jax_llm_data_europe-west4/xiaomeng/v3.5/tfids1210/B{bucket:03}/F{file_index}'
+            save_path = f'gs://jax_llm_data_us-east5/xiaomeng/v3.5/tfids1123/B{bucket:03}/F{file_index}'
         print(f'save_path: {save_path}')
         workers = 100
         counts = encode_file(path, save_path, workers=workers)
